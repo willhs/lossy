@@ -8,7 +8,20 @@ tags: ["roadmap", "planning"]
 related: []
 ---
 
-## Purpose
-Share how the project plans to deliver value over time.
+## Now
 
-_Populate Now / Next / Later columns with planned work._
+- **Pick a source film** — choose something short (a scene, a short film, or a single TV episode) to use as the test subject.
+- **Build the encoder** — scene splitting (FFmpeg) + vision model API calls to produce a scene manifest from a video file.
+- **Build the decoder** — read a scene manifest, call a video generation API per scene, download clips, stitch with FFmpeg.
+
+## Next
+
+- **End-to-end run** — encode a real film, decode it, and watch the result. Iterate on prompt quality and scene granularity.
+- **Build the comparator** — side-by-side or alternating view of original vs reconstructed.
+- **Cost tracking** — log API costs per stage so the blog post can report total "compression cost."
+
+## Later
+
+- **Write the blog post** — walk through the process, show results, reflect on what language preserves and what it loses.
+- **Try variations** — different description detail levels, different video gen models, manual vs automated encoding. See how results change.
+- **Compression ratio gag** — calculate the "bitrate" of the text manifest vs the original file size. Present it seriously.
