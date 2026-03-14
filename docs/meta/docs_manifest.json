@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "philosophy/vision.md",
+      "type": "note",
+      "priority": "must_read"
+    },
+    {
+      "path": "philosophy/principles.md",
+      "type": "reference",
+      "priority": "must_read"
+    },
+    {
+      "path": "design/architecture.md",
+      "type": "spec",
+      "priority": "must_read"
+    },
+    {
+      "path": "work/roadmap.md",
+      "type": "note",
+      "priority": "must_read"
+    },
+    {
+      "path": "ops/runbook.md",
+      "type": "runbook",
+      "priority": "must_read"
+    }
+  ]
+}
