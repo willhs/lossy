@@ -10,14 +10,18 @@ related: []
 
 ## Now
 
-- **Pick a source film** — choose something short (a scene, a short film, or a single TV episode) to use as the test subject.
-- **Build the encoder** — scene splitting (FFmpeg) + vision model API calls to produce a scene manifest from a video file.
-- **Build the decoder** — read a scene manifest, call a video generation API per scene, download clips, stitch with FFmpeg.
+- **End-to-end run** — run decoder on full Star Wars EP IV (~1,150 shots after credits). Iterate on prompt quality and scene granularity.
+- **Fix speed-adjustment issues** — very short clips produce still frames in VLC after speed-adjust. Investigate minimum viable duration or alternative approach.
+- **Build the comparator** — side-by-side or alternating view of original vs reconstructed.
+
+## Done
+
+- ~~**Pick a source film**~~ — Star Wars Episode IV (1080p, ~2h, 1,161 shots).
+- ~~**Build the encoder**~~ — PySceneDetect shot detection + Gemini Flash-Lite prompt generation. Full pipeline tested.
+- ~~**Build the decoder**~~ — Replicate Wan 2.2 Fast (480p, ~$0.05/clip), FFmpeg stitcher with speed-adjustment. 15-clip test batch successful.
 
 ## Next
 
-- **End-to-end run** — encode a real film, decode it, and watch the result. Iterate on prompt quality and scene granularity.
-- **Build the comparator** — side-by-side or alternating view of original vs reconstructed.
 - **Cost tracking** — log API costs per stage so the blog post can report total "compression cost."
 
 ## Later
