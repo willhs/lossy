@@ -22,6 +22,7 @@ related: []
 
 ## Later
 
+- **Audio encoding** — audio is 38% of the source file and currently not captured at all. Use YAMNet for sound classification (music, effects, ambient) and WhisperX for dialogue/speaker diarization. Encode audio cues into the prompt manifest so the decoder can reconstruct a soundtrack.
 - **Write the blog post** — walk through the process, show results, reflect on what language preserves and what it loses.
 - **Try variations** — different description detail levels, different video gen models, manual vs automated encoding. See how results change.
 - **Compression ratio gag** — calculate the "bitrate" of the text manifest vs the original file size. Present it seriously.
