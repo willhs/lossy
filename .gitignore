@@ -27,3 +27,12 @@ Thumbs.db
 # Logs
 *.log
 /tmp/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# lossy
+media/
+output/
