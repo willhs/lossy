@@ -238,6 +238,8 @@ class RunPodWanStrategy(GenerationStrategy):
         self._base_url: str | None = None
         self._pod_start_time: float | None = None
         self._gpu_hourly_rate: float = self.GPU_TYPES[0][1]
+        self._ssh_host: str | None = None
+        self._ssh_port: int | None = None
         self._setup_cleanup_handler()
 
     def _setup_cleanup_handler(self):
@@ -336,72 +338,16 @@ class RunPodWanStrategy(GenerationStrategy):
         self._base_url = f"https://{self._pod_id}-{self.COMFYUI_PORT}.proxy.runpod.net"
         print(f"  Pod ready: {self._base_url}")
 
-        # Download Wan models via SSH (runs in parallel with ComfyUI startup)
-        self._download_models()
+        # Wait for SSH, then set up models
+        self._setup_comfyui_with_models()
 
-        # Wait for ComfyUI to be serving
-        self._wait_for_comfyui()
-
-        # Verify models are available; if not, restart ComfyUI
-        self._ensure_models_loaded()
-
-    def _wait_for_comfyui(self):
-        """Poll ComfyUI until it responds to /system_stats."""
-        import httpx
-
-        print("  Waiting for ComfyUI to load models...")
-        start = time.time()
-        while time.time() - start < self.COMFYUI_READY_TIMEOUT:
-            try:
-                resp = httpx.get(f"{self._base_url}/system_stats", timeout=10)
-                if resp.status_code == 200:
-                    print("  ComfyUI is ready.")
-                    return
-                # 502/503 expected while container is starting
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError):
-                pass
-            elapsed = int(time.time() - start)
-            print(f"  Waiting for ComfyUI... ({elapsed}s)", end="\r")
-            time.sleep(5)
-
-        print(f"  Error: ComfyUI did not become ready within {self.COMFYUI_READY_TIMEOUT}s")
-        self._terminate_pod()
-        sys.exit(1)
-
-    def _ensure_models_loaded(self):
-        """Check if Wan models are visible to ComfyUI; restart if not."""
-        import httpx
-
-        try:
-            resp = httpx.get(f"{self._base_url}/object_info/UNETLoader", timeout=10)
-            if resp.status_code == 200:
-                info = resp.json()
-                unet_names = info.get("UNETLoader", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
-                if any("wan" in n.lower() for n in unet_names):
-                    print("  Wan models detected by ComfyUI.")
-                    return
-        except Exception:
-            pass
-
-        # Models not found — restart ComfyUI to rescan
-        print("  Models not detected — restarting ComfyUI to rescan...")
-        ssh = self._get_ssh_info()
-        if ssh:
-            ssh_host, ssh_port = ssh
-            self._ssh_cmd(ssh_host, ssh_port,
-                          "supervisorctl restart comfyui 2>/dev/null || "
-                          "(pkill -f 'python.*main.py' && sleep 2 && "
-                          "cd /workspace/ComfyUI && nohup python main.py --listen 0.0.0.0 --port 8188 > /dev/null 2>&1 &)",
-                          timeout=30)
-            self._wait_for_comfyui()
-        else:
-            print("  Warning: No SSH — cannot restart ComfyUI. Models may be missing.")
+    COMFYUI_DIR = "/workspace/runpod-slim/ComfyUI"
 
     # Models to download (Comfy-Org repackaged for ComfyUI)
     WAN_MODELS = [
         (
-            "vae/wan2.1_vae.safetensors",
-            "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B/resolve/main/Wan2.1_VAE.safetensors",
+            "vae/wan_2.1_vae.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
         ),
         (
             "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
@@ -413,7 +359,7 @@ class RunPodWanStrategy(GenerationStrategy):
         ),
     ]
 
-    def _ssh_cmd(self, ssh_host: str, ssh_port: int, cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    def _ssh_cmd(self, cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
         """Run a command on the pod via SSH."""
         return subprocess.run(
             [
@@ -422,8 +368,8 @@ class RunPodWanStrategy(GenerationStrategy):
                 "-o", "UserKnownHostsFile=/dev/null",
                 "-o", "LogLevel=ERROR",
                 "-o", "ServerAliveInterval=30",
-                "-p", str(ssh_port),
-                f"root@{ssh_host}",
+                "-p", str(self._ssh_port),
+                f"root@{self._ssh_host}",
                 cmd,
             ],
             capture_output=True,
@@ -431,43 +377,94 @@ class RunPodWanStrategy(GenerationStrategy):
             timeout=timeout,
         )
 
-    def _get_ssh_info(self) -> tuple[str, int] | None:
-        """Get SSH host and port from pod runtime."""
+    def _ssh_bg(self, cmd: str):
+        """Run a command on the pod via SSH in the background (detached)."""
+        p = subprocess.Popen(
+            [
+                "ssh", "-f",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR",
+                "-p", str(self._ssh_port),
+                f"root@{self._ssh_host}",
+                cmd,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            p.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+    def _wait_for_comfyui(self):
+        """Poll ComfyUI until it responds to /system_stats."""
+        import httpx
+
+        print("  Waiting for ComfyUI...")
+        start = time.time()
+        while time.time() - start < self.COMFYUI_READY_TIMEOUT:
+            try:
+                resp = httpx.get(f"{self._base_url}/system_stats", timeout=10)
+                if resp.status_code == 200:
+                    print("  ComfyUI is ready.")
+                    return
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError):
+                pass
+            elapsed = int(time.time() - start)
+            print(f"  Waiting for ComfyUI... ({elapsed}s)", end="\r")
+            time.sleep(5)
+
+        print(f"\n  Error: ComfyUI did not become ready within {self.COMFYUI_READY_TIMEOUT}s")
+        self._terminate_pod()
+        sys.exit(1)
+
+    def _setup_comfyui_with_models(self):
+        """Stop ComfyUI, download Wan models, restart ComfyUI."""
         import runpod
 
+        # Get SSH info
         pod_info = runpod.get_pod(self._pod_id)
+        self._ssh_host = None
+        self._ssh_port = None
         for port_info in pod_info.get("runtime", {}).get("ports", []):
             if port_info["privatePort"] == 22 and port_info["isIpPublic"]:
-                return port_info["ip"], port_info["publicPort"]
-        return None
+                self._ssh_host = port_info["ip"]
+                self._ssh_port = port_info["publicPort"]
+                break
 
-    def _download_models(self):
-        """Download Wan models to the pod via SSH if not already present."""
-        ssh = self._get_ssh_info()
-        if not ssh:
-            print("  Warning: No SSH access. Models must be manually placed.")
+        if not self._ssh_host:
+            print("  Warning: No SSH access. Waiting for ComfyUI without model setup.")
+            self._wait_for_comfyui()
             return
 
-        ssh_host, ssh_port = ssh
-        models_dir = "/workspace/ComfyUI/models"
+        # Wait for SSH to accept connections
+        print("  Waiting for SSH...")
+        time.sleep(10)
 
-        print(f"  Downloading Wan models via SSH ({ssh_host}:{ssh_port})...")
+        # Stop ComfyUI so we can download models before it scans
+        print("  Stopping ComfyUI for model setup...")
+        self._ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+        time.sleep(2)
 
-        # Download each model individually to avoid SSH timeout on long transfers
+        # Download models
+        models_dir = f"{self.COMFYUI_DIR}/models"
+        print(f"  Downloading Wan models via SSH ({self._ssh_host}:{self._ssh_port})...")
+
+        all_ok = True
         for dest_path, url in self.WAN_MODELS:
             full_path = f"{models_dir}/{dest_path}"
-            dir_path = os.path.dirname(full_path)
             filename = os.path.basename(dest_path)
 
-            # Check if already exists
-            check = self._ssh_cmd(ssh_host, ssh_port, f"[ -f {full_path} ] && echo exists || echo missing")
+            # Check if already exists (and is non-empty)
+            check = self._ssh_cmd(f'[ -s {full_path} ] && echo exists || echo missing')
             if check.returncode == 0 and "exists" in check.stdout:
                 print(f"    {filename}: already exists")
                 continue
 
             print(f"    {filename}: downloading...")
+            dir_path = os.path.dirname(full_path)
             result = self._ssh_cmd(
-                ssh_host, ssh_port,
                 f"mkdir -p {dir_path} && wget -q -O {full_path} '{url}' && echo OK",
                 timeout=600,
             )
@@ -477,6 +474,16 @@ class RunPodWanStrategy(GenerationStrategy):
                 print(f"    {filename}: FAILED (exit {result.returncode})")
                 if result.stderr:
                     print(f"      {result.stderr[:200]}")
+                all_ok = False
+
+        # Start ComfyUI with models in place
+        print("  Starting ComfyUI...")
+        self._ssh_bg(
+            f"cd {self.COMFYUI_DIR} && .venv/bin/python main.py --listen 0.0.0.0 --port 8188 "
+            f"</dev/null >/tmp/comfyui.log 2>&1"
+        )
+
+        self._wait_for_comfyui()
 
 
     def _terminate_pod(self):
@@ -522,7 +529,7 @@ class RunPodWanStrategy(GenerationStrategy):
             "3": {
                 "class_type": "VAELoader",
                 "inputs": {
-                    "vae_name": "wan2.1_vae.safetensors",
+                    "vae_name": "wan_2.1_vae.safetensors",
                 },
             },
             "4": {
@@ -655,7 +662,7 @@ class RunPodWanStrategy(GenerationStrategy):
                 print(f"  No output file found for shot {shot_index}")
                 return []
 
-            # Download output (WEBP) and convert to MP4
+            # Download output and convert to MP4
             resp = httpx.get(
                 f"{self._base_url}/view",
                 params={
@@ -668,20 +675,30 @@ class RunPodWanStrategy(GenerationStrategy):
             )
             resp.raise_for_status()
 
-            # Save as temp WEBP, convert to MP4 via ffmpeg
-            webp_path = clip_path.replace(".mp4", ".webp")
-            with open(webp_path, "wb") as f:
+            # Save raw output, convert to MP4 via ffmpeg
+            raw_ext = os.path.splitext(output_file["filename"])[1] or ".webp"
+            raw_path = clip_path.replace(".mp4", raw_ext)
+            with open(raw_path, "wb") as f:
                 f.write(resp.content)
 
-            subprocess.run(
+            result = subprocess.run(
                 [
-                    "ffmpeg", "-i", webp_path,
+                    "ffmpeg", "-y", "-i", raw_path,
                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-y", clip_path,
+                    "-r", "16",  # force output framerate
+                    clip_path,
                 ],
                 capture_output=True,
+                text=True,
             )
-            os.remove(webp_path)
+            if result.returncode != 0 or not os.path.exists(clip_path) or os.path.getsize(clip_path) == 0:
+                print(f"  ffmpeg conversion failed: {result.stderr[:200]}")
+                # Fall back to keeping raw file as the clip
+                if os.path.exists(clip_path):
+                    os.remove(clip_path)
+                os.rename(raw_path, clip_path)
+            else:
+                os.remove(raw_path)
 
             # Cost based on wall-clock time since pod started
             elapsed_h = (time.time() - self._pod_start_time) / 3600
