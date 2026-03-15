@@ -3,7 +3,7 @@ id: task-0002
 type: spec
 purpose: "Build the decoder: read a prompt manifest, generate video clips via Replicate Wan 2.2, and stitch them into a reconstructed film."
 tags: ["decoder", "pipeline", "video-generation", "replicate"]
-related: ["research/prompt-to-video-landscape.md", "design/architecture.md", "work/tasks/0001-screenplay-to-prompts-v1/task.md"]
+related: ["research/0003-prompt-to-video/research.md", "design/architecture.md", "work/tasks/0001-screenplay-to-prompts-v1/task.md"]
 created: 2026-03-14
 updated: 2026-03-14
 ---
@@ -20,7 +20,7 @@ The encoder pipeline is complete and tested. Star Wars EP IV has been fully enco
 
 The decoder is the second stage of the lossy pipeline (architecture.md). It reads the "compressed" text representation and reconstructs video from it. Quality will be low -- that's the point. The interesting output is the comparison between original and reconstruction.
 
-Research in `docs/research/prompt-to-video-landscape.md` identified Replicate + Wan 2.2 Fast as the cheapest managed API option at ~$0.05/clip (~$58 for all 1,161 shots). The model generates fixed-length clips (~5s at 480p), so duration mismatch with original shots must be handled in post-processing.
+Research in `docs/research/0003-prompt-to-video/research.md` identified Replicate + Wan 2.2 Fast as the cheapest managed API option at ~$0.05/clip (~$58 for all 1,161 shots). The model generates fixed-length clips (~5s at 480p), so duration mismatch with original shots must be handled in post-processing.
 
 ## Requirements
 

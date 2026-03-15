@@ -3,7 +3,7 @@ id: plan-0002
 type: spec
 purpose: "Implementation plan for the decoder: prompts.json → video clips → reconstructed film."
 tags: ["plan", "decoder", "video-generation", "replicate"]
-related: ["./task.md", "../../research/prompt-to-video-landscape.md"]
+related: ["./task.md", "../../research/0003-prompt-to-video/research.md"]
 created: 2026-03-14
 updated: 2026-03-14
 ---
@@ -506,6 +506,6 @@ Run the decoder on 10-20 clips to verify everything works end-to-end before comm
 ## References
 
 - Task: `docs/work/tasks/0002-prompts-to-video-v1/task.md`
-- Research: `docs/research/prompt-to-video-landscape.md`
+- Research: `docs/research/0003-prompt-to-video/research.md`
 - Architecture: `docs/design/architecture.md`
 - Encoder (pattern reference): `encode.py`

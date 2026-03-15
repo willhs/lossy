@@ -1,5 +1,5 @@
 ---
-id: shot-detection-landscape
+id: 0001-shot-detection
 type: note
 purpose: "Catalogue tools, libraries, datasets, and techniques for extracting shot-level information from video files."
 scope: ["research", "encoder"]

@@ -1,11 +1,11 @@
 ---
-id: prompt-to-video-landscape
+id: 0003-prompt-to-video
 type: note
 purpose: "Research options for generating video clips from text prompts, covering commercial APIs, open-source models, pricing, duration constraints, and stitching strategies."
 scope: ["research", "decoder"]
 non_goals: []
 tags: ["research", "video-generation", "text-to-video", "decoder"]
-related: ["research/shot-to-prompt-landscape.md", "design/architecture.md"]
+related: ["research/0002-shot-to-prompt/research.md", "design/architecture.md"]
 ---
 
 ## Problem

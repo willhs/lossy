@@ -5,7 +5,7 @@ purpose: "Document findings from the first end-to-end decode test: 15 shots from
 scope: ["research", "decoder"]
 non_goals: []
 tags: ["experiment", "decoder", "video-generation", "wan-2.2"]
-related: ["design/adr/004-replicate-wan22-for-video-generation.md", "research/prompt-to-video-landscape.md"]
+related: ["design/adr/004-replicate-wan22-for-video-generation.md", "research/0003-prompt-to-video/research.md"]
 ---
 
 ## Setup

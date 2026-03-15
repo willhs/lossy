@@ -3,7 +3,7 @@ id: plan-0001
 type: spec
 purpose: "Implementation plan for two-stage encoding pipeline: shot detection to prompt generation."
 tags: ["plan", "encoder", "pipeline"]
-related: ["./task.md", "research/shot-to-prompt-landscape.md"]
+related: ["./task.md", "research/0002-shot-to-prompt/research.md"]
 ---
 
 # Screenplay-to-Prompts v1 Implementation Plan
@@ -731,5 +731,5 @@ for k, v in sorted(motion_types.items(), key=lambda x: -x[1]):
 ## References
 
 - Task: `docs/work/tasks/0001-screenplay-to-prompts-v1/task.md`
-- Research: `docs/research/shot-to-prompt-landscape.md`
+- Research: `docs/research/0002-shot-to-prompt/research.md`
 - ADR: `docs/design/adr/003-pyscenedetect-for-shot-detection.md`

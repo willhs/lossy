@@ -1,11 +1,11 @@
 ---
-id: shot-to-prompt-landscape
+id: 0002-shot-to-prompt
 type: note
 purpose: "Research options for extracting descriptive text prompts from film shots, covering vision APIs, local models, frame sampling, metadata sources, and motion description."
-scope: ["research", "decoder"]
+scope: ["research", "encoder"]
 non_goals: []
 tags: ["research", "vision-models", "video-captioning", "prompts"]
-related: ["research/shot-detection-landscape.md", "design/adr/003-pyscenedetect-for-shot-detection.md"]
+related: ["research/0001-shot-detection/research.md", "design/adr/003-pyscenedetect-for-shot-detection.md"]
 ---
 
 ## Problem

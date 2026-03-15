@@ -5,14 +5,14 @@ purpose: "Record the decision to use Replicate's Wan 2.2 Fast for text-to-video 
 scope: ["design", "decoder"]
 non_goals: []
 tags: ["adr", "decoder", "video-generation"]
-related: ["design/architecture.md", "research/prompt-to-video-landscape.md"]
+related: ["design/architecture.md", "research/0003-prompt-to-video/research.md"]
 ---
 
 # Context
 
 The decoder needs to generate a video clip for each shot description in the prompt manifest (~1,161 shots for Star Wars EP IV). Cost is the primary constraint -- the project's aesthetic embraces low quality, so we optimized for cheapest-per-clip rather than best output.
 
-We evaluated commercial APIs (Replicate, fal.ai, Runway, Google Veo, Kling), open-source self-hosted options (Wan 2.2, CogVideoX, LTX-Video on RunPod), and various models at different price points. Full analysis in `docs/research/prompt-to-video-landscape.md`.
+We evaluated commercial APIs (Replicate, fal.ai, Runway, Google Veo, Kling), open-source self-hosted options (Wan 2.2, CogVideoX, LTX-Video on RunPod), and various models at different price points. Full analysis in `docs/research/0003-prompt-to-video/research.md`.
 
 # Decision
 

@@ -27,7 +27,7 @@ id: customer-interviews
 type: note
 purpose: "Capture insights from the latest customer interviews."
 tags: ["research"]
-related: ["research/landscape.md"]
+related: []
 ---
 ```
 

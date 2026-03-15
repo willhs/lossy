@@ -3,7 +3,7 @@ id: task-0001
 type: spec
 purpose: "Build a two-stage encoding pipeline: shot detection via PySceneDetect, then shot-to-prompt generation using a vision API with metadata enrichment."
 tags: ["encoder", "pipeline", "vision-api", "pyscenedetect"]
-related: ["research/shot-to-prompt-landscape.md", "research/shot-detection-landscape.md", "design/adr/003-pyscenedetect-for-shot-detection.md"]
+related: ["research/0002-shot-to-prompt/research.md", "research/0001-shot-detection/research.md", "design/adr/003-pyscenedetect-for-shot-detection.md"]
 created: 2026-03-14
 updated: 2026-03-14
 ---
@@ -22,7 +22,7 @@ Build a two-stage encoding pipeline that takes a film video file as input and pr
 
 We already have a working PySceneDetect integration (`encode.py`) that detects ~2,070 shots from Star Wars Episode IV. The next step is turning those shots into text prompts that can drive video generation in the decode stage.
 
-Research in `docs/research/shot-to-prompt-landscape.md` identified the cheapest viable approach: extract 4-8 frames per shot at 512px, enrich with subtitle dialogue and optical flow camera motion labels, then send to Gemini 2.5 Flash-Lite (~$0.60 for 3,000 shots, or free on the free tier over 3 days).
+Research in `docs/research/0002-shot-to-prompt/research.md` identified the cheapest viable approach: extract 4-8 frames per shot at 512px, enrich with subtitle dialogue and optical flow camera motion labels, then send to Gemini 2.5 Flash-Lite (~$0.60 for 3,000 shots, or free on the free tier over 3 days).
 
 The current `encode.py` script is a standalone tool. This task re-engineers it into a pipeline architecture where each stage reads the previous stage's output, making it possible to re-run individual stages and inspect intermediate results.
 
