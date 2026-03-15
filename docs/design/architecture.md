@@ -59,9 +59,14 @@ The encoder can also accept a manually authored manifest for testing or artistic
 Input: scene manifest JSON. Output: directory of generated video clips + stitched output.
 
 1. Read each scene description from the manifest.
-2. Send each description as a prompt to a video generation API.
-3. Download generated clips.
-4. Stitch clips sequentially into a single reconstructed film (FFmpeg concat).
+2. Send each description as a prompt to a video generation backend (selectable via `--strategy`).
+3. Download generated clips. Long shots may be split into multiple clips by the strategy.
+4. Speed-adjust clips to match original shot durations (skipped when strategy produces duration-matched clips).
+5. Stitch clips sequentially into a single reconstructed film (FFmpeg concat).
+
+Supported strategies:
+- `replicate-wan` -- Replicate Wan 2.2 Fast, fixed ~5s clips, cheapest ($0.05/clip)
+- `fal-seedance` -- fal.ai Seedance 1.0 Pro Fast, 2-12s duration control (~$0.10/clip at 480p)
 
 ### Compare
 
@@ -81,5 +86,5 @@ Input: original video + reconstructed video. Output: side-by-side comparison vid
 - **Language**: Python (rich ecosystem for video/ML tooling)
 - **Video processing**: FFmpeg (via subprocess)
 - **Vision model**: Cloud API (Claude, Gemini, etc.) — whichever accepts video or image input cheaply
-- **Video generation**: Cloud API (Replicate, fal.ai, RunPod, etc.) — whichever is cheapest per clip
+- **Video generation**: Swappable backends via strategy pattern -- Replicate Wan 2.2 Fast (default, cheapest), fal.ai Seedance 1.0 Pro Fast (duration control)
 - **Output**: Blog post artifacts (comparison videos, screenshots, metrics)

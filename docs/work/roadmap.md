@@ -11,7 +11,7 @@ related: []
 ## Now
 
 - **End-to-end run** — run decoder on full Star Wars EP IV (~1,150 shots after credits). Iterate on prompt quality and scene granularity.
-- **Fix speed-adjustment issues** — very short clips produce still frames in VLC after speed-adjust. Investigate minimum viable duration or alternative approach.
+- **Trial Seedance strategy** — run shots 10-24 with Seedance Fast to validate duration control eliminates speed-adjustment artifacts.
 - **Build the comparator** — side-by-side or alternating view of original vs reconstructed.
 
 ## Done
@@ -19,6 +19,7 @@ related: []
 - ~~**Pick a source film**~~ — Star Wars Episode IV (1080p, ~2h, 1,161 shots).
 - ~~**Build the encoder**~~ — PySceneDetect shot detection + Gemini Flash-Lite prompt generation. Full pipeline tested.
 - ~~**Build the decoder**~~ — Replicate Wan 2.2 Fast (480p, ~$0.05/clip), FFmpeg stitcher with speed-adjustment. 15-clip test batch successful.
+- ~~**Fix speed-adjustment issues**~~ — added Seedance strategy with 2-12s duration control. Strategy pattern in decoder supports swappable backends.
 
 ## Next
 

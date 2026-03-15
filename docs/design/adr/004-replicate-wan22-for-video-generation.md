@@ -48,3 +48,9 @@ Use **Replicate** with **wan-video/wan-2.2-t2v-fast** for video generation.
 - **Self-hosted Wan 2.2 on RunPod**: Cheapest possible (~$5-15) but requires GPU instance management
 - **Seedance 1.0 Pro on fal.ai**: Integer-second duration control (2-12s) which would reduce speed-adjustment artifacts, but 4x cost
 - **Google Veo 3.1 Fast**: Best quality but 10x cost ($0.50/clip, ~$580 total)
+
+# Status Update (2026-03-15)
+
+The decoder now supports multiple video generation backends via a strategy pattern (`--strategy` CLI flag). Replicate Wan 2.2 Fast remains the default and cheapest option. Seedance 1.0 Pro Fast on fal.ai was added as an alternative that supports 2-12s integer duration control, addressing the speed-adjustment artifacts documented in the "Bad" consequences above.
+
+See experiment 0002 (`docs/research/experiments/0002-seedance-duration-test.md`) for the comparison results.

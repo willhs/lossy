@@ -589,7 +589,7 @@ Add unit tests for the new decoder logic. Follow the existing pattern in `test_e
 
 #### 1. Create test_decode.py
 
-- [ ] Create `test_decode.py` with tests for the strategy pattern and duration logic:
+- [x] Create `test_decode.py` with tests for the strategy pattern and duration logic:
 
 ```python
 """Tests for decode.py strategy pattern and duration logic."""
@@ -744,7 +744,7 @@ class TestReplicateWanStrategy:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Run: `python -m pytest test_decode.py -v` — all tests pass
+- [x] Run: `python -m pytest test_decode.py -v` — all tests pass (18/18)
 
 ---
 
@@ -758,7 +758,7 @@ Update architecture docs and ADR-004 to reflect the strategy pattern and multi-b
 
 #### 1. Update architecture.md
 
-- [ ] Update the Decode section in `docs/design/architecture.md` (lines 57-64) to mention the strategy pattern:
+- [x] Update the Decode section in `docs/design/architecture.md` (lines 57-64) to mention the strategy pattern:
 
 Replace:
 ```markdown
@@ -789,7 +789,7 @@ Supported strategies:
 - `fal-seedance` — fal.ai Seedance 1.0 Pro Fast, 2-12s duration control (~$0.10/clip at 480p)
 ```
 
-- [ ] Update the Tech Stack section (line 84) to list both backends:
+- [x] Update the Tech Stack section (line 84) to list both backends:
 
 Replace:
 ```markdown
@@ -803,7 +803,7 @@ With:
 
 #### 2. Update ADR-004
 
-- [ ] Add a "Status Update" section to the end of `docs/design/adr/004-replicate-wan22-for-video-generation.md` (before any trailing newline):
+- [x] Add a "Status Update" section to the end of `docs/design/adr/004-replicate-wan22-for-video-generation.md` (before any trailing newline):
 
 ```markdown
 
@@ -816,7 +816,7 @@ See experiment 0002 (`docs/research/experiments/0002-seedance-duration-test.md`)
 
 #### 3. Update roadmap
 
-- [ ] Update `docs/work/roadmap.md` to move the speed-adjustment item to Done and reflect current state:
+- [x] Update `docs/work/roadmap.md` to move the speed-adjustment item to Done and reflect current state:
 
 Move from Now:
 ```markdown
@@ -830,9 +830,9 @@ To Done (after implementation):
 
 ### Success Criteria
 
-- [ ] Manual: Verify `docs/design/architecture.md` accurately describes the strategy pattern
-- [ ] Manual: Verify ADR-004 has the status update
-- [ ] Manual: Verify roadmap reflects current state
+- [x] Manual: Verify `docs/design/architecture.md` accurately describes the strategy pattern
+- [x] Manual: Verify ADR-004 has the status update
+- [x] Manual: Verify roadmap reflects current state
 
 ---
 

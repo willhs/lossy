@@ -130,9 +130,9 @@ class FalSeedanceStrategy(GenerationStrategy):
             19.0s -> [12, 7]
             25.0s -> [12, 12, 2]  (remainder clamped to min 2)
         """
-        if target_s <= self.MAX_DURATION:
-            clamped = max(self.MIN_DURATION, min(self.MAX_DURATION, round(target_s)))
-            return [clamped]
+        rounded = max(self.MIN_DURATION, min(self.MAX_DURATION, round(target_s)))
+        if rounded <= self.MAX_DURATION and target_s <= self.MAX_DURATION + 0.5:
+            return [rounded]
 
         # Split into MAX_DURATION chunks plus remainder
         parts = []
