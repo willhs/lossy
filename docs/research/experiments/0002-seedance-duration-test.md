@@ -13,16 +13,21 @@ related: ["research/experiments/0001-first-e2e-decode-test.md", "design/adr/004-
 - **Source film**: Star Wars Episode IV (1080p, ~2h)
 - **Shots tested**: 10-24 (same as experiment 0001, skipping opening text crawl)
 - **Content**: Tatooine establishing shot, space battle (Rebel blockade runner vs Star Destroyer), first appearance of Stormtroopers, C-3PO, R2-D2
-- **Model**: fal.ai Seedance 1.0 Pro Fast, 480p (16:9)
+- **Models tested**: fal.ai Seedance 1.0 Pro Fast and Seedance 1.0 Pro (standard), both at 480p (16:9)
 - **Duration control**: Integer seconds (2-12s), shots >12s split into multiple clips
 - **Comparison baseline**: Experiment 0001 (Replicate Wan 2.2 Fast, fixed 5.06s clips)
 
 ## Cost
 
-- 15 shots generated as 16 clips (shot 10 split into 12s + 7s): **$1.32 total**
-- vs Wan 2.2: $0.75 for 15 clips ($0.05/clip)
-- Seedance is ~1.8x more expensive per shot on average
-- Extrapolated full film (~1,150 shots): ~$100-110 (vs ~$58 for Wan 2.2)
+Actual costs from fal.ai billing (total $2.39 across both runs from $10.00 credit):
+
+| Strategy | Estimated | Actual | Per shot | Full film est. |
+|----------|-----------|--------|----------|----------------|
+| Wan 2.2 Fast | $0.75 | $0.75 | $0.05 | ~$58 |
+| Seedance Fast | $1.32 | ~$1.07 | ~$0.07 | ~$80 |
+| Seedance Pro | $3.30 | ~$1.32 | ~$0.09 | ~$100 |
+
+Our hardcoded cost estimates were too high -- actual fal.ai costs are roughly half what we estimated. The Pro model is only ~25% more than Fast in practice, not 2.5x as initially expected at 480p.
 
 ## Duration Accuracy
 
@@ -52,14 +57,23 @@ related: ["research/experiments/0001-first-e2e-decode-test.md", "design/adr/004-
 
 The timing/speed issues from experiment 0001 are essentially gone. Clips play at natural speed -- no more freeze frames from 5x speedup on short shots, no more slow-motion dreaminess on long shots. The reconstructed sequence feels much more like a film in terms of pacing and rhythm.
 
-### Overall quality
+### Overall quality (Fast)
 
-The clips are more recognisable as the Star Wars opening sequence. Seedance produces more holistically coherent clips than Wan 2.2 -- the compositions feel more intentional and the content better matches the prompts.
+The clips are more recognisable as the Star Wars opening sequence. Seedance Fast produces more holistically coherent clips than Wan 2.2 -- the compositions feel more intentional and the content better matches the prompts.
+
+### Seedance Pro vs Fast
+
+Pro produces notably higher quality and continuity. Key differences:
+
+- **C-3PO and R2-D2 look very good/realistic** -- a significant step up from Fast where C-3PO's face morphed between shots. Pro maintains more consistent character rendering.
+- Overall continuity is improved -- clips feel more like they belong to the same film.
+- The quality jump is substantial for a modest cost increase (~25% more at 480p).
 
 ### Characters and continuity
 
-- **Droids**: R2-D2 is recognisable and consistent within clips. C-3PO changes significantly between shots -- face, proportions, and style shift across cuts. Expected with independent per-shot generation.
-- **Stormtroopers**: Recognisable and relatively consistent.
+- **Droids (Fast)**: R2-D2 is recognisable and consistent within clips. C-3PO changes significantly between shots -- face, proportions, and style shift across cuts.
+- **Droids (Pro)**: Both C-3PO and R2-D2 look realistic and well-rendered. Much better character consistency than Fast.
+- **Stormtroopers**: Recognisable and relatively consistent across both models.
 - **Spaceships**: Space/planet backgrounds and vessel designs vary between clips. Star Destroyers are identifiable but not visually consistent across shots.
 
 ### Shot splitting
@@ -76,16 +90,18 @@ Still the fundamental weakness of per-shot independent generation. Each clip has
 
 2. **Higher quality output** from Seedance vs Wan 2.2 at the same resolution. More coherent compositions, better prompt adherence, more recognisable content.
 
-3. **Cost is manageable.** $1.32 for 15 shots (~$0.09/shot) vs $0.75 for Wan 2.2 ($0.05/shot). ~1.8x more expensive. Full film extrapolation: ~$100-110 vs ~$58. The quality and duration improvement is worth the premium.
+3. **Cost is lower than estimated.** Actual fal.ai costs were roughly half our hardcoded estimates. Seedance Pro for the full film would be ~$100, not $250 as initially projected. The quality and duration improvement is easily worth the premium over Wan 2.2 ($58).
 
 4. **Strategy pattern works.** The refactored decoder cleanly supports both backends via `--strategy` flag. Adding future backends (RunPod self-hosted, other models) will be straightforward.
 
-5. **Continuity remains the biggest unsolved problem.** Style drift between shots, character inconsistency (especially C-3PO), and varying space backgrounds. This is the next frontier -- likely requires image-to-video conditioning or some form of style transfer between shots.
+5. **Seedance Pro significantly improves character quality.** C-3PO and R2-D2 look realistic in Pro output, vs inconsistent/morphing in Fast. For only ~25% more cost at 480p, Pro is the better choice.
 
-6. **Shot splitting is acceptable but imperfect.** For shots exceeding 12s, splitting into multiple clips produces a visible "cut" mid-shot. Acceptable for the blog post but worth noting as a limitation.
+6. **Continuity remains the biggest unsolved problem.** Style drift between shots and varying space backgrounds. Pro reduces this somewhat but doesn't eliminate it. Likely requires image-to-video conditioning or some form of style transfer between shots.
+
+7. **Shot splitting is acceptable but imperfect.** For shots exceeding 12s, splitting into multiple clips produces a visible "cut" mid-shot. Acceptable for the blog post but worth noting as a limitation.
 
 ## Next Steps
 
-- Consider Seedance as the primary strategy for the full-film decode run (~$100-110)
+- Consider Seedance Pro as the primary strategy for the full-film decode run (~$100)
 - Investigate image-to-video conditioning for style continuity between shots
 - Build the side-by-side comparator to make quality assessment easier

@@ -116,6 +116,7 @@ class FalSeedanceStrategy(GenerationStrategy):
     """fal.ai Seedance 1.0 Pro Fast -- 2-12s duration control at ~$0.10/clip (480p)."""
 
     name = "fal-seedance"
+    MODEL_ID = "fal-ai/bytedance/seedance/v1/pro/fast/text-to-video"
     MIN_DURATION = 2
     MAX_DURATION = 12
     COST_PER_SECOND_480P = 0.02  # Approximate: ~$0.10 for 5s at 480p
@@ -180,7 +181,7 @@ class FalSeedanceStrategy(GenerationStrategy):
                     arguments["seed"] = seed + part_idx
 
                 result = fal_client.subscribe(
-                    "fal-ai/bytedance/seedance/v1/pro/fast/text-to-video",
+                    self.MODEL_ID,
                     arguments=arguments,
                     with_logs=False,
                 )
@@ -203,6 +204,14 @@ class FalSeedanceStrategy(GenerationStrategy):
                 return []  # Fail the whole shot if any part fails
 
         return results
+
+
+class FalSeedanceProStrategy(FalSeedanceStrategy):
+    """fal.ai Seedance 1.0 Pro (standard) -- higher quality, ~2.5x cost of Fast."""
+
+    name = "fal-seedance-pro"
+    MODEL_ID = "fal-ai/bytedance/seedance/v1/pro/text-to-video"
+    COST_PER_SECOND_480P = 0.05  # Approximate: ~$0.25 for 5s at 480p
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +535,7 @@ def main():
                         help="Process only first N shots (after start-index)")
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
-    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance"],
+    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro"],
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
     args = parser.parse_args()
@@ -539,6 +548,7 @@ def main():
         strategies = {
             "replicate-wan": ReplicateWanStrategy,
             "fal-seedance": FalSeedanceStrategy,
+            "fal-seedance-pro": FalSeedanceProStrategy,
         }
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
