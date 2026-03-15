@@ -47,10 +47,17 @@ This manifest is the "compressed" representation — a text file that stands in 
 
 Input: video file on disk. Output: scene manifest JSON.
 
-1. Split the source video into scenes (FFmpeg scene detection or fixed intervals).
-2. Sample frames from each scene.
-3. Feed frames to a vision model API to produce a text description per scene.
-4. Write the scene manifest.
+**Stage 1** -- Shot detection and keyframe extraction:
+1. Split the source video into shots via PySceneDetect (adaptive or content detector).
+2. Extract 2-8 uniformly-sampled keyframes per shot at 512px (FFmpeg).
+3. Write `manifest.json` with shot boundaries and keyframe filenames.
+
+**Stage 2** -- Metadata enrichment and prompt generation:
+1. Extract embedded subtitles (FFmpeg SRT extraction), parse and align to shots.
+2. Detect camera motion via Farneback optical flow, cache to `camera_motion.json`.
+3. Classify audio via YAMNet (521 AudioSet categories, ~0.48s hop), group into 6 buckets (speech, music, effects, ambient, silence, other), cache to `audio_labels.json`.
+4. Feed keyframes + camera motion label + audio labels + dialogue to Gemini Flash-Lite for structured descriptions including a `sound` field.
+5. Write `prompts.json` with per-shot descriptions, detected metadata, and dialogue.
 
 The encoder can also accept a manually authored manifest for testing or artistic control.
 
@@ -85,6 +92,7 @@ Input: original video + reconstructed video. Output: side-by-side comparison vid
 
 - **Language**: Python (rich ecosystem for video/ML tooling)
 - **Video processing**: FFmpeg (via subprocess)
-- **Vision model**: Cloud API (Claude, Gemini, etc.) — whichever accepts video or image input cheaply
+- **Vision model**: Gemini Flash-Lite (cheapest viable, structured JSON output)
+- **Audio classification**: YAMNet via TensorFlow Hub (521 AudioSet classes, CPU-only)
 - **Video generation**: Swappable backends via strategy pattern -- Replicate Wan 2.2 Fast (default, cheapest), fal.ai Seedance 1.0 Pro Fast (duration control)
 - **Output**: Blog post artifacts (comparison videos, screenshots, metrics)
