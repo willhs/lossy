@@ -427,6 +427,14 @@ def run_yamnet(audio_path: str, output_dir: str) -> tuple[np.ndarray, list[str]]
     import tensorflow as tf
     import csv
 
+    # Work around macOS Python SSL certificate issue
+    import ssl
+    try:
+        import certifi
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    except ImportError:
+        pass
+
     print("Loading YAMNet model...")
     model = hub.load("https://tfhub.dev/google/yamnet/1")
 
