@@ -585,13 +585,15 @@ class RunPodWanStrategy(GenerationStrategy):
                 },
             },
             "10": {
-                "class_type": "SaveAnimatedWEBP",
+                "class_type": "SaveWEBM",
                 "inputs": {
                     "filename_prefix": "lossy",
                     "fps": 16,
                     "lossless": False,
                     "quality": 80,
                     "method": "default",
+                    "crf": 20,
+                    "codec": "vp9",
                     "images": ["9", 0],
                 },
             },
@@ -662,7 +664,7 @@ class RunPodWanStrategy(GenerationStrategy):
                 print(f"  No output file found for shot {shot_index}")
                 return []
 
-            # Download output and convert to MP4
+            # Download output video
             resp = httpx.get(
                 f"{self._base_url}/view",
                 params={
@@ -675,30 +677,25 @@ class RunPodWanStrategy(GenerationStrategy):
             )
             resp.raise_for_status()
 
-            # Save raw output, convert to MP4 via ffmpeg
-            raw_ext = os.path.splitext(output_file["filename"])[1] or ".webp"
+            # Save raw file, convert to MP4 via ffmpeg
+            raw_ext = os.path.splitext(output_file["filename"])[1] or ".webm"
             raw_path = clip_path.replace(".mp4", raw_ext)
             with open(raw_path, "wb") as f:
                 f.write(resp.content)
 
             result = subprocess.run(
-                [
-                    "ffmpeg", "-y", "-i", raw_path,
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-r", "16",  # force output framerate
-                    clip_path,
-                ],
+                ["ffmpeg", "-y", "-i", raw_path,
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 clip_path],
                 capture_output=True,
-                text=True,
             )
-            if result.returncode != 0 or not os.path.exists(clip_path) or os.path.getsize(clip_path) == 0:
-                print(f"  ffmpeg conversion failed: {result.stderr[:200]}")
-                # Fall back to keeping raw file as the clip
+            if result.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                os.remove(raw_path)
+            else:
+                # Keep raw file as fallback
                 if os.path.exists(clip_path):
                     os.remove(clip_path)
                 os.rename(raw_path, clip_path)
-            else:
-                os.remove(raw_path)
 
             # Cost based on wall-clock time since pod started
             elapsed_h = (time.time() - self._pod_start_time) / 3600
