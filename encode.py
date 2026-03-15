@@ -307,6 +307,93 @@ def detect_camera_motion(video_path: str, scenes: list[dict], output_dir: str) -
 
 
 # ---------------------------------------------------------------------------
+# Audio: YAMNet classification and per-shot aggregation
+# ---------------------------------------------------------------------------
+
+# YAMNet hop between successive classification frames
+YAMNET_HOP_S = 0.48
+YAMNET_WINDOW_S = 0.96
+
+
+def class_to_bucket(class_index: int) -> str:
+    """Map a YAMNet class index (0-520) to one of 6 high-level audio buckets.
+
+    Buckets: speech, music, effects, ambient, silence, other.
+    Mapping follows AudioSet ontology groupings in yamnet_class_map.csv.
+    """
+    # Speech: human vocal sounds (0-23), body/crowd sounds (33-66)
+    # Excludes singing (24-32) which goes to music
+    if class_index <= 23 or 33 <= class_index <= 66:
+        return "speech"
+    # Music: singing (24-32), instruments and genres (132-276)
+    if 24 <= class_index <= 32 or 132 <= class_index <= 276:
+        return "music"
+    # Ambient: natural environment — wind, water, thunder, fire (277-293)
+    if 277 <= class_index <= 293:
+        return "ambient"
+    # Effects: vehicles, engines, doors, tools, weapons, impacts, liquids,
+    # mechanical sounds, alarms, electronic tones (294-493)
+    if 294 <= class_index <= 493:
+        return "effects"
+    # Silence
+    if class_index == 494:
+        return "silence"
+    # Other: animals (67-131), signal processing artifacts (495-520)
+    return "other"
+
+
+def aggregate_shot_audio(
+    scores: np.ndarray,
+    class_names: list[str],
+    shot_start_s: float,
+    shot_end_s: float,
+    top_n: int = 5,
+) -> dict:
+    """Aggregate YAMNet scores for a single shot into bucket + top labels.
+
+    Args:
+        scores: Full YAMNet output, shape [N, 521].
+        class_names: List of 521 class display names.
+        shot_start_s: Shot start time in seconds.
+        shot_end_s: Shot end time in seconds.
+        top_n: Number of top class labels to include.
+
+    Returns:
+        {"bucket": str, "labels": [str]}
+    """
+    # Find YAMNet frames overlapping this shot
+    frame_indices = []
+    for i in range(len(scores)):
+        frame_start = i * YAMNET_HOP_S
+        frame_end = frame_start + YAMNET_WINDOW_S
+        if frame_start < shot_end_s and frame_end > shot_start_s:
+            frame_indices.append(i)
+
+    if not frame_indices:
+        return {"bucket": "silence", "labels": []}
+
+    # Mean scores across overlapping frames -> [521]
+    mean_scores = scores[frame_indices].mean(axis=0)
+
+    # Sum mean scores per bucket
+    bucket_scores = {
+        "speech": 0.0, "music": 0.0, "effects": 0.0,
+        "ambient": 0.0, "silence": 0.0, "other": 0.0,
+    }
+    for idx, score in enumerate(mean_scores):
+        bucket_scores[class_to_bucket(idx)] += float(score)
+
+    # Dominant bucket
+    bucket = max(bucket_scores, key=bucket_scores.get)
+
+    # Top-N labels by mean score, skip near-zero
+    top_indices = np.argsort(mean_scores)[::-1][:top_n]
+    labels = [class_names[i] for i in top_indices if mean_scores[i] > 0.01]
+
+    return {"bucket": bucket, "labels": labels}
+
+
+# ---------------------------------------------------------------------------
 # Stage 2: Gemini vision API prompt generation
 # ---------------------------------------------------------------------------
 
