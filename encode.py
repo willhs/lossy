@@ -393,6 +393,111 @@ def aggregate_shot_audio(
     return {"bucket": bucket, "labels": labels}
 
 
+def extract_audio(video_path: str, output_dir: str) -> str:
+    """Extract audio track to mono 16kHz WAV. Returns path to WAV file."""
+    wav_path = os.path.join(output_dir, "audio.wav")
+    if os.path.exists(wav_path):
+        print(f"Audio already extracted: {wav_path}")
+        return wav_path
+
+    print("Extracting audio track...")
+    result = subprocess.run(
+        [
+            "ffmpeg", "-i", video_path,
+            "-ac", "1", "-ar", "16000", "-vn",
+            "-y", wav_path,
+        ],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"Error extracting audio: {result.stderr}")
+        sys.exit(1)
+
+    print(f"Audio extracted to {wav_path}")
+    return wav_path
+
+
+def run_yamnet(audio_path: str, output_dir: str) -> tuple[np.ndarray, list[str]]:
+    """Run YAMNet classification on audio file. Returns (scores, class_names).
+
+    Scores shape: [N, 521] where N is the number of ~0.48s frames.
+    Caches raw scores to yamnet_scores.npz for resume support.
+    """
+    import tensorflow_hub as hub
+    import tensorflow as tf
+    import csv
+
+    print("Loading YAMNet model...")
+    model = hub.load("https://tfhub.dev/google/yamnet/1")
+
+    class_map_path = model.class_map_path().numpy()
+    class_names = []
+    with tf.io.gfile.GFile(class_map_path) as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            class_names.append(row["display_name"])
+
+    # Check cache
+    scores_path = os.path.join(output_dir, "yamnet_scores.npz")
+    if os.path.exists(scores_path):
+        print(f"YAMNet scores already computed: {scores_path}")
+        data = np.load(scores_path)
+        return data["scores"], class_names
+
+    # Load audio
+    from scipy.io import wavfile
+
+    print("Running YAMNet classification...")
+    sample_rate, wav_data = wavfile.read(audio_path)
+    waveform = wav_data.astype(np.float32) / 32768.0
+
+    start = time.time()
+    scores, embeddings, spectrogram = model(waveform)
+    scores = scores.numpy()
+    elapsed = time.time() - start
+    print(f"  Classified {len(scores)} frames in {elapsed:.1f}s")
+
+    # Cache scores
+    np.savez_compressed(scores_path, scores=scores)
+    print(f"  Scores cached to {scores_path}")
+
+    return scores, class_names
+
+
+def detect_audio_labels(
+    video_path: str, scenes: list[dict], output_dir: str,
+) -> dict[str, dict]:
+    """Classify audio for each shot using YAMNet. Returns {shot_index: {bucket, labels}}.
+
+    Caches per-shot labels to audio_labels.json (same pattern as camera_motion.json).
+    """
+    labels_path = os.path.join(output_dir, "audio_labels.json")
+    if os.path.exists(labels_path):
+        print(f"Audio labels already detected: {labels_path}")
+        with open(labels_path) as f:
+            return json.load(f)
+
+    # Extract audio and run YAMNet
+    wav_path = extract_audio(video_path, output_dir)
+    scores, class_names = run_yamnet(wav_path, output_dir)
+
+    # Aggregate per shot
+    audio_labels = {}
+    total = len(scenes)
+    for i, scene in enumerate(scenes):
+        audio_labels[str(scene["index"])] = aggregate_shot_audio(
+            scores, class_names, scene["start_s"], scene["end_s"],
+        )
+        if (i + 1) % 100 == 0 or i + 1 == total:
+            print(f"  Audio labels: {i + 1}/{total} shots")
+
+    with open(labels_path, "w") as f:
+        json.dump(audio_labels, f, indent=2)
+    print(f"Audio labels saved to {labels_path}")
+
+    return audio_labels
+
+
 # ---------------------------------------------------------------------------
 # Stage 2: Gemini vision API prompt generation
 # ---------------------------------------------------------------------------
@@ -408,6 +513,7 @@ Return a JSON object with these fields:
 - "color_palette": dominant colors
 - "mood": emotional tone or atmosphere
 - "setting": location/environment description
+- "sound": description of the soundtrack — what you'd expect to hear based on the visuals and the detected audio labels. Describe music style/mood, sound effects, ambient sounds, and atmosphere. If silence or near-silence, say so.
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
 
@@ -416,6 +522,7 @@ def generate_prompts(
     scenes: list[dict],
     dialogue_map: dict[int, list[str]],
     motion_labels: dict,
+    audio_labels: dict,
     output_dir: str,
     provider: str,
 ) -> list[dict]:
@@ -481,6 +588,11 @@ def generate_prompts(
         camera = motion_labels.get(str(idx), "unknown")
         context_lines.append(f"Detected camera motion: {camera}.")
 
+        audio = audio_labels.get(str(idx), {})
+        if audio.get("labels"):
+            audio_desc = f"{audio['bucket']} ({', '.join(audio['labels'])})"
+            context_lines.append(f"Detected audio: {audio_desc}.")
+
         dialogue = dialogue_map.get(idx, [])
         if dialogue:
             context_lines.append(f"Dialogue during this shot: \"{' / '.join(dialogue)}\"")
@@ -515,6 +627,7 @@ def generate_prompts(
                 "end_s": scene["end_s"],
                 "duration_s": scene["duration_s"],
                 "camera_motion_detected": camera,
+                "audio_detected": audio_labels.get(str(idx)),
                 "dialogue": dialogue if dialogue else None,
                 "description": description,
             }
@@ -551,6 +664,7 @@ def generate_prompts(
                         "end_s": scene["end_s"],
                         "duration_s": scene["duration_s"],
                         "camera_motion_detected": camera,
+                        "audio_detected": audio_labels.get(str(idx)),
                         "dialogue": dialogue if dialogue else None,
                         "description": description,
                     }
@@ -630,9 +744,13 @@ def run_stage2(args):
     print("Detecting camera motion...")
     motion_labels = detect_camera_motion(video_path, scenes, output_dir)
 
-    # Step 3: Generate prompts via vision API
+    # Step 3: Audio classification
+    print("Classifying audio...")
+    audio_labels = detect_audio_labels(video_path, scenes, output_dir)
+
+    # Step 4: Generate prompts via vision API
     print("Generating prompts...")
-    prompts = generate_prompts(scenes, dialogue_map, motion_labels, output_dir, args.provider)
+    prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir, args.provider)
 
     # Save prompt manifest
     prompts_path = os.path.join(output_dir, "prompts.json")
