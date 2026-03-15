@@ -214,6 +214,329 @@ class FalSeedanceProStrategy(FalSeedanceStrategy):
     COST_PER_SECOND_480P = 0.05  # Approximate: ~$0.25 for 5s at 480p
 
 
+class RunPodWanStrategy(GenerationStrategy):
+    """RunPod self-hosted Wan 2.2 (1.3B fp8) via ComfyUI -- ~$0.004/clip."""
+
+    name = "runpod-wan"
+    CLIP_DURATION = 81 / 16  # ~5.0625s (81 frames at 16fps)
+    GPU_TYPE = "NVIDIA GeForce RTX 4090"
+    GPU_HOURLY_RATE = 0.34  # $/hr community cloud
+    DOCKER_IMAGE = "ghcr.io/lum3on/wan22-runpod:latest"
+    CONTAINER_DISK_GB = 50
+    COMFYUI_PORT = 8188
+    POD_READY_TIMEOUT = 600  # 10 min for image pull + model load
+    COMFYUI_READY_TIMEOUT = 300  # 5 min for ComfyUI to start serving
+    GENERATION_TIMEOUT = 300  # 5 min per clip
+
+    def __init__(self):
+        self._pod_id: str | None = None
+        self._base_url: str | None = None
+        self._pod_start_time: float | None = None
+        self._setup_cleanup_handler()
+
+    def _setup_cleanup_handler(self):
+        """Register atexit and signal handlers to terminate pod on exit."""
+        import atexit
+        import signal
+
+        atexit.register(self._terminate_pod)
+
+        original_sigint = signal.getsignal(signal.SIGINT)
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _handler(signum, frame):
+            self._terminate_pod()
+            # Re-raise with original handler
+            if signum == signal.SIGINT and callable(original_sigint):
+                original_sigint(signum, frame)
+            elif signum == signal.SIGTERM and callable(original_sigterm):
+                original_sigterm(signum, frame)
+            else:
+                sys.exit(1)
+
+        signal.signal(signal.SIGINT, _handler)
+        signal.signal(signal.SIGTERM, _handler)
+
+    def _ensure_pod(self):
+        """Create and wait for pod if not already running."""
+        if self._pod_id is not None:
+            return
+
+        import runpod
+
+        runpod.api_key = os.environ.get("RUNPOD_API_KEY")
+        if not runpod.api_key:
+            print("Error: RUNPOD_API_KEY not set in .env or environment.")
+            sys.exit(1)
+
+        print(f"  Creating RunPod pod ({self.GPU_TYPE})...")
+        pod = runpod.create_pod(
+            name="lossy-comfyui",
+            image_name=self.DOCKER_IMAGE,
+            gpu_type_id=self.GPU_TYPE,
+            cloud_type="COMMUNITY",
+            gpu_count=1,
+            container_disk_in_gb=self.CONTAINER_DISK_GB,
+            ports=f"{self.COMFYUI_PORT}/http",
+            support_public_ip=True,
+        )
+        self._pod_id = pod["id"]
+        self._pod_start_time = time.time()
+        print(f"  Pod created: {self._pod_id}")
+
+        # Wait for pod runtime to be ready
+        print("  Waiting for pod to start...")
+        start = time.time()
+        while time.time() - start < self.POD_READY_TIMEOUT:
+            status = runpod.get_pod(self._pod_id)
+            runtime = status.get("runtime")
+            if runtime is not None and runtime.get("ports"):
+                break
+            time.sleep(5)
+        else:
+            print(f"  Error: Pod did not start within {self.POD_READY_TIMEOUT}s")
+            self._terminate_pod()
+            sys.exit(1)
+
+        # Use RunPod proxy URL (works without public IP)
+        self._base_url = f"https://{self._pod_id}-{self.COMFYUI_PORT}.proxy.runpod.net"
+        print(f"  Pod ready: {self._base_url}")
+
+        # Wait for ComfyUI to be serving
+        self._wait_for_comfyui()
+
+    def _wait_for_comfyui(self):
+        """Poll ComfyUI until it responds to /system_stats."""
+        import httpx
+
+        print("  Waiting for ComfyUI to load models...")
+        start = time.time()
+        while time.time() - start < self.COMFYUI_READY_TIMEOUT:
+            try:
+                resp = httpx.get(f"{self._base_url}/system_stats", timeout=10)
+                if resp.status_code == 200:
+                    print("  ComfyUI is ready.")
+                    return
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError):
+                pass
+            time.sleep(5)
+
+        print(f"  Error: ComfyUI did not become ready within {self.COMFYUI_READY_TIMEOUT}s")
+        self._terminate_pod()
+        sys.exit(1)
+
+    def _terminate_pod(self):
+        """Terminate the pod if running."""
+        if self._pod_id is None:
+            return
+
+        import runpod
+
+        pod_id = self._pod_id
+        self._pod_id = None  # Prevent double-terminate
+
+        elapsed_h = (time.time() - self._pod_start_time) / 3600 if self._pod_start_time else 0
+        estimated_cost = elapsed_h * self.GPU_HOURLY_RATE
+
+        try:
+            runpod.api_key = os.environ.get("RUNPOD_API_KEY")
+            runpod.terminate_pod(pod_id)
+            print(f"  Pod {pod_id} terminated. Session cost: ~${estimated_cost:.2f} ({elapsed_h:.1f}hrs)")
+        except Exception as e:
+            print(f"  Warning: Failed to terminate pod {pod_id}: {e}")
+            print(f"  Manually terminate at https://www.runpod.io/console/pods")
+
+    def _build_workflow(self, prompt: str, seed: int) -> dict:
+        """Build ComfyUI API-format workflow JSON for Wan T2V."""
+        return {
+            "1": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "wan2.2_1.3B_fp8_scaled.safetensors",
+                    "weight_dtype": "fp8_e4m3fn",
+                },
+            },
+            "2": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": "t5xxl_fp8_e4m3fn.safetensors",
+                    "type": "wan",
+                    "device": "default",
+                },
+            },
+            "3": {
+                "class_type": "VAELoader",
+                "inputs": {
+                    "vae_name": "wan_vae.safetensors",
+                },
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": prompt,
+                    "clip": ["2", 0],
+                },
+            },
+            "5": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": "",
+                    "clip": ["2", 0],
+                },
+            },
+            "6": {
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "shift": 8.0,
+                    "model": ["1", 0],
+                },
+            },
+            "7": {
+                "class_type": "EmptyWanVideoLatent",
+                "inputs": {
+                    "width": 832,
+                    "height": 480,
+                    "length": 81,
+                    "batch_size": 1,
+                },
+            },
+            "8": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": 20,
+                    "cfg": 5.0,
+                    "sampler_name": "uni_pc",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["6", 0],
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "latent_image": ["7", 0],
+                },
+            },
+            "9": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["8", 0],
+                    "vae": ["3", 0],
+                },
+            },
+            "10": {
+                "class_type": "SaveAnimatedWEBP",
+                "inputs": {
+                    "filename_prefix": "lossy",
+                    "fps": 16,
+                    "lossless": False,
+                    "quality": 80,
+                    "method": "default",
+                    "images": ["9", 0],
+                },
+            },
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        clips_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+    ) -> list[ClipResult]:
+        import httpx
+
+        self._ensure_pod()
+
+        clip_path = os.path.join(clips_dir, f"{shot_index:04d}.mp4")
+        effective_seed = seed if seed is not None else shot_index
+
+        try:
+            # Submit workflow to ComfyUI
+            workflow = self._build_workflow(prompt, effective_seed)
+            resp = httpx.post(
+                f"{self._base_url}/prompt",
+                json={"prompt": workflow},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            prompt_id = resp.json()["prompt_id"]
+
+            # Poll for completion
+            start = time.time()
+            while time.time() - start < self.GENERATION_TIMEOUT:
+                resp = httpx.get(
+                    f"{self._base_url}/history/{prompt_id}",
+                    timeout=10,
+                )
+                history = resp.json()
+                if prompt_id in history:
+                    break
+                time.sleep(2)
+            else:
+                print(f"  Timeout waiting for clip {shot_index}")
+                return []
+
+            # Check for errors
+            status = history[prompt_id].get("status", {})
+            if status.get("status_str") != "success":
+                print(f"  ComfyUI error for shot {shot_index}: {status}")
+                return []
+
+            # Find output file
+            outputs = history[prompt_id].get("outputs", {})
+            output_file = None
+            for node_id, node_output in outputs.items():
+                if "images" in node_output:
+                    for item in node_output["images"]:
+                        output_file = item
+                        break
+                    if output_file:
+                        break
+
+            if not output_file:
+                print(f"  No output file found for shot {shot_index}")
+                return []
+
+            # Download output (WEBP) and convert to MP4
+            resp = httpx.get(
+                f"{self._base_url}/view",
+                params={
+                    "filename": output_file["filename"],
+                    "subfolder": output_file.get("subfolder", ""),
+                    "type": output_file.get("type", "output"),
+                },
+                timeout=60,
+                follow_redirects=True,
+            )
+            resp.raise_for_status()
+
+            # Save as temp WEBP, convert to MP4 via ffmpeg
+            webp_path = clip_path.replace(".mp4", ".webp")
+            with open(webp_path, "wb") as f:
+                f.write(resp.content)
+
+            subprocess.run(
+                [
+                    "ffmpeg", "-i", webp_path,
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-y", clip_path,
+                ],
+                capture_output=True,
+            )
+            os.remove(webp_path)
+
+            # Cost based on wall-clock time since pod started
+            elapsed_h = (time.time() - self._pod_start_time) / 3600
+            clips_so_far = len([f for f in os.listdir(clips_dir) if f.endswith(".mp4")])
+            per_clip_cost = (elapsed_h * self.GPU_HOURLY_RATE) / max(clips_so_far, 1)
+
+            return [ClipResult(path=clip_path, actual_duration_s=self.CLIP_DURATION, cost=per_clip_cost)]
+
+        except Exception as e:
+            print(f"  Error generating clip: {e}")
+            return []
+
+
 # ---------------------------------------------------------------------------
 # Prompt formatting (strategy-independent)
 # ---------------------------------------------------------------------------
@@ -543,7 +866,7 @@ def main():
                         help="Process only first N shots (after start-index)")
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
-    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro"],
+    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"],
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
     args = parser.parse_args()
@@ -557,6 +880,7 @@ def main():
             "replicate-wan": ReplicateWanStrategy,
             "fal-seedance": FalSeedanceStrategy,
             "fal-seedance-pro": FalSeedanceProStrategy,
+            "runpod-wan": RunPodWanStrategy,
         }
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)

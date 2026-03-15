@@ -9,6 +9,7 @@ from decode import (
     ClipResult,
     FalSeedanceStrategy,
     ReplicateWanStrategy,
+    RunPodWanStrategy,
     format_prompt,
 )
 
@@ -145,3 +146,40 @@ class TestReplicateWanStrategy:
 
     def test_clip_duration_constant(self):
         assert ReplicateWanStrategy.CLIP_DURATION == pytest.approx(5.0625)
+
+
+# ---------------------------------------------------------------------------
+# RunPodWanStrategy
+# ---------------------------------------------------------------------------
+
+class TestRunPodWanStrategy:
+    def test_name(self):
+        assert RunPodWanStrategy.name == "runpod-wan"
+
+    def test_clip_duration_constant(self):
+        assert RunPodWanStrategy.CLIP_DURATION == pytest.approx(5.0625)
+
+    def test_build_workflow_structure(self):
+        strategy = RunPodWanStrategy()
+        workflow = strategy._build_workflow("a cat walking", seed=42)
+
+        # Has all required nodes
+        assert "1" in workflow  # UNETLoader
+        assert "8" in workflow  # KSampler
+        assert "10" in workflow  # SaveAnimatedWEBP
+
+        # Prompt is injected
+        assert workflow["4"]["inputs"]["text"] == "a cat walking"
+
+        # Seed is injected
+        assert workflow["8"]["inputs"]["seed"] == 42
+
+        # Output dimensions are 480p 16:9
+        assert workflow["7"]["inputs"]["width"] == 832
+        assert workflow["7"]["inputs"]["height"] == 480
+        assert workflow["7"]["inputs"]["length"] == 81
+
+    def test_build_workflow_negative_prompt_empty(self):
+        strategy = RunPodWanStrategy()
+        workflow = strategy._build_workflow("test prompt", seed=1)
+        assert workflow["5"]["inputs"]["text"] == ""
