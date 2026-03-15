@@ -343,6 +343,7 @@
     <button id="btn-next" title="Next shot">Next &#8594;</button>
     <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
     <span class="spacer"></span>
+    <select id="strategy-select" style="background:#333;color:#ddd;border:1px solid #555;padding:3px 6px;border-radius:3px;font-family:monospace;font-size:12px;display:none"></select>
     <span class="sync-indicator" id="sync-info"></span>
     <span class="shot-info-bar" id="shot-info">Loading...</span>
   </div>
@@ -397,6 +398,7 @@ const promptPanel = document.getElementById('prompt-panel');
 const promptText = document.getElementById('prompt-text');
 const setupOverlay = document.getElementById('setup-overlay');
 const setupError = document.getElementById('setup-error');
+const strategySelect = document.getElementById('strategy-select');
 
 let scenes = [];
 let prompts = [];
@@ -700,6 +702,7 @@ const selectOutput = document.getElementById('input-output');
 const selectOriginal = document.getElementById('input-original');
 const outputHint = document.getElementById('output-hint');
 let scanData = null;
+let currentStrategies = []; // strategies for current output
 
 fetch('/api/scan')
   .then(r => r.json())
@@ -723,6 +726,7 @@ fetch('/api/scan')
           firstReconIdx = i;
         }
         opt.dataset.recon = o.reconstructed || '';
+        opt.dataset.strategies = JSON.stringify(o.strategies || []);
         selectOutput.appendChild(opt);
       });
       if (firstReconIdx >= 0) selectOutput.selectedIndex = firstReconIdx;
@@ -773,11 +777,42 @@ selectOriginal.addEventListener('change', updateStartButton);
 
 document.getElementById('btn-start').addEventListener('click', () => {
   const outputPath = selectOutput.value;
-  const reconPath = selectOutput.selectedOptions[0].dataset.recon;
+  const opt = selectOutput.selectedOptions[0];
+  const reconPath = opt.dataset.recon;
   const origPath = selectOriginal.value;
   if (!outputPath || !reconPath || !origPath) return;
+
+  // Populate strategy dropdown from scan data
+  currentStrategies = JSON.parse(opt.dataset.strategies || '[]');
+  strategySelect.innerHTML = '';
+  if (currentStrategies.length > 1) {
+    currentStrategies.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.path;
+      o.textContent = s.name;
+      strategySelect.appendChild(o);
+    });
+    strategySelect.style.display = '';
+  } else {
+    strategySelect.style.display = 'none';
+  }
+
   setupOverlay.classList.add('hidden');
   init(origPath, reconPath, outputPath);
+});
+
+// Strategy switch — swap reconstructed video, keep position
+strategySelect.addEventListener('change', () => {
+  const wasPlaying = !vidOrig.paused;
+  if (wasPlaying) pauseBoth();
+  const origTime = vidOrig.currentTime;
+  vidRecon.src = strategySelect.value;
+  vidRecon.addEventListener('loadedmetadata', function onLoad() {
+    vidRecon.removeEventListener('loadedmetadata', onLoad);
+    const idx = findShot(origTime);
+    seekBoth(origTime, idx);
+    if (wasPlaying) playBoth();
+  });
 });
 
 // -- Timeline click --

@@ -22,10 +22,22 @@ def scan_project():
             if not os.path.isfile(manifest):
                 continue
             entry = {"name": name, "path": f"/output/{name}"}
-            # Check for reconstructed video
-            recon = os.path.join(dirpath, "reconstructed.mp4")
-            if os.path.isfile(recon):
-                entry["reconstructed"] = f"/output/{name}/reconstructed.mp4"
+            # Find all reconstructed videos (per-strategy and legacy)
+            strategies = []
+            for fname in sorted(os.listdir(dirpath)):
+                if fname.startswith("reconstructed") and fname.endswith(".mp4"):
+                    if fname == "reconstructed.mp4":
+                        strategy_name = "default"
+                    else:
+                        # reconstructed_fal-seedance.mp4 -> fal-seedance
+                        strategy_name = fname[len("reconstructed_"):-len(".mp4")]
+                    strategies.append({
+                        "name": strategy_name,
+                        "path": f"/output/{name}/{fname}",
+                    })
+            if strategies:
+                entry["strategies"] = strategies
+                entry["reconstructed"] = strategies[0]["path"]
             # Check for prompts
             if os.path.isfile(os.path.join(dirpath, "prompts.json")):
                 entry["has_prompts"] = True

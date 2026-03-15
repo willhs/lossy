@@ -299,11 +299,11 @@ def run_decode(args, strategy: GenerationStrategy):
         prompts = prompts[:args.limit]
         print(f"Processing {len(prompts)} shots")
 
-    clips_dir = os.path.join(output_dir, "clips")
+    clips_dir = os.path.join(output_dir, "clips", strategy.name)
     os.makedirs(clips_dir, exist_ok=True)
 
-    # Track progress for resume
-    progress_path = os.path.join(output_dir, "decode_progress.json")
+    # Track progress for resume (per-strategy)
+    progress_path = os.path.join(output_dir, f"decode_progress_{strategy.name}.json")
     if os.path.exists(progress_path):
         with open(progress_path) as f:
             progress = json.load(f)
@@ -419,12 +419,18 @@ def stitch_clips(args):
     falls back to ffprobe for clips without metadata.
     """
     output_dir = args.output_dir
-    clips_dir = os.path.join(output_dir, "clips")
+    strategy_name = args.strategy
+    clips_dir = os.path.join(output_dir, "clips", strategy_name)
     prompts_path = os.path.join(output_dir, "prompts.json")
 
     if not os.path.exists(clips_dir):
-        print(f"Error: {clips_dir} not found. Run decode first.")
-        sys.exit(1)
+        # Fall back to flat clips/ for backwards compat with old runs
+        clips_dir_flat = os.path.join(output_dir, "clips")
+        if os.path.exists(clips_dir_flat):
+            clips_dir = clips_dir_flat
+        else:
+            print(f"Error: {clips_dir} not found. Run decode first.")
+            sys.exit(1)
 
     with open(prompts_path) as f:
         prompts = json.load(f)
@@ -432,8 +438,10 @@ def stitch_clips(args):
     if args.start_index:
         prompts = [p for p in prompts if p["index"] >= args.start_index]
 
-    # Load clip metadata from progress
-    progress_path = os.path.join(output_dir, "decode_progress.json")
+    # Load clip metadata from progress (try per-strategy, fall back to legacy)
+    progress_path = os.path.join(output_dir, f"decode_progress_{strategy_name}.json")
+    if not os.path.exists(progress_path):
+        progress_path = os.path.join(output_dir, "decode_progress.json")
     clips_meta = {}
     if os.path.exists(progress_path):
         with open(progress_path) as f:
@@ -466,7 +474,7 @@ def stitch_clips(args):
     print(f"Stitching {len(clip_entries)} clips...")
 
     # Speed-adjust each clip to match original duration, write to temp dir
-    adjusted_dir = os.path.join(output_dir, "adjusted")
+    adjusted_dir = os.path.join(output_dir, "adjusted", strategy_name)
     os.makedirs(adjusted_dir, exist_ok=True)
 
     concat_list = []
@@ -503,7 +511,7 @@ def stitch_clips(args):
             f.write(f"file '{os.path.abspath(path)}'\n")
 
     # Concatenate
-    output_path = os.path.join(output_dir, "reconstructed.mp4")
+    output_path = os.path.join(output_dir, f"reconstructed_{strategy_name}.mp4")
     subprocess.run(
         [
             "ffmpeg", "-f", "concat", "-safe", "0",
