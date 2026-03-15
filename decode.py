@@ -219,19 +219,25 @@ class RunPodWanStrategy(GenerationStrategy):
 
     name = "runpod-wan"
     CLIP_DURATION = 81 / 16  # ~5.0625s (81 frames at 16fps)
-    GPU_TYPE = "NVIDIA GeForce RTX 4090"
-    GPU_HOURLY_RATE = 0.34  # $/hr community cloud
-    DOCKER_IMAGE = "ghcr.io/lum3on/wan22-runpod:latest"
+    GPU_TYPES = [
+        ("NVIDIA GeForce RTX 4090", 0.34),
+        ("NVIDIA RTX A5000", 0.34),
+        ("NVIDIA RTX 4000 Ada Generation", 0.34),
+        ("NVIDIA L40S", 0.54),
+        ("NVIDIA RTX A6000", 0.52),
+    ]
+    DOCKER_IMAGE = "runpod/comfyui:latest"
     CONTAINER_DISK_GB = 50
     COMFYUI_PORT = 8188
     POD_READY_TIMEOUT = 600  # 10 min for image pull + model load
-    COMFYUI_READY_TIMEOUT = 300  # 5 min for ComfyUI to start serving
+    COMFYUI_READY_TIMEOUT = 600  # 10 min for ComfyUI to start serving (large image + model load)
     GENERATION_TIMEOUT = 300  # 5 min per clip
 
     def __init__(self):
         self._pod_id: str | None = None
         self._base_url: str | None = None
         self._pod_start_time: float | None = None
+        self._gpu_hourly_rate: float = self.GPU_TYPES[0][1]
         self._setup_cleanup_handler()
 
     def _setup_cleanup_handler(self):
@@ -269,18 +275,46 @@ class RunPodWanStrategy(GenerationStrategy):
             print("Error: RUNPOD_API_KEY not set in .env or environment.")
             sys.exit(1)
 
-        print(f"  Creating RunPod pod ({self.GPU_TYPE})...")
-        pod = runpod.create_pod(
-            name="lossy-comfyui",
-            image_name=self.DOCKER_IMAGE,
-            gpu_type_id=self.GPU_TYPE,
-            cloud_type="COMMUNITY",
-            gpu_count=1,
-            container_disk_in_gb=self.CONTAINER_DISK_GB,
-            ports=f"{self.COMFYUI_PORT}/http",
-            support_public_ip=True,
-        )
+        # Try GPU types in order until one is available
+        pod = None
+        gpu_rate = self.GPU_TYPES[0][1]  # fallback rate
+        for gpu_type, rate in self.GPU_TYPES:
+            print(f"  Trying {gpu_type}...")
+            try:
+                # Read SSH public key for model downloads
+                ssh_pubkey = ""
+                pubkey_path = os.path.expanduser("~/.ssh/id_ed25519.pub")
+                if not os.path.exists(pubkey_path):
+                    pubkey_path = os.path.expanduser("~/.ssh/id_rsa.pub")
+                if os.path.exists(pubkey_path):
+                    with open(pubkey_path) as f:
+                        ssh_pubkey = f.read().strip()
+
+                pod = runpod.create_pod(
+                    name="lossy-comfyui",
+                    image_name=self.DOCKER_IMAGE,
+                    gpu_type_id=gpu_type,
+                    cloud_type="COMMUNITY",
+                    gpu_count=1,
+                    container_disk_in_gb=self.CONTAINER_DISK_GB,
+                    ports=f"{self.COMFYUI_PORT}/http,22/tcp",
+                    support_public_ip=True,
+                    start_ssh=True,
+                    env={"PUBLIC_KEY": ssh_pubkey} if ssh_pubkey else None,
+                )
+                gpu_rate = rate
+                print(f"  Got {gpu_type} @ ${rate}/hr")
+                break
+            except Exception as e:
+                print(f"  {gpu_type} unavailable: {e}")
+                continue
+
+        if pod is None:
+            print("Error: No GPU available. Try again later.")
+            sys.exit(1)
+
         self._pod_id = pod["id"]
+        self._gpu_hourly_rate = gpu_rate
         self._pod_start_time = time.time()
         print(f"  Pod created: {self._pod_id}")
 
@@ -302,8 +336,14 @@ class RunPodWanStrategy(GenerationStrategy):
         self._base_url = f"https://{self._pod_id}-{self.COMFYUI_PORT}.proxy.runpod.net"
         print(f"  Pod ready: {self._base_url}")
 
+        # Download Wan models via SSH (runs in parallel with ComfyUI startup)
+        self._download_models()
+
         # Wait for ComfyUI to be serving
         self._wait_for_comfyui()
+
+        # Verify models are available; if not, restart ComfyUI
+        self._ensure_models_loaded()
 
     def _wait_for_comfyui(self):
         """Poll ComfyUI until it responds to /system_stats."""
@@ -317,13 +357,127 @@ class RunPodWanStrategy(GenerationStrategy):
                 if resp.status_code == 200:
                     print("  ComfyUI is ready.")
                     return
+                # 502/503 expected while container is starting
             except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError):
                 pass
+            elapsed = int(time.time() - start)
+            print(f"  Waiting for ComfyUI... ({elapsed}s)", end="\r")
             time.sleep(5)
 
         print(f"  Error: ComfyUI did not become ready within {self.COMFYUI_READY_TIMEOUT}s")
         self._terminate_pod()
         sys.exit(1)
+
+    def _ensure_models_loaded(self):
+        """Check if Wan models are visible to ComfyUI; restart if not."""
+        import httpx
+
+        try:
+            resp = httpx.get(f"{self._base_url}/object_info/UNETLoader", timeout=10)
+            if resp.status_code == 200:
+                info = resp.json()
+                unet_names = info.get("UNETLoader", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
+                if any("wan" in n.lower() for n in unet_names):
+                    print("  Wan models detected by ComfyUI.")
+                    return
+        except Exception:
+            pass
+
+        # Models not found — restart ComfyUI to rescan
+        print("  Models not detected — restarting ComfyUI to rescan...")
+        ssh = self._get_ssh_info()
+        if ssh:
+            ssh_host, ssh_port = ssh
+            self._ssh_cmd(ssh_host, ssh_port,
+                          "supervisorctl restart comfyui 2>/dev/null || "
+                          "(pkill -f 'python.*main.py' && sleep 2 && "
+                          "cd /workspace/ComfyUI && nohup python main.py --listen 0.0.0.0 --port 8188 > /dev/null 2>&1 &)",
+                          timeout=30)
+            self._wait_for_comfyui()
+        else:
+            print("  Warning: No SSH — cannot restart ComfyUI. Models may be missing.")
+
+    # Models to download (Comfy-Org repackaged for ComfyUI)
+    WAN_MODELS = [
+        (
+            "vae/wan2.1_vae.safetensors",
+            "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B/resolve/main/Wan2.1_VAE.safetensors",
+        ),
+        (
+            "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        ),
+        (
+            "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+        ),
+    ]
+
+    def _ssh_cmd(self, ssh_host: str, ssh_port: int, cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
+        """Run a command on the pod via SSH."""
+        return subprocess.run(
+            [
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR",
+                "-o", "ServerAliveInterval=30",
+                "-p", str(ssh_port),
+                f"root@{ssh_host}",
+                cmd,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def _get_ssh_info(self) -> tuple[str, int] | None:
+        """Get SSH host and port from pod runtime."""
+        import runpod
+
+        pod_info = runpod.get_pod(self._pod_id)
+        for port_info in pod_info.get("runtime", {}).get("ports", []):
+            if port_info["privatePort"] == 22 and port_info["isIpPublic"]:
+                return port_info["ip"], port_info["publicPort"]
+        return None
+
+    def _download_models(self):
+        """Download Wan models to the pod via SSH if not already present."""
+        ssh = self._get_ssh_info()
+        if not ssh:
+            print("  Warning: No SSH access. Models must be manually placed.")
+            return
+
+        ssh_host, ssh_port = ssh
+        models_dir = "/workspace/ComfyUI/models"
+
+        print(f"  Downloading Wan models via SSH ({ssh_host}:{ssh_port})...")
+
+        # Download each model individually to avoid SSH timeout on long transfers
+        for dest_path, url in self.WAN_MODELS:
+            full_path = f"{models_dir}/{dest_path}"
+            dir_path = os.path.dirname(full_path)
+            filename = os.path.basename(dest_path)
+
+            # Check if already exists
+            check = self._ssh_cmd(ssh_host, ssh_port, f"[ -f {full_path} ] && echo exists || echo missing")
+            if check.returncode == 0 and "exists" in check.stdout:
+                print(f"    {filename}: already exists")
+                continue
+
+            print(f"    {filename}: downloading...")
+            result = self._ssh_cmd(
+                ssh_host, ssh_port,
+                f"mkdir -p {dir_path} && wget -q -O {full_path} '{url}' && echo OK",
+                timeout=600,
+            )
+            if result.returncode == 0 and "OK" in result.stdout:
+                print(f"    {filename}: done")
+            else:
+                print(f"    {filename}: FAILED (exit {result.returncode})")
+                if result.stderr:
+                    print(f"      {result.stderr[:200]}")
+
 
     def _terminate_pod(self):
         """Terminate the pod if running."""
@@ -336,7 +490,8 @@ class RunPodWanStrategy(GenerationStrategy):
         self._pod_id = None  # Prevent double-terminate
 
         elapsed_h = (time.time() - self._pod_start_time) / 3600 if self._pod_start_time else 0
-        estimated_cost = elapsed_h * self.GPU_HOURLY_RATE
+        rate = getattr(self, "_gpu_hourly_rate", self.GPU_TYPES[0][1])
+        estimated_cost = elapsed_h * rate
 
         try:
             runpod.api_key = os.environ.get("RUNPOD_API_KEY")
@@ -352,14 +507,14 @@ class RunPodWanStrategy(GenerationStrategy):
             "1": {
                 "class_type": "UNETLoader",
                 "inputs": {
-                    "unet_name": "wan2.2_1.3B_fp8_scaled.safetensors",
-                    "weight_dtype": "fp8_e4m3fn",
+                    "unet_name": "wan2.1_t2v_1.3B_fp16.safetensors",
+                    "weight_dtype": "default",
                 },
             },
             "2": {
                 "class_type": "CLIPLoader",
                 "inputs": {
-                    "clip_name": "t5xxl_fp8_e4m3fn.safetensors",
+                    "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
                     "type": "wan",
                     "device": "default",
                 },
@@ -367,7 +522,7 @@ class RunPodWanStrategy(GenerationStrategy):
             "3": {
                 "class_type": "VAELoader",
                 "inputs": {
-                    "vae_name": "wan_vae.safetensors",
+                    "vae_name": "wan2.1_vae.safetensors",
                 },
             },
             "4": {
@@ -392,9 +547,9 @@ class RunPodWanStrategy(GenerationStrategy):
                 },
             },
             "7": {
-                "class_type": "EmptyWanVideoLatent",
+                "class_type": "EmptyHunyuanLatentVideo",
                 "inputs": {
-                    "width": 832,
+                    "width": 848,
                     "height": 480,
                     "length": 81,
                     "batch_size": 1,
@@ -458,7 +613,10 @@ class RunPodWanStrategy(GenerationStrategy):
                 json={"prompt": workflow},
                 timeout=30,
             )
-            resp.raise_for_status()
+            if resp.status_code != 200:
+                error_detail = resp.text[:300] if resp.text else "no body"
+                print(f"  ComfyUI rejected workflow ({resp.status_code}): {error_detail}")
+                return []
             prompt_id = resp.json()["prompt_id"]
 
             # Poll for completion
@@ -527,8 +685,9 @@ class RunPodWanStrategy(GenerationStrategy):
 
             # Cost based on wall-clock time since pod started
             elapsed_h = (time.time() - self._pod_start_time) / 3600
+            rate = getattr(self, "_gpu_hourly_rate", self.GPU_TYPES[0][1])
             clips_so_far = len([f for f in os.listdir(clips_dir) if f.endswith(".mp4")])
-            per_clip_cost = (elapsed_h * self.GPU_HOURLY_RATE) / max(clips_so_far, 1)
+            per_clip_cost = (elapsed_h * rate) / max(clips_so_far, 1)
 
             return [ClipResult(path=clip_path, actual_duration_s=self.CLIP_DURATION, cost=per_clip_cost)]
 

@@ -175,9 +175,13 @@ class TestRunPodWanStrategy:
         assert workflow["8"]["inputs"]["seed"] == 42
 
         # Output dimensions are 480p 16:9
-        assert workflow["7"]["inputs"]["width"] == 832
+        assert workflow["7"]["inputs"]["width"] == 848
         assert workflow["7"]["inputs"]["height"] == 480
         assert workflow["7"]["inputs"]["length"] == 81
+
+        # Model filenames match what we download
+        assert "wan2.1" in workflow["1"]["inputs"]["unet_name"]
+        assert "umt5_xxl" in workflow["2"]["inputs"]["clip_name"]
 
     def test_build_workflow_negative_prompt_empty(self):
         strategy = RunPodWanStrategy()
