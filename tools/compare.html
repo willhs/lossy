@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>lossy — original vs reconstructed</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; color: #ddd; font-family: monospace; font-size: 13px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    grid-template-rows: 1fr auto auto;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* Dual video area */
+  .video-area {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    background: #000;
+    min-height: 0;
+  }
+  .video-pair {
+    flex: 1;
+    display: flex;
+    gap: 2px;
+    min-height: 0;
+    background: #000;
+  }
+  .video-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+  }
+  .video-pane video {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    object-fit: contain;
+    background: #000;
+    cursor: pointer;
+  }
+  .pane-label {
+    position: absolute;
+    top: 8px;
+    left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    z-index: 5;
+    pointer-events: none;
+  }
+  .pane-label.original { color: #4af; }
+  .pane-label.reconstructed { color: #f84; }
+  .divider {
+    width: 2px;
+    background: #333;
+    align-self: stretch;
+    flex-shrink: 0;
+  }
+
+  /* Controls bar */
+  .controls {
+    grid-column: 1;
+    grid-row: 2;
+    padding: 8px 12px;
+    background: #1a1a1a;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid #333;
+  }
+  .controls button {
+    background: #333;
+    color: #ddd;
+    border: 1px solid #555;
+    padding: 4px 12px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 12px;
+  }
+  .controls button:hover { background: #444; }
+  .controls button:active { background: #555; }
+  .controls button.active { background: #553300; border-color: #fb0; color: #fb0; }
+  .controls .spacer { flex: 1; }
+  .shot-info-bar { color: #fb0; }
+  .sync-indicator { color: #888; font-size: 11px; }
+  .sync-indicator.warn { color: #f44; }
+
+  /* Timeline */
+  .timeline-container {
+    grid-column: 1;
+    grid-row: 3;
+    padding: 8px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #333;
+  }
+  .timeline {
+    position: relative;
+    height: 32px;
+    background: #222;
+    border-radius: 3px;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .timeline-shot {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-right: 1px solid rgba(255, 180, 0, 0.6);
+    transition: background 0.1s;
+  }
+  .timeline-shot:hover { background: rgba(255, 180, 0, 0.15); }
+  .timeline-shot.active { background: rgba(255, 180, 0, 0.25); }
+  .timeline-shot.not-decoded { opacity: 0.25; }
+  .timeline-playhead {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: #fff;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .time-label {
+    margin-top: 4px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #888;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    grid-column: 2;
+    grid-row: 1 / 4;
+    border-left: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .sidebar-header {
+    padding: 10px 12px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #333;
+    font-size: 14px;
+    font-weight: bold;
+    color: #fb0;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* View mode tabs */
+  .view-tabs {
+    display: flex;
+    border-bottom: 1px solid #333;
+    background: #1a1a1a;
+  }
+  .view-tab {
+    flex: 1;
+    padding: 6px 8px;
+    text-align: center;
+    cursor: pointer;
+    font-size: 11px;
+    color: #888;
+    border-bottom: 2px solid transparent;
+  }
+  .view-tab:hover { color: #ddd; }
+  .view-tab.active { color: #fb0; border-bottom-color: #fb0; }
+
+  .shot-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .shot-item {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 8px;
+    padding: 5px 8px;
+    cursor: pointer;
+    border-bottom: 1px solid #222;
+    align-items: center;
+  }
+  .shot-item.two-col {
+    grid-template-columns: 80px 1fr;
+  }
+  .shot-item:hover { background: #1a1a1a; }
+  .shot-item.active { background: #2a2200; border-left: 3px solid #fb0; }
+  .shot-item.not-decoded { opacity: 0.4; }
+  .shot-item img {
+    width: 100%;
+    height: 26px;
+    object-fit: cover;
+    border-radius: 2px;
+    background: #222;
+  }
+  .shot-item img.placeholder {
+    background: #2a1a00;
+    border: 1px dashed #553300;
+  }
+  .shot-meta { font-size: 10px; line-height: 1.4; }
+  .shot-meta .shot-num { color: #fb0; }
+  .shot-meta .shot-time { color: #888; }
+  .shot-meta .shot-dur { color: #aaa; }
+
+  /* Prompt panel */
+  .prompt-panel {
+    border-top: 1px solid #333;
+    background: #1a1a1a;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #aaa;
+    display: none;
+  }
+  .prompt-panel.visible { display: block; }
+  .prompt-panel .prompt-label { color: #fb0; font-weight: bold; margin-bottom: 4px; }
+  .prompt-panel .prompt-text { color: #ddd; }
+
+  .help {
+    padding: 8px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #333;
+    font-size: 10px;
+    color: #666;
+    line-height: 1.6;
+  }
+
+  /* Setup overlay */
+  .setup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .setup-overlay.hidden { display: none; }
+  .setup-box {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 32px;
+    max-width: 560px;
+    width: 100%;
+  }
+  .setup-box h2 { color: #fb0; margin-bottom: 16px; }
+  .setup-box p { margin-bottom: 12px; line-height: 1.5; color: #aaa; }
+  .setup-box code {
+    background: #222;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #ddd;
+  }
+  .setup-box .field { margin-bottom: 16px; }
+  .setup-box label { display: block; margin-bottom: 4px; color: #888; font-size: 12px; }
+  .setup-box select, .setup-box input {
+    width: 100%;
+    background: #222;
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 8px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 13px;
+    appearance: auto;
+  }
+  .setup-box select option { background: #222; color: #ddd; }
+  .setup-box button {
+    background: #fb0;
+    color: #111;
+    border: none;
+    padding: 8px 24px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 13px;
+    font-weight: bold;
+  }
+  .setup-box button:hover { background: #fc3; }
+  .setup-box button:disabled { background: #555; color: #888; cursor: default; }
+  .setup-box .error { color: #f44; font-size: 12px; margin-top: 8px; display: none; }
+  .setup-box .hint { color: #666; font-size: 11px; margin-top: 4px; }
+  .setup-box .no-recon { color: #f84; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<!-- Setup overlay -->
+<div class="setup-overlay" id="setup-overlay">
+  <div class="setup-box">
+    <h2>lossy comparator</h2>
+    <p>Start with: <code>python tools/serve.py</code></p>
+    <div class="field">
+      <label>Output run</label>
+      <select id="input-output" disabled>
+        <option value="">Scanning...</option>
+      </select>
+      <div class="hint" id="output-hint"></div>
+    </div>
+    <div class="field">
+      <label>Original video</label>
+      <select id="input-original" disabled>
+        <option value="">Scanning...</option>
+      </select>
+    </div>
+    <button id="btn-start" disabled>Start</button>
+    <div class="error" id="setup-error"></div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="video-area">
+    <div class="video-pair">
+      <div class="video-pane">
+        <span class="pane-label original">ORIGINAL</span>
+        <video id="vid-original" preload="metadata" muted></video>
+      </div>
+      <div class="divider"></div>
+      <div class="video-pane">
+        <span class="pane-label reconstructed">RECONSTRUCTED</span>
+        <video id="vid-reconstructed" preload="metadata" muted></video>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-prev" title="Previous shot">&#8592; Prev</button>
+    <button id="btn-play" title="Play/pause both">Play</button>
+    <button id="btn-next" title="Next shot">Next &#8594;</button>
+    <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
+    <span class="spacer"></span>
+    <span class="sync-indicator" id="sync-info"></span>
+    <span class="shot-info-bar" id="shot-info">Loading...</span>
+  </div>
+
+  <div class="timeline-container">
+    <div class="timeline" id="timeline">
+      <div class="timeline-playhead" id="playhead"></div>
+    </div>
+    <div class="time-label">
+      <span id="time-current">00:00:00</span>
+      <span id="time-total">--:--:--</span>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span>Shots</span>
+      <span id="shot-count">&mdash;</span>
+    </div>
+    <div class="view-tabs">
+      <div class="view-tab active" data-view="paired">Paired</div>
+      <div class="view-tab" data-view="prompt">With prompt</div>
+    </div>
+    <div class="shot-list" id="shot-list"></div>
+    <div class="prompt-panel" id="prompt-panel">
+      <div class="prompt-label">Prompt</div>
+      <div class="prompt-text" id="prompt-text"></div>
+    </div>
+    <div class="help">
+      <b>Keys:</b> Space=play/pause, &#8592;/&#8594;=prev/next shot,
+      [/]=step &plusmn;1s, L=loop shot, M=mute/unmute original
+    </div>
+  </div>
+</div>
+
+<script>
+const vidOrig = document.getElementById('vid-original');
+const vidRecon = document.getElementById('vid-reconstructed');
+const timeline = document.getElementById('timeline');
+const playhead = document.getElementById('playhead');
+const shotList = document.getElementById('shot-list');
+const shotInfo = document.getElementById('shot-info');
+const shotCount = document.getElementById('shot-count');
+const syncInfo = document.getElementById('sync-info');
+const timeCurrent = document.getElementById('time-current');
+const timeTotal = document.getElementById('time-total');
+const btnPlay = document.getElementById('btn-play');
+const btnPrev = document.getElementById('btn-prev');
+const btnNext = document.getElementById('btn-next');
+const btnSolo = document.getElementById('btn-solo');
+const promptPanel = document.getElementById('prompt-panel');
+const promptText = document.getElementById('prompt-text');
+const setupOverlay = document.getElementById('setup-overlay');
+const setupError = document.getElementById('setup-error');
+
+let scenes = [];
+let prompts = [];
+let activeShot = -1;
+let loopShot = false;
+let viewMode = 'paired';
+
+// Reconstruction mapping: shot index -> { reconStart, reconEnd } in reconstructed video
+// null for shots that weren't decoded
+let reconMap = {};
+let decodedShots = new Set();
+
+// -- Formatting --
+function fmt(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+// -- Shot lookup (in original video time) --
+function findShot(time) {
+  let lo = 0, hi = scenes.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (time < scenes[mid].start_s) hi = mid - 1;
+    else if (time >= scenes[mid].end_s) lo = mid + 1;
+    else return mid;
+  }
+  return Math.max(0, Math.min(lo, scenes.length - 1));
+}
+
+// -- Build reconstruction time mapping --
+function buildReconMap(decodedIndices) {
+  reconMap = {};
+  decodedShots = new Set(decodedIndices);
+  // Decoded shots are stitched sequentially in the reconstructed video
+  const sorted = [...decodedIndices].sort((a, b) => a - b);
+  let offset = 0;
+  for (const idx of sorted) {
+    const dur = scenes[idx].duration_s;
+    reconMap[idx] = { reconStart: offset, reconEnd: offset + dur };
+    offset += dur;
+  }
+}
+
+// Get reconstructed video time for a given shot index + offset within shot
+function reconTimeForShot(idx, offsetInShot = 0) {
+  const mapping = reconMap[idx];
+  if (!mapping) return null;
+  return mapping.reconStart + offsetInShot;
+}
+
+// -- Sync engine --
+// Original is the leader; reconstructed follows via shot mapping.
+// For contiguous decoded shots, both videos play freely at 1x — no seeking needed.
+// We only seek the reconstructed video on explicit jumps or when entering/leaving
+// decoded regions. Light drift correction at large thresholds only.
+let isSeeking = false;
+let lastSyncedShot = -1;  // Track shot transitions
+
+function syncReconToOrig() {
+  if (isSeeking) return;
+  const t = vidOrig.currentTime;
+  const idx = findShot(t);
+  const mapping = reconMap[idx];
+
+  if (!mapping) {
+    // Current shot not decoded — don't pause recon (browser autoplay policy
+    // would block re-playing it from a non-user-gesture context). Just show indicator.
+    syncInfo.textContent = 'not decoded';
+    syncInfo.className = 'sync-indicator warn';
+    lastSyncedShot = idx;
+    return;
+  }
+
+  const offsetInShot = t - scenes[idx].start_s;
+  const targetReconTime = mapping.reconStart + offsetInShot;
+
+  // Did we just transition into a decoded shot from a non-decoded region?
+  const enteredNewRegion = lastSyncedShot !== -1 && !decodedShots.has(lastSyncedShot) && decodedShots.has(idx);
+  lastSyncedShot = idx;
+
+  if (enteredNewRegion) {
+    // Entering decoded region — hard seek to correct position
+    vidRecon.currentTime = targetReconTime;
+    syncInfo.textContent = '';
+    syncInfo.className = 'sync-indicator';
+    return;
+  }
+
+  // During normal playback of contiguous decoded shots, only correct large drift.
+  // Small drift is natural; seeking causes stutter and can break playback.
+  const drift = Math.abs(vidRecon.currentTime - targetReconTime);
+  if (drift > 1.0) {
+    vidRecon.currentTime = targetReconTime;
+    syncInfo.textContent = `corrected ${drift.toFixed(1)}s`;
+    syncInfo.className = 'sync-indicator warn';
+  } else if (drift > 0.5) {
+    syncInfo.textContent = `drift: ${drift.toFixed(2)}s`;
+    syncInfo.className = 'sync-indicator warn';
+  } else {
+    syncInfo.textContent = '';
+    syncInfo.className = 'sync-indicator';
+  }
+}
+
+function seekBoth(origTime, shotIdx) {
+  isSeeking = true;
+  vidOrig.currentTime = origTime;
+  const idx = shotIdx !== undefined ? shotIdx : findShot(origTime);
+  const mapping = reconMap[idx];
+  if (mapping) {
+    const offsetInShot = origTime - scenes[idx].start_s;
+    vidRecon.currentTime = mapping.reconStart + Math.max(0, offsetInShot);
+  }
+  lastSyncedShot = idx;
+  setTimeout(() => { isSeeking = false; }, 150);
+}
+
+function playBoth() {
+  vidOrig.play();
+  // Always play reconstructed — browser requires user-gesture to start playback.
+  // If current shot isn't decoded, sync engine will just let it sit at its position.
+  vidRecon.play();
+  btnPlay.textContent = 'Pause';
+}
+
+function pauseBoth() {
+  vidOrig.pause();
+  vidRecon.pause();
+  btnPlay.textContent = 'Play';
+}
+
+function togglePlay() {
+  if (vidOrig.paused) playBoth();
+  else pauseBoth();
+}
+
+// -- Active shot management --
+function setActiveShot(idx) {
+  if (idx === activeShot) return;
+  const prev = document.querySelector('.shot-item.active');
+  if (prev) prev.classList.remove('active');
+  const prevTl = document.querySelector('.timeline-shot.active');
+  if (prevTl) prevTl.classList.remove('active');
+
+  activeShot = idx;
+  const el = document.getElementById(`shot-${idx}`);
+  if (el) {
+    el.classList.add('active');
+    el.scrollIntoView({ block: 'nearest' });
+  }
+  const tlEl = document.getElementById(`tl-${idx}`);
+  if (tlEl) tlEl.classList.add('active');
+
+  const s = scenes[idx];
+  const decoded = decodedShots.has(idx);
+  const tag = decoded ? '' : '  [not decoded]';
+  shotInfo.textContent = `Shot ${idx + 1}/${scenes.length}  |  ${s.start_timecode} \u2192 ${s.end_timecode}  |  ${s.duration_s.toFixed(2)}s${tag}`;
+
+  // Update prompt panel
+  if (prompts.length > idx) {
+    const p = prompts[idx];
+    promptText.textContent = p.formatted_prompt || p.prompt || '(no prompt)';
+  } else {
+    promptText.textContent = '(no prompt data)';
+  }
+
+}
+
+function jumpToShot(idx) {
+  if (idx < 0 || idx >= scenes.length) return;
+  seekBoth(scenes[idx].start_s, idx);
+  setActiveShot(idx);
+}
+
+// -- Shot looping --
+function checkShotLoop() {
+  if (!loopShot || activeShot < 0) return;
+  const s = scenes[activeShot];
+  if (vidOrig.currentTime >= s.end_s) {
+    seekBoth(s.start_s, activeShot);
+  }
+}
+
+// -- Build UI --
+function buildTimeline() {
+  const duration = scenes[scenes.length - 1].end_s;
+  scenes.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'timeline-shot';
+    if (!decodedShots.has(i)) el.classList.add('not-decoded');
+    el.id = `tl-${i}`;
+    el.style.left = `${(s.start_s / duration) * 100}%`;
+    el.style.width = `${((s.end_s - s.start_s) / duration) * 100}%`;
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      jumpToShot(i);
+    });
+    timeline.appendChild(el);
+  });
+}
+
+function buildShotList() {
+  shotList.innerHTML = '';
+  scenes.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = viewMode === 'prompt' ? 'shot-item two-col' : 'shot-item';
+    if (!decodedShots.has(i)) el.classList.add('not-decoded');
+    el.id = `shot-${i}`;
+
+    if (viewMode === 'paired') {
+      el.innerHTML = `
+        <img src="${outputBase}/keyframes/${s.keyframes[0]}" loading="lazy" alt="Shot ${i+1}">
+        <div class="shot-meta">
+          <div><span class="shot-num">#${i+1}</span> <span class="shot-dur">${s.duration_s.toFixed(1)}s</span></div>
+          <div class="shot-time">${s.start_timecode}</div>
+        </div>
+      `;
+    } else {
+      const promptExcerpt = prompts[i]
+        ? (prompts[i].formatted_prompt || prompts[i].prompt || '').slice(0, 80) + '...'
+        : '';
+      el.innerHTML = `
+        <img src="${outputBase}/keyframes/${s.keyframes[0]}" loading="lazy" alt="Shot ${i+1}">
+        <div class="shot-meta">
+          <div><span class="shot-num">#${i+1}</span> <span class="shot-dur">${s.duration_s.toFixed(1)}s</span></div>
+          <div class="shot-time" style="color:#aaa">${promptExcerpt}</div>
+        </div>
+      `;
+    }
+    el.addEventListener('click', () => jumpToShot(i));
+    shotList.appendChild(el);
+  });
+}
+
+let outputBase = ''; // e.g. "/output/star_wars_iv_v2"
+
+// -- Initialization --
+function init(originalSrc, reconSrc, base) {
+  outputBase = base;
+  vidOrig.src = originalSrc;
+  vidRecon.src = reconSrc;
+
+  // Load manifest, prompts, and decode progress
+  Promise.all([
+    fetch(`${base}/manifest.json`).then(r => r.json()),
+    fetch(`${base}/prompts.json`).then(r => r.json()).catch(() => []),
+    fetch(`${base}/decode_progress.json`).then(r => r.json()).catch(() => null)
+  ]).then(([manifest, promptData, progress]) => {
+    scenes = manifest.scenes;
+    prompts = promptData;
+
+    // Build reconstruction mapping from decode progress
+    let decodedIndices = [];
+    if (progress && progress.completed) {
+      decodedIndices = progress.completed;
+    } else {
+      // Fallback: assume all shots are decoded (full reconstruction)
+      decodedIndices = scenes.map((_, i) => i);
+    }
+    buildReconMap(decodedIndices);
+
+    const decodedCount = decodedIndices.length;
+    shotCount.textContent = `${decodedCount}/${scenes.length}`;
+
+    buildTimeline();
+    buildShotList();
+
+    // Start on the first decoded shot if possible
+    const firstDecoded = [...decodedIndices].sort((a, b) => a - b)[0] || 0;
+    setActiveShot(firstDecoded);
+    seekBoth(scenes[firstDecoded].start_s, firstDecoded);
+  });
+
+  // Time updates from original (leader)
+  vidOrig.addEventListener('timeupdate', () => {
+    const t = vidOrig.currentTime;
+    const dur = vidOrig.duration || 1;
+    playhead.style.left = `${(t / dur) * 100}%`;
+    timeCurrent.textContent = fmt(t);
+
+    const idx = findShot(t);
+    setActiveShot(idx);
+
+    syncReconToOrig();
+    checkShotLoop();
+  });
+
+  vidOrig.addEventListener('loadedmetadata', () => {
+    timeTotal.textContent = fmt(vidOrig.duration);
+  });
+
+  vidOrig.addEventListener('play', () => btnPlay.textContent = 'Pause');
+  vidOrig.addEventListener('pause', () => btnPlay.textContent = 'Play');
+}
+
+// -- Scan API + setup form --
+const selectOutput = document.getElementById('input-output');
+const selectOriginal = document.getElementById('input-original');
+const outputHint = document.getElementById('output-hint');
+let scanData = null;
+
+fetch('/api/scan')
+  .then(r => r.json())
+  .then(data => {
+    scanData = data;
+
+    // Populate output dropdown — prefer first with a reconstructed video
+    selectOutput.innerHTML = '';
+    if (data.outputs.length === 0) {
+      selectOutput.innerHTML = '<option value="">No output runs found</option>';
+    } else {
+      let firstReconIdx = -1;
+      data.outputs.forEach((o, i) => {
+        const opt = document.createElement('option');
+        opt.value = o.path;
+        opt.textContent = o.name;
+        if (!o.reconstructed) {
+          opt.textContent += ' (no reconstructed.mp4)';
+          opt.dataset.noRecon = 'true';
+        } else if (firstReconIdx === -1) {
+          firstReconIdx = i;
+        }
+        opt.dataset.recon = o.reconstructed || '';
+        selectOutput.appendChild(opt);
+      });
+      if (firstReconIdx >= 0) selectOutput.selectedIndex = firstReconIdx;
+      selectOutput.disabled = false;
+      updateOutputHint();
+    }
+
+    // Populate source video dropdown
+    selectOriginal.innerHTML = '';
+    if (data.sources.length === 0) {
+      selectOriginal.innerHTML = '<option value="">No videos in media/</option>';
+    } else {
+      data.sources.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.path;
+        opt.textContent = s.name;
+        selectOriginal.appendChild(opt);
+      });
+      selectOriginal.disabled = false;
+    }
+
+    // Enable start if we have valid selections
+    updateStartButton();
+  })
+  .catch(() => {
+    selectOutput.innerHTML = '<option value="">Failed to scan — is serve.py running?</option>';
+    selectOriginal.innerHTML = '<option value="">Failed to scan</option>';
+  });
+
+function updateOutputHint() {
+  const opt = selectOutput.selectedOptions[0];
+  if (opt && opt.dataset.noRecon === 'true') {
+    outputHint.innerHTML = '<span class="no-recon">This run has no reconstructed.mp4</span>';
+  } else {
+    outputHint.textContent = '';
+  }
+}
+
+function updateStartButton() {
+  const opt = selectOutput.selectedOptions[0];
+  const hasRecon = opt && opt.dataset.recon;
+  const hasSource = selectOriginal.value;
+  document.getElementById('btn-start').disabled = !(hasRecon && hasSource);
+}
+
+selectOutput.addEventListener('change', () => { updateOutputHint(); updateStartButton(); });
+selectOriginal.addEventListener('change', updateStartButton);
+
+document.getElementById('btn-start').addEventListener('click', () => {
+  const outputPath = selectOutput.value;
+  const reconPath = selectOutput.selectedOptions[0].dataset.recon;
+  const origPath = selectOriginal.value;
+  if (!outputPath || !reconPath || !origPath) return;
+  setupOverlay.classList.add('hidden');
+  init(origPath, reconPath, outputPath);
+});
+
+// -- Timeline click --
+timeline.addEventListener('click', (e) => {
+  const rect = timeline.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  const time = pct * vidOrig.duration;
+  seekBoth(time, findShot(time));
+});
+
+// -- Click video to play/pause --
+document.querySelector('.video-pair').addEventListener('click', togglePlay);
+
+// -- Control buttons --
+btnPlay.addEventListener('click', togglePlay);
+btnPrev.addEventListener('click', () => jumpToShot(activeShot - 1));
+btnNext.addEventListener('click', () => jumpToShot(activeShot + 1));
+btnSolo.addEventListener('click', () => {
+  loopShot = !loopShot;
+  btnSolo.classList.toggle('active', loopShot);
+  if (loopShot && activeShot >= 0) {
+    seekBoth(scenes[activeShot].start_s);
+    playBoth();
+  }
+});
+
+// -- View mode tabs --
+document.querySelectorAll('.view-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelector('.view-tab.active').classList.remove('active');
+    tab.classList.add('active');
+    viewMode = tab.dataset.view;
+    promptPanel.classList.toggle('visible', viewMode === 'prompt');
+    buildShotList();
+    // Restore active highlight
+    const el = document.getElementById(`shot-${activeShot}`);
+    if (el) el.classList.add('active');
+  });
+});
+
+// -- Keyboard shortcuts --
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  switch (e.key) {
+    case ' ':
+      e.preventDefault();
+      togglePlay();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      jumpToShot(activeShot - 1);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      jumpToShot(activeShot + 1);
+      break;
+    case '[': {
+      const newT = Math.max(0, vidOrig.currentTime - 1);
+      seekBoth(newT, findShot(newT));
+      break;
+    }
+    case ']': {
+      const newTime = vidOrig.currentTime + 1;
+      seekBoth(newTime, findShot(newTime));
+      break;
+    }
+    case 'l':
+    case 'L':
+      btnSolo.click();
+      break;
+    case 'm':
+    case 'M':
+      vidOrig.muted = !vidOrig.muted;
+      break;
+  }
+});
+</script>
+</body>
+</html>
