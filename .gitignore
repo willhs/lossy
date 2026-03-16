@@ -36,3 +36,6 @@ __pycache__/
 # lossy
 media/
 output/
+
+# Worktrees
+.worktrees/
