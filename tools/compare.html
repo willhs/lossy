@@ -644,11 +644,32 @@ function init(originalSrc, reconSrc, base) {
   vidOrig.src = originalSrc;
   vidRecon.src = reconSrc;
 
+  // Determine strategy name for per-strategy progress file
+  const strategyOpt = strategySelect.selectedOptions[0];
+  const strategyName = strategyOpt ? strategyOpt.dataset.strategyName : null;
+
+  // Try per-strategy progress first, fall back to legacy
+  const progressUrls = [];
+  if (strategyName && strategyName !== 'default') {
+    progressUrls.push(`${base}/decode_progress_${strategyName}.json`);
+  }
+  progressUrls.push(`${base}/decode_progress.json`);
+
+  const fetchProgress = async () => {
+    for (const url of progressUrls) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) return await r.json();
+      } catch {}
+    }
+    return null;
+  };
+
   // Load manifest, prompts, and decode progress
   Promise.all([
     fetch(`${base}/manifest.json`).then(r => r.json()),
     fetch(`${base}/prompts.json`).then(r => r.json()).catch(() => []),
-    fetch(`${base}/decode_progress.json`).then(r => r.json()).catch(() => null)
+    fetchProgress()
   ]).then(([manifest, promptData, progress]) => {
     scenes = manifest.scenes;
     prompts = promptData;
@@ -785,11 +806,12 @@ document.getElementById('btn-start').addEventListener('click', () => {
   // Populate strategy dropdown from scan data
   currentStrategies = JSON.parse(opt.dataset.strategies || '[]');
   strategySelect.innerHTML = '';
-  if (currentStrategies.length > 1) {
+  if (currentStrategies.length > 0) {
     currentStrategies.forEach(s => {
       const o = document.createElement('option');
       o.value = s.path;
       o.textContent = s.name;
+      o.dataset.strategyName = s.name;
       strategySelect.appendChild(o);
     });
     strategySelect.style.display = '';
@@ -798,15 +820,23 @@ document.getElementById('btn-start').addEventListener('click', () => {
   }
 
   setupOverlay.classList.add('hidden');
-  init(origPath, reconPath, outputPath);
+  const activeReconPath = strategySelect.value || reconPath;
+  init(origPath, activeReconPath, outputPath);
 });
 
-// Strategy switch — swap reconstructed video, keep position
+// Strategy switch — reload with new strategy's video and progress
 strategySelect.addEventListener('change', () => {
   const wasPlaying = !vidOrig.paused;
   if (wasPlaying) pauseBoth();
   const origTime = vidOrig.currentTime;
-  vidRecon.src = strategySelect.value;
+
+  // Clear existing timeline
+  timeline.querySelectorAll('.timeline-shot').forEach(el => el.remove());
+
+  // Re-init with the new strategy (reloads progress + rebuilds timeline)
+  init(vidOrig.src, strategySelect.value, outputBase);
+
+  // Restore position after load
   vidRecon.addEventListener('loadedmetadata', function onLoad() {
     vidRecon.removeEventListener('loadedmetadata', onLoad);
     const idx = findShot(origTime);
