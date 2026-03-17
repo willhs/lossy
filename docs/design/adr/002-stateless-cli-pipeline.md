@@ -27,7 +27,7 @@ Each stage is a standalone CLI command. Stages communicate via files on disk (sc
 **Negative:**
 - No automatic retries or progress tracking for long decode runs.
 - No parallelism built in (could be added per-stage without changing the overall model).
-- User must manually chain stages.
+- User must manually chain stages. (Mitigated by `pipeline.py`, a convenience wrapper that chains all stages via subprocess while preserving independent runnability.)
 
 # Alternatives Considered
 

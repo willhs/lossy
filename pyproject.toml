@@ -1,0 +1,27 @@
+[project]
+name = "lossy"
+version = "0.1.0"
+description = "Lossy film encoder/decoder"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "scenedetect",
+    "tensorflow>=2.16",
+    "tensorflow-hub>=0.16.1",
+    "scipy",
+    "google-genai",
+    "replicate",
+    "fal-client",
+    "httpx",
+    "runpod",
+    "setuptools<81",
+]
+
+[tool.uv]
+override-dependencies = ["tf-keras>=2.16"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
