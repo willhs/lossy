@@ -6,10 +6,14 @@ import os
 import pytest
 
 from decode import (
+    CAMERA_TERMS,
     ClipResult,
     FalSeedanceStrategy,
+    FalSeedanceProStrategy,
     ReplicateWanStrategy,
     RunPodWanStrategy,
+    _format_prompt_seedance,
+    _format_prompt_wan,
     format_prompt,
 )
 
@@ -183,7 +187,145 @@ class TestRunPodWanStrategy:
         assert "wan2.1" in workflow["1"]["inputs"]["unet_name"]
         assert "umt5_xxl" in workflow["2"]["inputs"]["clip_name"]
 
-    def test_build_workflow_negative_prompt_empty(self):
+    def test_build_workflow_has_chinese_negative_prompt(self):
         strategy = RunPodWanStrategy()
         workflow = strategy._build_workflow("test prompt", seed=1)
-        assert workflow["5"]["inputs"]["text"] == ""
+        neg_text = workflow["5"]["inputs"]["text"]
+        assert len(neg_text) > 0, "Negative prompt should not be empty"
+        assert any('\u4e00' <= c <= '\u9fff' for c in neg_text), "Negative prompt should contain Chinese characters"
+
+
+# ---------------------------------------------------------------------------
+# Wan-optimized formatter
+# ---------------------------------------------------------------------------
+
+class TestFormatPromptWan:
+    def test_subject_action_camera_order(self):
+        entry = {
+            "description": {
+                "shot_type": "wide",
+                "camera_movement": "static",
+                "action": "A spaceship approaches a planet.",
+                "subjects": "Imperial Star Destroyer",
+            }
+        }
+        result = _format_prompt_wan(entry)
+        subj_pos = result.index("Imperial Star Destroyer")
+        action_pos = result.index("spaceship approaches")
+        assert subj_pos < action_pos
+
+    def test_no_metadata_labels(self):
+        entry = {
+            "description": {
+                "action": "A door opens.",
+                "color_palette": ["red", "gold"],
+                "mood": "tense",
+            }
+        }
+        result = _format_prompt_wan(entry)
+        assert "Color palette:" not in result
+        assert "Mood:" not in result
+        assert "red and gold" in result
+        assert "tense atmosphere" in result
+
+    def test_camera_term_replacement(self):
+        entry = {
+            "description": {
+                "shot_type": "medium wide",
+                "camera_movement": "slow zoom out",
+                "action": "Logo recedes.",
+            }
+        }
+        result = _format_prompt_wan(entry)
+        assert "dolly out" in result
+        assert "zoom out" not in result
+
+    def test_subjects_list_joined(self):
+        entry = {
+            "description": {
+                "action": "Run.",
+                "subjects": ["trooper", "droid"],
+            }
+        }
+        result = _format_prompt_wan(entry)
+        assert "trooper, droid" in result
+
+    def test_strategy_uses_wan_formatter(self):
+        strategy = ReplicateWanStrategy()
+        entry = {
+            "description": {
+                "action": "A ship flies.",
+                "mood": "epic",
+            }
+        }
+        result = strategy.format_prompt(entry)
+        assert "Mood:" not in result
+        assert "epic atmosphere" in result
+
+
+# ---------------------------------------------------------------------------
+# Seedance-optimized formatter
+# ---------------------------------------------------------------------------
+
+class TestFormatPromptSeedance:
+    def test_short_output(self):
+        entry = {
+            "description": {
+                "shot_type": "wide",
+                "camera_movement": "slow pan left",
+                "action": "A spaceship approaches a planet. The planet grows larger in frame. Stars twinkle.",
+                "subjects": "Imperial Star Destroyer",
+                "lighting": "Harsh rim lighting.",
+                "color_palette": ["black", "blue"],
+                "mood": "ominous, foreboding",
+                "setting": "Deep space.",
+            }
+        }
+        result = _format_prompt_seedance(entry)
+        word_count = len(result.split())
+        assert word_count <= 60, f"Too long: {word_count} words"
+
+    def test_single_action_sentence(self):
+        entry = {
+            "description": {
+                "action": "A ship flies forward. It turns left. Then it explodes.",
+            }
+        }
+        result = _format_prompt_seedance(entry)
+        assert "turns left" not in result
+        assert "explodes" not in result
+
+    def test_static_camera_omitted(self):
+        entry = {
+            "description": {
+                "camera_movement": "static",
+                "action": "A figure stands.",
+            }
+        }
+        result = _format_prompt_seedance(entry)
+        assert "static" not in result
+
+    def test_subjects_uses_first_only(self):
+        entry = {
+            "description": {
+                "action": "Running.",
+                "subjects": ["trooper", "droid", "officer"],
+            }
+        }
+        result = _format_prompt_seedance(entry)
+        assert "trooper" in result
+        assert "droid" not in result
+
+    def test_strategy_uses_seedance_formatter(self):
+        strategy = FalSeedanceStrategy()
+        entry = {"description": {"action": "A door opens.", "mood": "tense"}}
+        result = strategy.format_prompt(entry)
+        word_count = len(result.split())
+        assert word_count <= 60
+
+    def test_pro_strategy_inherits_formatter(self):
+        strategy = FalSeedanceProStrategy()
+        entry = {"description": {"action": "A door opens.", "mood": "tense"}}
+        result = strategy.format_prompt(entry)
+        word_count = len(result.split())
+        assert word_count <= 60
