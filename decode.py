@@ -42,6 +42,21 @@ class ClipResult:
     cost: float
 
 
+CAMERA_TERMS = {
+    "slow zoom out": "slow dolly out",
+    "slow zoom in": "slow dolly in",
+    "zoom out": "dolly out",
+    "zoom in": "dolly in",
+    "follows": "tracking shot follows",
+    "moves left": "pan left",
+    "moves right": "pan right",
+    "moves up": "crane up",
+    "moves down": "crane down",
+    "shaky": "handheld",
+    "smooth movement": "steadicam",
+}
+
+
 class GenerationStrategy:
     """Base class for video generation backends."""
 
@@ -61,12 +76,22 @@ class GenerationStrategy:
         """
         raise NotImplementedError
 
+    def format_prompt(self, entry: dict) -> str:
+        """Format a structured prompt entry for this strategy's model.
+
+        Subclasses override to produce model-optimized prompts.
+        """
+        return format_prompt(entry)
+
 
 class ReplicateWanStrategy(GenerationStrategy):
     """Replicate Wan 2.2 Fast -- fixed ~5.06s clips at $0.05 each."""
 
     name = "replicate-wan"
     CLIP_DURATION = 81 / 16  # ~5.0625s
+
+    def format_prompt(self, entry: dict) -> str:
+        return _format_prompt_wan(entry)
 
     def generate(
         self,
@@ -118,6 +143,9 @@ class FalSeedanceStrategy(GenerationStrategy):
     name = "fal-seedance"
     MODEL_ID = "fal-ai/bytedance/seedance/v1/pro/fast/text-to-video"
     MIN_DURATION = 2
+
+    def format_prompt(self, entry: dict) -> str:
+        return _format_prompt_seedance(entry)
     MAX_DURATION = 12
     COST_PER_SECOND_480P = 0.02  # Approximate: ~$0.10 for 5s at 480p
 
@@ -219,6 +247,10 @@ class RunPodWanStrategy(GenerationStrategy):
 
     name = "runpod-wan"
     CLIP_DURATION = 81 / 16  # ~5.0625s (81 frames at 16fps)
+
+    def format_prompt(self, entry: dict) -> str:
+        return _format_prompt_wan(entry)
+
     GPU_TYPES = [
         ("NVIDIA GeForce RTX 4090", 0.34),
         ("NVIDIA RTX A5000", 0.34),
@@ -542,7 +574,7 @@ class RunPodWanStrategy(GenerationStrategy):
             "5": {
                 "class_type": "CLIPTextEncode",
                 "inputs": {
-                    "text": "",
+                    "text": "\u4f4e\u8d28\u91cf, \u6a21\u7cca, \u53d8\u5f62, \u5931\u771f, \u6c34\u5370, \u6587\u5b57, \u5b57\u5e55, \u4f4e\u5206\u8fa8\u7387, \u8fc7\u66dd, \u6b20\u66dd",
                     "clip": ["2", 0],
                 },
             },
@@ -769,6 +801,103 @@ def format_prompt(entry: dict) -> str:
     return " ".join(parts)
 
 
+def _format_prompt_wan(entry: dict) -> str:
+    """Wan-optimized prompt: Subject > Action > Camera > Style.
+
+    Uses professional cinematography vocabulary, no metadata labels,
+    front-loaded content. Targets ~150-200 words to stay within
+    Wan's T5 encoder sweet spot (~320 tokens).
+    """
+    desc = entry["description"]
+    parts = []
+
+    # 1. Subject (front-loaded for T5 attention)
+    subjects = desc.get("subjects", "")
+    if subjects:
+        if isinstance(subjects, list):
+            subjects = ", ".join(subjects)
+        parts.append(subjects.rstrip(".") + ".")
+
+    # 2. Action (core content)
+    action = desc.get("action", "")
+    if action:
+        parts.append(action)
+
+    # 3. Camera (professional terms)
+    shot_type = desc.get("shot_type", "")
+    camera = desc.get("camera_movement", "")
+    if camera:
+        camera_lower = camera.lower()
+        for casual, pro in CAMERA_TERMS.items():
+            if casual in camera_lower:
+                camera = camera_lower.replace(casual, pro)
+                break
+    if shot_type and camera:
+        parts.append(f"{shot_type.title()} shot, {camera}.")
+    elif shot_type:
+        parts.append(f"{shot_type.title()} shot.")
+    elif camera:
+        parts.append(f"{camera}.")
+
+    # 4. Style/Atmosphere (no labels, just descriptive text)
+    setting = desc.get("setting", "")
+    if setting:
+        parts.append(setting)
+
+    lighting = desc.get("lighting", "")
+    if lighting:
+        parts.append(lighting)
+
+    palette = desc.get("color_palette", "")
+    if palette:
+        if isinstance(palette, list):
+            palette = " and ".join(palette)
+        parts.append(f"{palette} tones.")
+
+    mood = desc.get("mood", "")
+    if mood:
+        parts.append(f"{mood} atmosphere.")
+
+    return " ".join(parts)
+
+
+def _format_prompt_seedance(entry: dict) -> str:
+    """Seedance-optimized prompt: ~30-60 words, single action, intensity adverbs."""
+    desc = entry["description"]
+    parts = []
+
+    # Subject + single action verb (Seedance responds best to concise actions)
+    subjects = desc.get("subjects", "")
+    if subjects:
+        if isinstance(subjects, list):
+            subjects = subjects[0] if subjects else ""
+        parts.append(subjects.rstrip("."))
+
+    action = desc.get("action", "")
+    if action:
+        # Take just the first sentence for brevity
+        first_sentence = action.split(".")[0].strip()
+        if first_sentence:
+            parts.append(first_sentence.rstrip(".") + ".")
+
+    # Camera as a brief modifier
+    camera = desc.get("camera_movement", "")
+    if camera and camera.lower() != "static":
+        parts.append(camera.rstrip(".") + ".")
+
+    # One atmosphere phrase combining mood + setting
+    mood = desc.get("mood", "")
+    setting = desc.get("setting", "")
+    if mood and setting:
+        parts.append(f"{mood.split(',')[0].strip()} {setting.rstrip('.')}")
+    elif setting:
+        parts.append(setting)
+    elif mood:
+        parts.append(mood.split(",")[0].strip())
+
+    return " ".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Decode loop
 # ---------------------------------------------------------------------------
@@ -832,7 +961,7 @@ def run_decode(args, strategy: GenerationStrategy):
                 progress["completed"].append(idx)
             continue
 
-        prompt_text = format_prompt(entry)
+        prompt_text = strategy.format_prompt(entry)
         print(f"  Shot {idx} ({generated + 1}/{total - len(completed_set)} remaining)...")
 
         results = strategy.generate(prompt_text, clips_dir, idx, entry["duration_s"], seed=idx)
