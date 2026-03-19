@@ -771,6 +771,22 @@ fetch('/api/scan')
 
     // Enable start if we have valid selections
     updateStartButton();
+
+    // Auto-start from URL params: ?output=name&strategy=name
+    const params = new URLSearchParams(location.search);
+    const paramOutput = params.get('output');
+    if (paramOutput && data.outputs.length && data.sources.length) {
+      const match = data.outputs.find(o => o.name === paramOutput || o.path === `/output/${paramOutput}`);
+      if (match && match.strategies?.length) {
+        // Select matching output in dropdown
+        for (const o of selectOutput.options) {
+          if (o.value === match.path) { o.selected = true; break; }
+        }
+        const origPath = data.sources[0].path;
+        const preferStrategy = params.get('strategy') || null;
+        startComparator(match.path, origPath, match.strategies, preferStrategy);
+      }
+    }
   })
   .catch(() => {
     selectOutput.innerHTML = '<option value="">Failed to scan — is serve.py running?</option>';
@@ -796,32 +812,44 @@ function updateStartButton() {
 selectOutput.addEventListener('change', () => { updateOutputHint(); updateStartButton(); });
 selectOriginal.addEventListener('change', updateStartButton);
 
-document.getElementById('btn-start').addEventListener('click', () => {
-  const outputPath = selectOutput.value;
-  const opt = selectOutput.selectedOptions[0];
-  const reconPath = opt.dataset.recon;
-  const origPath = selectOriginal.value;
-  if (!outputPath || !reconPath || !origPath) return;
-
-  // Populate strategy dropdown from scan data
-  currentStrategies = JSON.parse(opt.dataset.strategies || '[]');
+function startComparator(outputPath, origPath, strategies, preferStrategy) {
+  currentStrategies = strategies;
   strategySelect.innerHTML = '';
-  if (currentStrategies.length > 0) {
-    currentStrategies.forEach(s => {
+  if (strategies.length > 0) {
+    strategies.forEach(s => {
       const o = document.createElement('option');
       o.value = s.path;
       o.textContent = s.name;
       o.dataset.strategyName = s.name;
       strategySelect.appendChild(o);
     });
+    // Select preferred strategy if specified
+    if (preferStrategy) {
+      for (const o of strategySelect.options) {
+        if (o.dataset.strategyName === preferStrategy) {
+          o.selected = true;
+          break;
+        }
+      }
+    }
     strategySelect.style.display = '';
   } else {
     strategySelect.style.display = 'none';
   }
 
   setupOverlay.classList.add('hidden');
-  const activeReconPath = strategySelect.value || reconPath;
-  init(origPath, activeReconPath, outputPath);
+  const reconPath = strategySelect.value || strategies[0]?.path;
+  if (reconPath) init(origPath, reconPath, outputPath);
+}
+
+document.getElementById('btn-start').addEventListener('click', () => {
+  const outputPath = selectOutput.value;
+  const opt = selectOutput.selectedOptions[0];
+  const origPath = selectOriginal.value;
+  if (!outputPath || !opt.dataset.recon || !origPath) return;
+
+  const strategies = JSON.parse(opt.dataset.strategies || '[]');
+  startComparator(outputPath, origPath, strategies, null);
 });
 
 // Strategy switch — reload with new strategy's video and progress

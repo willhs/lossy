@@ -27,7 +27,7 @@ def scan_project():
             for fname in sorted(os.listdir(dirpath)):
                 if fname.startswith("reconstructed") and fname.endswith(".mp4"):
                     if fname == "reconstructed.mp4":
-                        strategy_name = "default"
+                        strategy_name = "unknown"
                     else:
                         # reconstructed_fal-seedance.mp4 -> fal-seedance
                         strategy_name = fname[len("reconstructed_"):-len(".mp4")]
