@@ -15,10 +15,13 @@ Wan-optimized prompts (front-loaded subject/action, cinematography vocabulary, n
 ## Setup
 
 - **Source**: Star Wars EP IV, shots 10-24
-- **Model**: Replicate wan-video/wan-2.2-t2v-fast, 832x480, 81 frames @ 16fps
-- **Control**: Current `format_prompt()` -- prose with "Color palette:", "Mood:" labels (existing clips from experiment 0001)
+- **Model**: RunPod self-hosted Wan 2.2 (1.3B fp16) via ComfyUI, 848x480, 81 frames @ 16fps
+- **Control**: Current `format_prompt()` -- prose with "Color palette:", "Mood:" labels (existing clips from prior runpod-wan decode)
 - **Treatment**: `_format_prompt_wan()` -- Subject > Action > Camera > Style, cinematography terms
-- **Cost**: ~$0.75 for treatment group (control reuses existing clips)
+- **Cost**: ~$0.33 for treatment group (1hr RunPod pod). Control reused existing clips.
+- **Clip locations**:
+  - Control: `output/star_wars_iv_v2/clips/runpod-wan-control/`
+  - Treatment: `output/star_wars_iv_v2/clips/runpod-wan/`
 
 ## Prompt Comparison
 
