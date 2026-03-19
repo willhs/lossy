@@ -105,28 +105,40 @@ Interior corridor shots (C-3PO, R2-D2, Stormtroopers). See decode output for ful
 
 ### Per-Shot Observations
 
-| Shot | Control | Treatment | Notes |
-|------|---------|-----------|-------|
-| 10   |         |           |       |
-| 11   |         |           |       |
-| 12   |         |           |       |
-| 13   |         |           |       |
-| 14   |         |           |       |
-| 15   |         |           |       |
-| 16   |         |           |       |
-| 17   |         |           |       |
-| 18   |         |           |       |
-| 19   |         |           |       |
-| 20   |         |           |       |
-| 21   |         |           |       |
-| 22   |         |           |       |
-| 23   |         |           |       |
-| 24   |         |           |       |
+| Shot | Control | Treatment | Winner | Notes |
+|------|---------|-----------|--------|-------|
+| 10   | Planets/moons, small scale | Larger celestial bodies, better composition | Treatment | More prominent subjects fill the frame |
+| 11   | Spaceship firing laser, ship is small/distant | Detailed ship with clear structure, red laser | Treatment | Front-loaded subject description produced a more recognizable vessel |
+| 12   | Planet with tiny spacecraft, engine glow | Planet with visible spacecraft and glowing engines | Treatment | Spacecraft much more prominent and detailed |
+| 13   | Star Destroyer and transport, both small | Large dagger-shaped Star Destroyer dominates frame | Treatment | Subject description "massive, dagger-shaped" produced iconic shape |
+| 14   | Star Destroyer over planet, decent | Star Destroyer over planet, similar quality | Tie | Both capture the scene well, treatment slightly more cinematic |
+| 15   | Ship barely visible at frame edge | Clear wedge-shaped Star Destroyer centered | Treatment | Control almost missed the main subject entirely |
+| 16   | Rebel ship with engine exhaust, Star Destroyer distant | Both ships visible with planet, clearer composition | Treatment | Better spatial relationship between ships |
+| 17   | Star Destroyer firing green laser | Star Destroyer firing green laser, cleaner shape | Slight treatment | Both good, treatment has slightly cleaner ship silhouette |
+| 18   | Blurry explosion, mostly smoke | Blurry explosion with partial ship/laser visible | Tie | Both struggle with chaotic explosion scene |
+| 19   | C-3PO rendered silver/white (wrong), R2-D2 ok | C-3PO correctly gold, R2-D2 blue/white | Treatment | Major win -- front-loaded "golden humanoid" fixed C-3PO color |
+| 20   | Stormtroopers running, distant/small | Stormtroopers in formation, closer, more figures | Treatment | More detail on the figures |
+| 21   | All droids silver/white R2-style (wrong) | Gold C-3PO with white/blue R2-D2 (correct) | Treatment | Same C-3PO color issue as shot 19 -- subject desc fixes it |
+| 22   | Gold C-3PO close-up, good detail | Gold C-3PO close-up, good detail | Tie | Both render well at close range |
+| 23   | Two ambiguous droids, mixed colors | R2-D2 primary (correct), gold C-3PO in background | Treatment | Correct subject hierarchy from front-loaded description |
+| 24   | Gold C-3PO arms raised, good | Gold C-3PO arms raised, good | Tie | Both capture the panic gesture well |
 
 ### Summary
 
-[Overall observations -- which approach produced better results and why]
+Treatment (new Wan formatter) wins or ties on all 15 shots, with no regressions.
+
+**Key improvements:**
+- **Subject accuracy (shots 19, 21, 23):** Front-loading subject descriptions ("C-3PO, a golden humanoid protocol droid") dramatically improved character color accuracy. The old formatter buried subjects after camera/action, so the model often defaulted to generic silver droids.
+- **Subject prominence (shots 11-13, 15):** Describing subjects first with specific visual details ("massive, dagger-shaped Imperial Star Destroyer") caused the model to render larger, more recognizable ships instead of tiny distant objects.
+- **Cinematography terms:** "dolly out" replacing "zoom out" had no obvious visual impact at this scale, but didn't hurt either.
+- **No regressions:** The 4 tie shots (14, 18, 22, 24) show the new formatter doesn't degrade quality on scenes where the old formatter was already adequate.
+
+**Limitations observed:**
+- Neither formatter helps with chaotic scenes (shot 18 explosion) -- likely a model limitation
+- The new formatter produces longer prompts than intended (~200-250 words vs target 150-200) because it includes the full Gemini action text plus front-loaded subjects
 
 ## Recommendation
 
-[Keep new formatter / revert / iterate further]
+**Keep the new formatter.** The subject accuracy improvements alone justify the change -- getting C-3PO's color right is a fundamental quality bar. The front-loaded subject descriptions consistently produce more recognizable, prominent subjects.
+
+Consider a follow-up to trim prompt length by summarizing the action field rather than passing it through verbatim.

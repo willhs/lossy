@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>A/B Compare</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; color: #ddd; font-family: monospace; font-size: 13px; }
+  .header { padding: 12px; background: #1a1a1a; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 16px; }
+  .header h1 { color: #fb0; font-size: 16px; }
+  .header button { background: #333; color: #ddd; border: 1px solid #555; padding: 4px 12px; border-radius: 3px; cursor: pointer; font-family: monospace; }
+  .header button:hover { background: #444; }
+  .header .shot-label { color: #fb0; font-size: 14px; }
+  .pair { display: flex; gap: 2px; height: calc(100vh - 50px); }
+  .pane { flex: 1; display: flex; flex-direction: column; position: relative; }
+  .pane video { width: 100%; flex: 1; object-fit: contain; background: #000; cursor: pointer; }
+  .pane-label { position: absolute; top: 8px; left: 10px; background: rgba(0,0,0,0.7); padding: 3px 8px; border-radius: 3px; font-size: 12px; z-index: 5; pointer-events: none; }
+  .pane-label.control { color: #4af; }
+  .pane-label.treatment { color: #f84; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>A/B Compare</h1>
+  <button id="prev">Prev</button>
+  <span class="shot-label" id="label">Shot 10</span>
+  <button id="next">Next</button>
+  <button id="play">Play both</button>
+  <button id="loop">Loop</button>
+</div>
+<div class="pair">
+  <div class="pane">
+    <span class="pane-label control">CONTROL (old formatter)</span>
+    <video id="v1" muted></video>
+  </div>
+  <div class="pane">
+    <span class="pane-label treatment">TREATMENT (new formatter)</span>
+    <video id="v2" muted></video>
+  </div>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const base = params.get('base') || '/output/star_wars_iv_v2/clips';
+const controlDir = params.get('control') || 'runpod-wan-control';
+const treatmentDir = params.get('treatment') || 'runpod-wan';
+const startShot = parseInt(params.get('start') || '10');
+const endShot = parseInt(params.get('end') || '24');
+
+let shot = startShot;
+const v1 = document.getElementById('v1');
+const v2 = document.getElementById('v2');
+const label = document.getElementById('label');
+let looping = false;
+
+function load() {
+  const name = String(shot).padStart(4, '0') + '.mp4';
+  v1.src = `${base}/${controlDir}/${name}`;
+  v2.src = `${base}/${treatmentDir}/${name}`;
+  label.textContent = `Shot ${shot} (${shot - startShot + 1}/${endShot - startShot + 1})`;
+}
+
+document.getElementById('prev').onclick = () => { if (shot > startShot) { shot--; load(); } };
+document.getElementById('next').onclick = () => { if (shot < endShot) { shot++; load(); } };
+document.getElementById('play').onclick = () => { v1.currentTime = 0; v2.currentTime = 0; v1.play(); v2.play(); };
+document.getElementById('loop').onclick = () => { looping = !looping; v1.loop = looping; v2.loop = looping; document.getElementById('loop').style.color = looping ? '#fb0' : '#ddd'; };
+
+document.querySelector('.pair').addEventListener('click', () => {
+  if (v1.paused) { v1.play(); v2.play(); } else { v1.pause(); v2.pause(); }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') { if (shot > startShot) { shot--; load(); } }
+  if (e.key === 'ArrowRight') { if (shot < endShot) { shot++; load(); } }
+  if (e.key === ' ') { e.preventDefault(); document.getElementById('play').click(); }
+});
+
+load();
+</script>
+</body>
+</html>
