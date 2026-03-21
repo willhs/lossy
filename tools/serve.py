@@ -41,6 +41,9 @@ def scan_project():
             # Check for prompts
             if os.path.isfile(os.path.join(dirpath, "prompts.json")):
                 entry["has_prompts"] = True
+            # Check for speech track
+            if os.path.isfile(os.path.join(dirpath, "speech_track.wav")):
+                entry["has_speech"] = True
             outputs.append(entry)
 
     sources = []

@@ -343,6 +343,7 @@
     <button id="btn-next" title="Next shot">Next &#8594;</button>
     <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
     <button id="btn-audio" title="Cycle audio source (M)">Audio: generated</button>
+    <audio id="speech-audio" preload="auto"></audio>
     <input id="volume-slider" type="range" min="0" max="100" value="70" title="Volume" style="width:60px;vertical-align:middle;accent-color:#fb0;cursor:pointer">
     <span class="spacer"></span>
     <select id="strategy-select" style="background:#333;color:#ddd;border:1px solid #555;padding:3px 6px;border-radius:3px;font-family:monospace;font-size:12px;display:none"></select>
@@ -408,42 +409,56 @@ let activeShot = -1;
 let loopShot = false;
 let viewMode = 'paired';
 
-// Audio source: 'generated' (recon unmuted), 'original' (orig unmuted), 'off' (both muted)
+// Audio source: 'generated', 'generated+speech', 'original', 'off'
 let audioSource = 'generated';
+let hasSpeech = false;
 const btnAudio = document.getElementById('btn-audio');
+const speechAudio = document.getElementById('speech-audio');
 
 function setAudioSource(src) {
   audioSource = src;
   if (src === 'generated') {
     vidOrig.muted = true;
     vidRecon.muted = false;
+    speechAudio.muted = true;
     btnAudio.textContent = 'Audio: generated';
     btnAudio.classList.remove('active');
+  } else if (src === 'generated+speech') {
+    vidOrig.muted = true;
+    vidRecon.muted = false;
+    speechAudio.muted = false;
+    btnAudio.textContent = 'Audio: gen+speech';
+    btnAudio.classList.add('active');
   } else if (src === 'original') {
     vidOrig.muted = false;
     vidRecon.muted = true;
+    speechAudio.muted = true;
     btnAudio.textContent = 'Audio: original';
     btnAudio.classList.add('active');
   } else {
     vidOrig.muted = true;
     vidRecon.muted = true;
+    speechAudio.muted = true;
     btnAudio.textContent = 'Audio: off';
     btnAudio.classList.remove('active');
   }
 }
 
 function cycleAudioSource() {
-  if (audioSource === 'generated') setAudioSource('original');
+  if (audioSource === 'generated') {
+    if (hasSpeech) setAudioSource('generated+speech');
+    else setAudioSource('original');
+  } else if (audioSource === 'generated+speech') setAudioSource('original');
   else if (audioSource === 'original') setAudioSource('off');
   else setAudioSource('generated');
 }
 
 // Volume
 const volumeSlider = document.getElementById('volume-slider');
-vidOrig.volume = vidRecon.volume = 0.7;
+vidOrig.volume = vidRecon.volume = speechAudio.volume = 0.7;
 volumeSlider.addEventListener('input', () => {
   const v = volumeSlider.value / 100;
-  vidOrig.volume = vidRecon.volume = v;
+  vidOrig.volume = vidRecon.volume = speechAudio.volume = v;
 });
 
 // Reconstruction mapping: shot index -> { reconStart, reconEnd } in reconstructed video
@@ -551,6 +566,7 @@ function syncReconToOrig() {
 function seekBoth(origTime, shotIdx) {
   isSeeking = true;
   vidOrig.currentTime = origTime;
+  if (hasSpeech) speechAudio.currentTime = origTime;
   const idx = shotIdx !== undefined ? shotIdx : findShot(origTime);
   const mapping = reconMap[idx];
   if (mapping) {
@@ -570,12 +586,14 @@ function playBoth() {
   // Always play reconstructed — browser requires user-gesture to start playback.
   // If current shot isn't decoded, sync engine will just let it sit at its position.
   vidRecon.play();
+  if (hasSpeech) speechAudio.play();
   btnPlay.textContent = 'Pause';
 }
 
 function pauseBoth() {
   vidOrig.pause();
   vidRecon.pause();
+  if (hasSpeech) speechAudio.pause();
   btnPlay.textContent = 'Play';
 }
 
@@ -710,6 +728,18 @@ function init(originalSrc, reconSrc, base) {
     }
     return null;
   };
+
+  // Check for speech track
+  fetch(`${base}/speech_track.wav`, {method: 'HEAD'}).then(r => {
+    if (r.ok) {
+      hasSpeech = true;
+      speechAudio.src = `${base}/speech_track.wav`;
+      speechAudio.muted = true;
+    } else {
+      hasSpeech = false;
+      speechAudio.src = '';
+    }
+  }).catch(() => { hasSpeech = false; });
 
   // Load manifest, prompts, and decode progress
   Promise.all([
