@@ -42,6 +42,14 @@ class ClipResult:
     cost: float
 
 
+@dataclass
+class AudioClipResult:
+    """Result of generating a single audio clip."""
+    path: str
+    actual_duration_s: float
+    cost: float
+
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",
@@ -763,6 +771,199 @@ class RunPodWanStrategy(GenerationStrategy):
 
 
 # ---------------------------------------------------------------------------
+# Audio generation strategies
+# ---------------------------------------------------------------------------
+
+
+class AudioStrategy:
+    """Base class for audio generation backends."""
+
+    name: str = "base"
+
+    def generate(
+        self,
+        sound_description: str,
+        audio_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+    ) -> list[AudioClipResult]:
+        """Generate audio clip(s) for a shot.
+
+        Returns a list because long shots may be split into multiple clips.
+        """
+        raise NotImplementedError
+
+
+class ElevenLabsStrategy(AudioStrategy):
+    """ElevenLabs Sound Effects v2 via fal.ai -- $0.002/sec, max 22s."""
+
+    name = "elevenlabs"
+    MODEL_ID = "fal-ai/elevenlabs/sound-effects/v2"
+    MAX_DURATION = 22
+    MIN_DURATION = 0.5
+    COST_PER_SECOND = 0.002
+
+    def _target_durations(self, target_s: float) -> list[float]:
+        """Split target duration into chunks within 0.5-22s range.
+
+        Examples:
+            3.7s  -> [3.7]
+            20.0s -> [20.0]
+            28.0s -> [22.0, 6.0]
+            50.0s -> [22.0, 22.0, 6.0]
+        """
+        clamped = max(self.MIN_DURATION, target_s)
+        if clamped <= self.MAX_DURATION:
+            return [clamped]
+
+        parts = []
+        remaining = clamped
+        while remaining > self.MAX_DURATION:
+            parts.append(float(self.MAX_DURATION))
+            remaining -= self.MAX_DURATION
+        remainder = max(self.MIN_DURATION, remaining)
+        parts.append(remainder)
+        return parts
+
+    def generate(
+        self,
+        sound_description: str,
+        audio_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+    ) -> list[AudioClipResult]:
+        import fal_client
+        import httpx
+
+        durations = self._target_durations(target_duration_s)
+        results = []
+
+        for part_idx, duration in enumerate(durations):
+            if len(durations) == 1:
+                clip_name = f"{shot_index:04d}.mp3"
+            else:
+                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp3"
+
+            clip_path = os.path.join(audio_dir, clip_name)
+
+            try:
+                arguments = {
+                    "text": sound_description,
+                    "duration_seconds": duration,
+                    "prompt_influence": 0.3,
+                }
+
+                result = fal_client.subscribe(
+                    self.MODEL_ID,
+                    arguments=arguments,
+                    with_logs=False,
+                )
+
+                audio_url = result["audio"]["url"]
+                resp = httpx.get(audio_url, follow_redirects=True)
+                resp.raise_for_status()
+                with open(clip_path, "wb") as f:
+                    f.write(resp.content)
+
+                cost = duration * self.COST_PER_SECOND
+                results.append(AudioClipResult(
+                    path=clip_path,
+                    actual_duration_s=duration,
+                    cost=cost,
+                ))
+
+            except Exception as e:
+                print(f"  Error generating audio {clip_name}: {e}")
+                return []
+
+        return results
+
+
+class MMAudioStrategy(AudioStrategy):
+    """MMAudio V2 text-to-audio via fal.ai -- $0.001/sec, max 30s."""
+
+    name = "mmaudio"
+    MODEL_ID = "fal-ai/mmaudio-v2/text-to-audio"
+    MAX_DURATION = 30
+    MIN_DURATION = 1
+    COST_PER_SECOND = 0.001
+
+    def _target_durations(self, target_s: float) -> list[float]:
+        """Split target duration into chunks within 1-30s range."""
+        clamped = max(self.MIN_DURATION, target_s)
+        if clamped <= self.MAX_DURATION:
+            return [clamped]
+
+        parts = []
+        remaining = clamped
+        while remaining > self.MAX_DURATION:
+            parts.append(float(self.MAX_DURATION))
+            remaining -= self.MAX_DURATION
+        remainder = max(self.MIN_DURATION, remaining)
+        parts.append(remainder)
+        return parts
+
+    def generate(
+        self,
+        sound_description: str,
+        audio_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+    ) -> list[AudioClipResult]:
+        import fal_client
+        import httpx
+
+        durations = self._target_durations(target_duration_s)
+        results = []
+
+        for part_idx, duration in enumerate(durations):
+            if len(durations) == 1:
+                clip_name = f"{shot_index:04d}.flac"
+            else:
+                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.flac"
+
+            clip_path = os.path.join(audio_dir, clip_name)
+
+            try:
+                arguments = {
+                    "prompt": sound_description,
+                    "duration": duration,
+                    "num_steps": 25,
+                    "cfg_strength": 4.5,
+                }
+                if seed is not None:
+                    arguments["seed"] = (seed + part_idx) % 65536
+
+                result = fal_client.subscribe(
+                    self.MODEL_ID,
+                    arguments=arguments,
+                    with_logs=False,
+                )
+
+                audio_url = result["audio"]["url"]
+                resp = httpx.get(audio_url, follow_redirects=True)
+                resp.raise_for_status()
+                with open(clip_path, "wb") as f:
+                    f.write(resp.content)
+
+                cost = duration * self.COST_PER_SECOND
+                results.append(AudioClipResult(
+                    path=clip_path,
+                    actual_duration_s=duration,
+                    cost=cost,
+                ))
+
+            except Exception as e:
+                print(f"  Error generating audio {clip_name}: {e}")
+                return []
+
+        return results
+
+
+# ---------------------------------------------------------------------------
 # Prompt formatting (strategy-independent)
 # ---------------------------------------------------------------------------
 
@@ -1034,8 +1235,251 @@ def run_decode(args, strategy: GenerationStrategy):
 
 
 # ---------------------------------------------------------------------------
+# Audio generation loop
+# ---------------------------------------------------------------------------
+
+
+def run_audio(args, strategy: AudioStrategy):
+    """Audio generation loop: read prompts, generate audio clips, track progress."""
+    output_dir = args.output_dir
+    prompts_path = os.path.join(output_dir, "prompts.json")
+
+    if not os.path.exists(prompts_path):
+        print(f"Error: {prompts_path} not found. Run encoder first.")
+        sys.exit(1)
+
+    with open(prompts_path) as f:
+        prompts = json.load(f)
+
+    # Apply start index and limit
+    if args.start_index:
+        prompts = [p for p in prompts if p["index"] >= args.start_index]
+        print(f"Starting from shot index {args.start_index}")
+
+    if args.limit:
+        prompts = prompts[:args.limit]
+        print(f"Processing {len(prompts)} shots")
+
+    audio_dir = os.path.join(output_dir, "audio", strategy.name)
+    os.makedirs(audio_dir, exist_ok=True)
+
+    # Progress tracking (per audio strategy)
+    progress_path = os.path.join(output_dir, f"audio_progress_{strategy.name}.json")
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            progress = json.load(f)
+    else:
+        progress = {"completed": [], "failed": [], "skipped": [], "total_cost_estimate": 0.0, "clips": {}}
+
+    completed_set = set(progress["completed"])
+    skipped_set = set(progress.get("skipped", []))
+    total = len(prompts)
+    generated = 0
+    skipped = 0
+    errors = 0
+
+    print(f"Generating audio for {total} shots via {strategy.name} "
+          f"({len(completed_set)} done, {len(skipped_set)} skipped)...")
+
+    for entry in prompts:
+        idx = entry["index"]
+
+        if idx in completed_set or idx in skipped_set:
+            continue
+
+        # Extract sound description
+        sound = entry.get("description", {}).get("sound")
+        if not sound:
+            print(f"  Shot {idx}: no sound description, skipping")
+            skipped += 1
+            progress["skipped"].append(idx)
+            skipped_set.add(idx)
+            continue
+
+        # Skip if already generated
+        ext = ".mp3" if isinstance(strategy, ElevenLabsStrategy) else ".flac"
+        primary_clip = os.path.join(audio_dir, f"{idx:04d}{ext}")
+        part_clip = os.path.join(audio_dir, f"{idx:04d}-01{ext}")
+        if os.path.exists(primary_clip) or os.path.exists(part_clip):
+            completed_set.add(idx)
+            if idx not in progress["completed"]:
+                progress["completed"].append(idx)
+            continue
+
+        print(f"  Shot {idx} ({generated + 1}/{total - len(completed_set) - len(skipped_set)} remaining)...")
+
+        results = strategy.generate(sound, audio_dir, idx, entry["duration_s"], seed=idx)
+
+        if results:
+            generated += 1
+            progress["completed"].append(idx)
+            completed_set.add(idx)
+            clip_cost = sum(r.cost for r in results)
+            progress["total_cost_estimate"] += clip_cost
+            progress["clips"][str(idx)] = [
+                {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
+                for r in results
+            ]
+        else:
+            errors += 1
+            progress["failed"].append(idx)
+            print(f"  Retrying shot {idx} in 10s...")
+            time.sleep(10)
+            results = strategy.generate(sound, audio_dir, idx, entry["duration_s"], seed=idx)
+            if results:
+                generated += 1
+                progress["completed"].append(idx)
+                completed_set.add(idx)
+                clip_cost = sum(r.cost for r in results)
+                progress["total_cost_estimate"] += clip_cost
+                progress["clips"][str(idx)] = [
+                    {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
+                    for r in results
+                ]
+                progress["failed"] = [f for f in progress["failed"] if f != idx]
+
+        # Save progress every 5 clips
+        if generated % 5 == 0:
+            with open(progress_path, "w") as f:
+                json.dump(progress, f, indent=2)
+
+        if errors > 20:
+            print("Too many errors, saving progress and stopping.")
+            break
+
+    # Final save
+    with open(progress_path, "w") as f:
+        json.dump(progress, f, indent=2)
+
+    print(f"\nDone. Generated {generated} audio clips, skipped {skipped}.")
+    print(f"  Total: {len(progress['completed'])} completed, "
+          f"{len(progress.get('skipped', []))} skipped (no sound), "
+          f"{len(progress['failed'])} failed")
+    print(f"  Estimated cost: ${progress['total_cost_estimate']:.2f}")
+
+
+# ---------------------------------------------------------------------------
 # FFmpeg stitcher
 # ---------------------------------------------------------------------------
+
+
+def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
+                  start_index: int | None) -> str | None:
+    """Concatenate per-shot audio clips into a single audio track.
+
+    Returns path to the combined audio file, or None if no audio clips exist.
+    Audio clips are duration-adjusted to match original shot durations using
+    FFmpeg's atrim/apad filters.
+    """
+    audio_dir = os.path.join(output_dir, "audio", audio_strategy)
+    if not os.path.exists(audio_dir):
+        return None
+
+    # Load audio progress for clip metadata
+    progress_path = os.path.join(output_dir, f"audio_progress_{audio_strategy}.json")
+    audio_meta = {}
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            audio_meta = json.load(f).get("clips", {})
+
+    if start_index is not None:
+        prompts = [p for p in prompts if p["index"] >= start_index]
+
+    # Build per-shot audio files, adjusting duration to match original
+    adjusted_dir = os.path.join(output_dir, "audio_adjusted", audio_strategy)
+    os.makedirs(adjusted_dir, exist_ok=True)
+
+    audio_entries = []
+    for entry in prompts:
+        idx = entry["index"]
+        idx_str = str(idx)
+        target_duration = entry["duration_s"]
+
+        if idx_str in audio_meta:
+            clips = audio_meta[idx_str]
+        else:
+            # Try to find clips on disk by convention
+            clips = []
+            for ext in (".mp3", ".flac"):
+                path = os.path.join(audio_dir, f"{idx:04d}{ext}")
+                if os.path.exists(path):
+                    clips = [{"path": f"{idx:04d}{ext}", "duration_s": target_duration}]
+                    break
+
+        if not clips:
+            # Generate silence for this shot
+            silence_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+            if not os.path.exists(silence_path):
+                subprocess.run(
+                    ["ffmpeg", "-y", "-f", "lavfi", "-i",
+                     f"anullsrc=r=44100:cl=stereo",
+                     "-t", str(target_duration),
+                     silence_path],
+                    capture_output=True,
+                )
+            audio_entries.append(silence_path)
+            continue
+
+        if len(clips) == 1:
+            # Single clip -- trim or pad to match target duration
+            clip_path = os.path.join(audio_dir, clips[0]["path"])
+            adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+            if not os.path.exists(adjusted_path):
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", clip_path,
+                     "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
+                     "-ar", "44100", "-ac", "2",
+                     adjusted_path],
+                    capture_output=True,
+                )
+            audio_entries.append(adjusted_path)
+        else:
+            # Multiple clips (split shot) -- concatenate parts, then adjust
+            parts_file = os.path.join(adjusted_dir, f"{idx:04d}_parts.txt")
+            with open(parts_file, "w") as f:
+                for clip_info in clips:
+                    clip_path = os.path.join(audio_dir, clip_info["path"])
+                    f.write(f"file '{os.path.abspath(clip_path)}'\n")
+
+            concat_path = os.path.join(adjusted_dir, f"{idx:04d}_concat.wav")
+            adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+            if not os.path.exists(adjusted_path):
+                subprocess.run(
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                     "-i", parts_file, "-ar", "44100", "-ac", "2",
+                     concat_path],
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", concat_path,
+                     "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
+                     adjusted_path],
+                    capture_output=True,
+                )
+                if os.path.exists(concat_path):
+                    os.remove(concat_path)
+
+            audio_entries.append(adjusted_path)
+
+    if not audio_entries:
+        return None
+
+    # Concatenate all adjusted audio into one track
+    concat_file = os.path.join(output_dir, "audio_concat.txt")
+    with open(concat_file, "w") as f:
+        for path in audio_entries:
+            f.write(f"file '{os.path.abspath(path)}'\n")
+
+    audio_track_path = os.path.join(output_dir, f"audio_track_{audio_strategy}.wav")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+         "-i", concat_file, "-c", "copy",
+         audio_track_path],
+        capture_output=True,
+    )
+
+    print(f"  Audio track: {audio_track_path}")
+    return audio_track_path
 
 
 def _probe_duration(clip_path: str) -> float:
@@ -1078,8 +1522,9 @@ def stitch_clips(args):
             sys.exit(1)
 
     with open(prompts_path) as f:
-        prompts = json.load(f)
+        prompts_full = json.load(f)
 
+    prompts = prompts_full
     if args.start_index:
         prompts = [p for p in prompts if p["index"] >= args.start_index]
 
@@ -1173,6 +1618,30 @@ def stitch_clips(args):
     print(f"  Original duration: {total_original:.1f}s ({total_original / 60:.1f}min)")
     print(f"  Clips used: {len(clip_entries)}")
 
+    # Mux audio if available
+    audio_strategy = getattr(args, "audio_strategy", None)
+    if audio_strategy:
+        audio_track = _stitch_audio(output_dir, audio_strategy, prompts_full, args.start_index)
+        if audio_track and os.path.exists(audio_track):
+            muxed_path = output_path.replace(".mp4", "_with_audio.mp4")
+            result = subprocess.run(
+                ["ffmpeg", "-y",
+                 "-i", output_path,
+                 "-i", audio_track,
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                 "-shortest",
+                 muxed_path],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                # Replace silent video with muxed version
+                os.replace(muxed_path, output_path)
+                print(f"  Audio muxed into {output_path}")
+            else:
+                print(f"  Warning: audio mux failed, silent video preserved")
+                if os.path.exists(muxed_path):
+                    os.remove(muxed_path)
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -1191,12 +1660,24 @@ def main():
     parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"],
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
+    parser.add_argument("--audio", action="store_true",
+                        help="Generate audio clips (instead of video)")
+    parser.add_argument("--audio-strategy", choices=["elevenlabs", "mmaudio"],
+                        default="elevenlabs",
+                        help="Audio generation backend (default: elevenlabs)")
     args = parser.parse_args()
 
     load_env()
 
     if args.stitch:
         stitch_clips(args)
+    elif args.audio:
+        audio_strategies = {
+            "elevenlabs": ElevenLabsStrategy,
+            "mmaudio": MMAudioStrategy,
+        }
+        audio_strategy = audio_strategies[args.audio_strategy]()
+        run_audio(args, audio_strategy)
     else:
         strategies = {
             "replicate-wan": ReplicateWanStrategy,
