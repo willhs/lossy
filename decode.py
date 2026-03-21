@@ -849,8 +849,12 @@ class ElevenLabsStrategy(AudioStrategy):
             clip_path = os.path.join(audio_dir, clip_name)
 
             try:
+                # Add duration context so the model fills the full clip
+                dur_int = int(round(duration))
+                text = f"Continuous sound, {dur_int} seconds: {sound_description}"
+
                 arguments = {
-                    "text": sound_description,
+                    "text": text,
                     "duration_seconds": duration,
                     "prompt_influence": 0.3,
                 }
@@ -1621,7 +1625,14 @@ def stitch_clips(args):
     # Mux audio if available
     audio_strategy = getattr(args, "audio_strategy", None)
     if audio_strategy:
-        audio_track = _stitch_audio(output_dir, audio_strategy, prompts_full, args.start_index)
+        # Only include shots that have video clips in the stitch
+        stitched_indices = set()
+        for clip_path, _, _ in clip_entries:
+            basename = os.path.basename(clip_path)
+            idx_str = basename.split("-")[0].split(".")[0]
+            stitched_indices.add(int(idx_str))
+        stitched_prompts = [p for p in prompts_full if p["index"] in stitched_indices]
+        audio_track = _stitch_audio(output_dir, audio_strategy, stitched_prompts, None)
         if audio_track and os.path.exists(audio_track):
             muxed_path = output_path.replace(".mp4", "_with_audio.mp4")
             result = subprocess.run(
