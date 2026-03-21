@@ -6,9 +6,11 @@ import subprocess
 import sys
 import time
 
-STAGES = ["encode1", "encode2", "decode", "stitch"]
+STAGES = ["encode1", "encode2", "decode", "audio", "stitch"]
 
 STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"]
+
+AUDIO_STRATEGIES = ["elevenlabs", "mmaudio"]
 
 
 def build_commands(args):
@@ -39,11 +41,22 @@ def build_commands(args):
     if args.limit:
         commands["decode"] += ["--limit", str(args.limit)]
 
+    commands["audio"] = [
+        sys.executable, "decode.py", args.output,
+        "--audio", "--audio-strategy", args.audio_strategy or "elevenlabs",
+    ]
+    if args.start_index is not None:
+        commands["audio"] += ["--start-index", str(args.start_index)]
+    if args.limit:
+        commands["audio"] += ["--limit", str(args.limit)]
+
     commands["stitch"] = [
         sys.executable, "decode.py", args.output,
         "--strategy", args.strategy,
         "--stitch",
     ]
+    if args.audio_strategy:
+        commands["stitch"] += ["--audio-strategy", args.audio_strategy]
 
     return commands
 
@@ -51,6 +64,8 @@ def build_commands(args):
 def run_pipeline(args):
     """Run each stage in sequence, stopping on first failure."""
     skip = set(args.skip) if args.skip else set()
+    if not args.audio_strategy:
+        skip.add("audio")
     commands = build_commands(args)
     timings = []
 
@@ -131,6 +146,9 @@ def main():
     parser.add_argument("--strategy", choices=STRATEGIES,
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
+    parser.add_argument("--audio-strategy", choices=AUDIO_STRATEGIES,
+                        default=None,
+                        help="Audio generation backend (default: none, skip audio)")
 
     # Encode options
     parser.add_argument("--detector", "-d", choices=["adaptive", "content"],

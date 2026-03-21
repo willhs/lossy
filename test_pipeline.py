@@ -13,6 +13,7 @@ def base_args():
         video="media/film.mp4",
         output="output/film",
         strategy="fal-seedance",
+        audio_strategy=None,
         detector=None,
         threshold=None,
         start_index=None,
