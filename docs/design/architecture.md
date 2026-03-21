@@ -75,6 +75,22 @@ Supported strategies:
 - `replicate-wan` -- Replicate Wan 2.2 Fast, fixed ~5s clips, cheapest ($0.05/clip)
 - `fal-seedance` -- fal.ai Seedance 1.0 Pro Fast, 2-12s duration control (~$0.10/clip at 480p)
 
+### Audio Generation
+
+Input: scene manifest JSON (sound descriptions). Output: per-shot audio clips + muxed video.
+
+1. Read the `sound` field from each shot's description in `prompts.json`.
+2. Generate audio clips via text-to-audio API (selectable via `--audio-strategy`).
+3. Long shots (exceeding backend max duration) are split into multiple clips.
+4. During stitch, per-shot audio is duration-adjusted (trimmed/padded) to match original shot durations.
+5. Adjusted audio clips are concatenated into a single track and muxed onto the reconstructed video via FFmpeg.
+
+Supported audio strategies:
+- `elevenlabs` -- ElevenLabs Sound Effects v2 via fal.ai, max 22s (~$0.002/s)
+- `mmaudio` -- MMAudio V2 via fal.ai, max 30s (~$0.001/s)
+
+Shots without a `sound` description (older prompts.json files) get silence.
+
 ### Compare
 
 Input: original video + reconstructed video. Output: side-by-side comparison video.

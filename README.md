@@ -15,7 +15,8 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 1. **Encode Stage 1** -- Shot detection + keyframe extraction (PySceneDetect, FFmpeg)
 2. **Encode Stage 2** -- Metadata enrichment + prompt generation (optical flow, YAMNet audio classification, Gemini vision)
 3. **Decode** -- Generate video clips from prompts (swappable strategy)
-4. **Stitch** -- Speed-adjust and concatenate clips into final output
+4. **Audio** -- Generate per-shot audio from sound descriptions (optional, swappable strategy)
+5. **Stitch** -- Speed-adjust and concatenate clips into final output, mux audio if available
 
 ### Strategies
 
@@ -26,12 +27,23 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 | `fal-seedance-pro` | fal.ai Seedance Pro | 2-12s | ~$0.05/s |
 | `runpod-wan` | RunPod (self-hosted) | Fixed ~5s | Hourly GPU rate |
 
+### Audio Strategies
+
+| Strategy | Backend | Max duration | Cost |
+|---|---|---|---|
+| `elevenlabs` | ElevenLabs SFX v2 (fal.ai) | 22s | ~$0.002/s |
+| `mmaudio` | MMAudio V2 (fal.ai) | 30s | ~$0.001/s |
+
 ## Usage
 
 ### Full pipeline (single command)
 
 ```bash
+# Video only
 python pipeline.py media/film.mp4 -o output/film --strategy fal-seedance
+
+# Video + audio
+python pipeline.py media/film.mp4 -o output/film --strategy fal-seedance --audio-strategy elevenlabs
 ```
 
 Options:
@@ -49,9 +61,15 @@ Options:
 python encode.py stage1 media/film.mp4 -o output/film
 python encode.py stage2 output/film
 
-# Decode + stitch
+# Decode (video)
 python decode.py output/film --strategy fal-seedance
+
+# Audio generation (optional)
+python decode.py output/film --audio --audio-strategy elevenlabs
+
+# Stitch (muxes audio if --audio-strategy provided)
 python decode.py output/film --strategy fal-seedance --stitch
+python decode.py output/film --strategy fal-seedance --stitch --audio-strategy elevenlabs
 ```
 
 ### Compare

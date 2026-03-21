@@ -20,6 +20,7 @@ related: []
 - ~~**Build the encoder**~~ — PySceneDetect shot detection + Gemini Flash-Lite prompt generation. Full pipeline tested.
 - ~~**Build the decoder**~~ — Replicate Wan 2.2 Fast (480p, ~$0.05/clip), FFmpeg stitcher with speed-adjustment. 15-clip test batch successful.
 - ~~**Fix speed-adjustment issues**~~ — added Seedance strategy with 2-12s duration control. Strategy pattern in decoder supports swappable backends.
+- ~~**Audio generation**~~ — per-shot audio from sound descriptions via ElevenLabs/MMAudio (fal.ai). Audio muxed into reconstructed film during stitch.
 
 ## Next
 
@@ -27,7 +28,7 @@ related: []
 
 ## Later
 
-- **Audio encoding** — audio is 38% of the source file and currently not captured at all. Use YAMNet for sound classification (music, effects, ambient) and WhisperX for dialogue/speaker diarization. Encode audio cues into the prompt manifest so the decoder can reconstruct a soundtrack.
+- **Audio encoding improvements** — WhisperX for dialogue/speaker diarization. Encode dialogue into the prompt manifest for future speech synthesis.
 - **Write the blog post** — walk through the process, show results, reflect on what language preserves and what it loses.
 - **Try variations** — different description detail levels, different video gen models, manual vs automated encoding. See how results change.
 - **Compression ratio gag** — calculate the "bitrate" of the text manifest vs the original file size. Present it seriously.
