@@ -253,10 +253,9 @@ class RunPodWanStrategy(GenerationStrategy):
 
     GPU_TYPES = [
         ("NVIDIA GeForce RTX 4090", 0.34),
-        ("NVIDIA RTX A5000", 0.34),
         ("NVIDIA RTX 4000 Ada Generation", 0.34),
-        ("NVIDIA L40S", 0.54),
         ("NVIDIA RTX A6000", 0.52),
+        ("NVIDIA L40S", 0.54),
     ]
     DOCKER_IMAGE = "runpod/comfyui:latest"
     CONTAINER_DISK_GB = 50
@@ -448,6 +447,13 @@ class RunPodWanStrategy(GenerationStrategy):
             time.sleep(5)
 
         print(f"\n  Error: ComfyUI did not become ready within {self.COMFYUI_READY_TIMEOUT}s")
+        if self._ssh_host:
+            try:
+                result = self._ssh_cmd("tail -50 /tmp/comfyui.log", timeout=10)
+                if result.stdout:
+                    print(f"  ComfyUI log:\n{result.stdout}")
+            except Exception:
+                pass
         self._terminate_pod()
         sys.exit(1)
 
@@ -508,10 +514,18 @@ class RunPodWanStrategy(GenerationStrategy):
                     print(f"      {result.stderr[:200]}")
                 all_ok = False
 
-        # Start ComfyUI with models in place
+        # Start ComfyUI with models in place — find the right Python
         print("  Starting ComfyUI...")
+        find_python = self._ssh_cmd(
+            f"if [ -x {self.COMFYUI_DIR}/.venv/bin/python ]; then echo .venv/bin/python; "
+            f"elif command -v python3 >/dev/null; then echo python3; "
+            f"else echo python; fi",
+            timeout=10,
+        )
+        python_bin = find_python.stdout.strip() if find_python.returncode == 0 else "python3"
+        print(f"  Using Python: {python_bin}")
         self._ssh_bg(
-            f"cd {self.COMFYUI_DIR} && .venv/bin/python main.py --listen 0.0.0.0 --port 8188 "
+            f"cd {self.COMFYUI_DIR} && {python_bin} main.py --listen 0.0.0.0 --port 8188 "
             f"</dev/null >/tmp/comfyui.log 2>&1"
         )
 
@@ -734,6 +748,12 @@ class RunPodWanStrategy(GenerationStrategy):
             rate = getattr(self, "_gpu_hourly_rate", self.GPU_TYPES[0][1])
             clips_so_far = len([f for f in os.listdir(clips_dir) if f.endswith(".mp4")])
             per_clip_cost = (elapsed_h * rate) / max(clips_so_far, 1)
+
+            # Free cached VRAM from this generation (keep models loaded)
+            try:
+                httpx.post(f"{self._base_url}/free", json={"free_memory": True}, timeout=10)
+            except Exception:
+                pass
 
             return [ClipResult(path=clip_path, actual_duration_s=self.CLIP_DURATION, cost=per_clip_cost)]
 
