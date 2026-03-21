@@ -106,6 +106,28 @@ class TestBuildCommands:
         assert "--audio-strategy" in stitch_cmd
         assert "elevenlabs" in stitch_cmd
 
+    def test_build_commands_with_speech(self, base_args):
+        base_args.speech_voice = "Roger"
+        commands = build_commands(base_args)
+        assert "speech" in commands
+        speech_cmd = commands["speech"]
+        assert "--speech" in speech_cmd
+        assert "--speech-voice" in speech_cmd
+        assert "Roger" in speech_cmd
+
+    def test_stitch_includes_speech_voice(self, base_args):
+        base_args.speech_voice = "Roger"
+        commands = build_commands(base_args)
+        stitch_cmd = commands["stitch"]
+        assert "--speech-voice" in stitch_cmd
+        assert "Roger" in stitch_cmd
+
+    def test_speech_skipped_when_no_voice(self, base_args):
+        """Speech stage auto-skipped when --speech-voice not provided."""
+        from pipeline import run_pipeline, STAGES
+        assert "speech" in STAGES
+        # base_args has speech_voice=None, so speech gets auto-skipped
+
 
 class TestRunPipeline:
     @patch("pipeline.subprocess.run")

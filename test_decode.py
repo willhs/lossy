@@ -15,6 +15,8 @@ from decode import (
     MMAudioStrategy,
     ReplicateWanStrategy,
     RunPodWanStrategy,
+    SpeechClipResult,
+    SpeechStrategy,
     _format_prompt_seedance,
     _format_prompt_wan,
     format_prompt,
@@ -395,3 +397,38 @@ class TestAudioClipResult:
         assert result.path == "/tmp/0001.mp3"
         assert result.actual_duration_s == 5.0
         assert result.cost == 0.01
+
+
+# ---------------------------------------------------------------------------
+# SpeechClipResult
+# ---------------------------------------------------------------------------
+
+class TestSpeechClipResult:
+    def test_fields(self):
+        result = SpeechClipResult(
+            path="/tmp/0001-00.mp3", duration_s=2.5, offset_s=1.0, cost=0.005
+        )
+        assert result.path == "/tmp/0001-00.mp3"
+        assert result.duration_s == 2.5
+        assert result.offset_s == 1.0
+        assert result.cost == 0.005
+
+
+# ---------------------------------------------------------------------------
+# SpeechStrategy
+# ---------------------------------------------------------------------------
+
+class TestSpeechStrategy:
+    def test_default_voice(self):
+        s = SpeechStrategy()
+        assert s.voice == "Roger"
+
+    def test_custom_voice(self):
+        s = SpeechStrategy(voice="Alice")
+        assert s.voice == "Alice"
+
+    def test_model_id(self):
+        assert SpeechStrategy.MODEL_ID == "fal-ai/elevenlabs/tts/turbo-v2.5"
+
+    def test_cost_constant(self):
+        assert SpeechStrategy.COST_PER_1K_CHARS == 0.05
