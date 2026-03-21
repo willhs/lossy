@@ -14,6 +14,7 @@ def base_args():
         output="output/film",
         strategy="fal-seedance",
         audio_strategy=None,
+        speech_voice=None,
         detector=None,
         threshold=None,
         start_index=None,

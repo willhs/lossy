@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-STAGES = ["encode1", "encode2", "decode", "audio", "stitch"]
+STAGES = ["encode1", "encode2", "decode", "audio", "speech", "stitch"]
 
 STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"]
 
@@ -50,6 +50,15 @@ def build_commands(args):
     if args.limit:
         commands["audio"] += ["--limit", str(args.limit)]
 
+    commands["speech"] = [
+        sys.executable, "decode.py", args.output,
+        "--speech", "--speech-voice", args.speech_voice or "Roger",
+    ]
+    if args.start_index is not None:
+        commands["speech"] += ["--start-index", str(args.start_index)]
+    if args.limit:
+        commands["speech"] += ["--limit", str(args.limit)]
+
     commands["stitch"] = [
         sys.executable, "decode.py", args.output,
         "--strategy", args.strategy,
@@ -57,6 +66,8 @@ def build_commands(args):
     ]
     if args.audio_strategy:
         commands["stitch"] += ["--audio-strategy", args.audio_strategy]
+    if args.speech_voice:
+        commands["stitch"] += ["--speech-voice", args.speech_voice]
 
     return commands
 
@@ -66,6 +77,8 @@ def run_pipeline(args):
     skip = set(args.skip) if args.skip else set()
     if not args.audio_strategy:
         skip.add("audio")
+    if not args.speech_voice:
+        skip.add("speech")
     commands = build_commands(args)
     timings = []
 
@@ -149,6 +162,8 @@ def main():
     parser.add_argument("--audio-strategy", choices=AUDIO_STRATEGIES,
                         default=None,
                         help="Audio generation backend (default: none, skip audio)")
+    parser.add_argument("--speech-voice", default=None,
+                        help="ElevenLabs voice for speech generation (default: none, skip speech)")
 
     # Encode options
     parser.add_argument("--detector", "-d", choices=["adaptive", "content"],
