@@ -188,19 +188,29 @@ def parse_srt(srt_path: str) -> list[dict]:
     return entries
 
 
-def align_subtitles_to_shots(subtitles: list[dict], scenes: list[dict]) -> dict[int, list[str]]:
-    """Map shot indices to overlapping subtitle text. Returns {shot_index: [dialogue lines]}."""
+def align_subtitles_to_shots(subtitles: list[dict], scenes: list[dict]) -> dict[int, list[dict]]:
+    """Map shot indices to overlapping subtitle entries with timing.
+
+    Returns {shot_index: [{text, start_s, end_s}]} where start_s/end_s
+    are offsets relative to the shot start time.
+    """
     dialogue_map = {}
     for scene in scenes:
         shot_start = scene["start_s"]
         shot_end = scene["end_s"]
-        lines = []
+        entries = []
         for sub in subtitles:
-            # Check overlap: sub overlaps shot if sub.start < shot.end AND sub.end > shot.start
             if sub["start_s"] < shot_end and sub["end_s"] > shot_start:
-                lines.append(sub["text"])
-        if lines:
-            dialogue_map[scene["index"]] = lines
+                # Clamp to shot boundaries, convert to shot-relative offset
+                rel_start = max(0, sub["start_s"] - shot_start)
+                rel_end = min(shot_end - shot_start, sub["end_s"] - shot_start)
+                entries.append({
+                    "text": sub["text"],
+                    "start_s": round(rel_start, 3),
+                    "end_s": round(rel_end, 3),
+                })
+        if entries:
+            dialogue_map[scene["index"]] = entries
     return dialogue_map
 
 
@@ -603,7 +613,8 @@ def generate_prompts(
 
         dialogue = dialogue_map.get(idx, [])
         if dialogue:
-            context_lines.append(f"Dialogue during this shot: \"{' / '.join(dialogue)}\"")
+            texts = [d["text"] if isinstance(d, dict) else d for d in dialogue]
+            context_lines.append(f"Dialogue during this shot: \"{' / '.join(texts)}\"")
 
         context_lines.append(f"These are {len(parts)} uniformly-sampled frames from the shot, in chronological order.")
         context_lines.append("Analyze the frames and return the JSON description.")

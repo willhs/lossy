@@ -144,7 +144,8 @@ class TestAlignSubtitlesToShots:
         scenes = [self._scene(0, 10.0, 20.0)]
         subs = [self._sub(12.0, 15.0, "Hello")]
         result = align_subtitles_to_shots(subs, scenes)
-        assert result == {0: ["Hello"]}
+        assert 0 in result
+        assert result[0] == [{"text": "Hello", "start_s": 2.0, "end_s": 5.0}]
 
     def test_subtitle_spanning_two_shots(self):
         scenes = [
@@ -155,8 +156,14 @@ class TestAlignSubtitlesToShots:
         result = align_subtitles_to_shots(subs, scenes)
         assert 0 in result
         assert 1 in result
-        assert result[0] == ["Spanning"]
-        assert result[1] == ["Spanning"]
+        # Shot 0: clamped to [4.0, 5.0] relative to shot start 10.0
+        assert result[0][0]["text"] == "Spanning"
+        assert result[0][0]["start_s"] == 4.0
+        assert result[0][0]["end_s"] == 5.0
+        # Shot 1: clamped to [0.0, 1.0] relative to shot start 15.0
+        assert result[1][0]["text"] == "Spanning"
+        assert result[1][0]["start_s"] == 0.0
+        assert result[1][0]["end_s"] == 1.0
 
     def test_no_dialogue(self):
         scenes = [self._scene(0, 0.0, 10.0)]
@@ -171,21 +178,25 @@ class TestAlignSubtitlesToShots:
             self._sub(5.0, 7.0, "Second"),
         ]
         result = align_subtitles_to_shots(subs, scenes)
-        assert result == {0: ["First", "Second"]}
+        assert 0 in result
+        assert len(result[0]) == 2
+        assert result[0][0] == {"text": "First", "start_s": 1.0, "end_s": 3.0}
+        assert result[0][1] == {"text": "Second", "start_s": 5.0, "end_s": 7.0}
 
     def test_exact_boundary_no_overlap(self):
-        """Subtitle ends exactly when shot starts — no overlap."""
+        """Subtitle ends exactly when shot starts -- no overlap."""
         scenes = [self._scene(0, 10.0, 20.0)]
         subs = [self._sub(5.0, 10.0, "Before")]
         result = align_subtitles_to_shots(subs, scenes)
         assert result == {}
 
     def test_exact_boundary_overlap(self):
-        """Subtitle starts exactly when shot starts — overlaps."""
+        """Subtitle starts exactly when shot starts -- overlaps."""
         scenes = [self._scene(0, 10.0, 20.0)]
         subs = [self._sub(10.0, 12.0, "Exact")]
         result = align_subtitles_to_shots(subs, scenes)
-        assert result == {0: ["Exact"]}
+        assert 0 in result
+        assert result[0] == [{"text": "Exact", "start_s": 0.0, "end_s": 2.0}]
 
 
 # ---------------------------------------------------------------------------
