@@ -1681,6 +1681,110 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
     return audio_track_path
 
 
+def _stitch_speech(output_dir: str, prompts: list[dict],
+                   start_index: int | None) -> str | None:
+    """Build time-aligned speech track from per-line TTS clips.
+
+    Each speech clip is placed at its SRT-derived offset within the shot
+    using FFmpeg adelay, then all shots are concatenated.
+    """
+    speech_dir = os.path.join(output_dir, "speech")
+    if not os.path.exists(speech_dir):
+        return None
+
+    progress_path = os.path.join(output_dir, "speech_progress.json")
+    speech_meta = {}
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            speech_meta = json.load(f).get("clips", {})
+
+    if start_index is not None:
+        prompts = [p for p in prompts if p["index"] >= start_index]
+
+    adjusted_dir = os.path.join(output_dir, "speech_adjusted")
+    os.makedirs(adjusted_dir, exist_ok=True)
+
+    speech_entries = []
+    for entry in prompts:
+        idx = entry["index"]
+        idx_str = str(idx)
+        target_duration = entry["duration_s"]
+        adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+
+        clips = speech_meta.get(idx_str, [])
+        if not clips:
+            # Silence for this shot
+            if not os.path.exists(adjusted_path):
+                subprocess.run(
+                    ["ffmpeg", "-y", "-f", "lavfi", "-i",
+                     f"anullsrc=r=44100:cl=stereo",
+                     "-t", str(target_duration), adjusted_path],
+                    capture_output=True,
+                )
+            speech_entries.append(adjusted_path)
+            continue
+
+        if not os.path.exists(adjusted_path):
+            if len(clips) == 1:
+                # Single line: adelay + pad/trim
+                clip = clips[0]
+                clip_path = os.path.join(speech_dir, clip["path"])
+                delay_ms = int(clip["offset_s"] * 1000)
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", clip_path,
+                     "-af", (f"adelay={delay_ms}|{delay_ms},"
+                             f"apad=whole_dur={target_duration},"
+                             f"atrim=0:{target_duration}"),
+                     "-ar", "44100", "-ac", "2", adjusted_path],
+                    capture_output=True,
+                )
+            else:
+                # Multiple lines: adelay each, amix together, pad/trim
+                inputs = []
+                filters = []
+                for i, clip in enumerate(clips):
+                    clip_path = os.path.join(speech_dir, clip["path"])
+                    inputs.extend(["-i", clip_path])
+                    delay_ms = int(clip["offset_s"] * 1000)
+                    filters.append(f"[{i}]adelay={delay_ms}|{delay_ms}[d{i}]")
+
+                mix_inputs = "".join(f"[d{i}]" for i in range(len(clips)))
+                filters.append(
+                    f"{mix_inputs}amix=inputs={len(clips)}:duration=longest,"
+                    f"apad=whole_dur={target_duration},"
+                    f"atrim=0:{target_duration}[out]"
+                )
+                filter_complex = ";".join(filters)
+
+                subprocess.run(
+                    ["ffmpeg", "-y"] + inputs +
+                    ["-filter_complex", filter_complex,
+                     "-map", "[out]",
+                     "-ar", "44100", "-ac", "2", adjusted_path],
+                    capture_output=True,
+                )
+
+        speech_entries.append(adjusted_path)
+
+    if not speech_entries:
+        return None
+
+    concat_file = os.path.join(output_dir, "speech_concat.txt")
+    with open(concat_file, "w") as f:
+        for path in speech_entries:
+            f.write(f"file '{os.path.abspath(path)}'\n")
+
+    speech_track_path = os.path.join(output_dir, "speech_track.wav")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+         "-i", concat_file, "-c", "copy", speech_track_path],
+        capture_output=True,
+    )
+
+    print(f"  Speech track: {speech_track_path}")
+    return speech_track_path
+
+
 def _probe_duration(clip_path: str) -> float:
     """Get video duration via ffprobe. Fallback for clips without metadata."""
     try:
@@ -1817,9 +1921,11 @@ def stitch_clips(args):
     print(f"  Original duration: {total_original:.1f}s ({total_original / 60:.1f}min)")
     print(f"  Clips used: {len(clip_entries)}")
 
-    # Mux audio if available
+    # Mux audio if available (SFX and/or speech)
     audio_strategy = getattr(args, "audio_strategy", None)
-    if audio_strategy:
+    speech_voice = getattr(args, "speech_voice", None)
+
+    if audio_strategy or speech_voice:
         # Only include shots that have video clips in the stitch
         stitched_indices = set()
         for clip_path, _, _ in clip_entries:
@@ -1827,22 +1933,50 @@ def stitch_clips(args):
             idx_str = basename.split("-")[0].split(".")[0]
             stitched_indices.add(int(idx_str))
         stitched_prompts = [p for p in prompts_full if p["index"] in stitched_indices]
-        audio_track = _stitch_audio(output_dir, audio_strategy, stitched_prompts, None)
-        if audio_track and os.path.exists(audio_track):
+
+        # Build SFX track
+        audio_track = None
+        if audio_strategy:
+            audio_track = _stitch_audio(output_dir, audio_strategy, stitched_prompts, None)
+
+        # Build speech track
+        speech_track = None
+        if speech_voice:
+            speech_track = _stitch_speech(output_dir, stitched_prompts, None)
+
+        # Determine final audio to mux
+        audio_to_mux = None
+        if audio_track and os.path.exists(audio_track) and speech_track and os.path.exists(speech_track):
+            # Mix SFX + speech into combined track
+            combined_path = os.path.join(output_dir, "combined_audio.wav")
+            subprocess.run(
+                ["ffmpeg", "-y",
+                 "-i", audio_track, "-i", speech_track,
+                 "-filter_complex", "amix=inputs=2:duration=longest",
+                 combined_path],
+                capture_output=True,
+            )
+            audio_to_mux = combined_path
+        elif audio_track and os.path.exists(audio_track):
+            audio_to_mux = audio_track
+        elif speech_track and os.path.exists(speech_track):
+            audio_to_mux = speech_track
+
+        if audio_to_mux:
             muxed_path = output_path.replace(".mp4", "_with_audio.mp4")
             result = subprocess.run(
                 ["ffmpeg", "-y",
                  "-i", output_path,
-                 "-i", audio_track,
+                 "-i", audio_to_mux,
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                  "-shortest",
                  muxed_path],
                 capture_output=True,
             )
             if result.returncode == 0:
-                # Replace silent video with muxed version
                 os.replace(muxed_path, output_path)
-                print(f"  Audio muxed into {output_path}")
+                label = "SFX+speech" if audio_track and speech_track else ("speech" if speech_track else "SFX")
+                print(f"  {label} muxed into {output_path}")
             else:
                 print(f"  Warning: audio mux failed, silent video preserved")
                 if os.path.exists(muxed_path):
