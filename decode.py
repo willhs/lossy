@@ -50,6 +50,15 @@ class AudioClipResult:
     cost: float
 
 
+@dataclass
+class SpeechClipResult:
+    """Result of generating a single speech clip."""
+    path: str
+    duration_s: float
+    offset_s: float  # shot-relative offset for placement
+    cost: float
+
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",
@@ -968,6 +977,72 @@ class MMAudioStrategy(AudioStrategy):
 
 
 # ---------------------------------------------------------------------------
+# Speech generation strategy
+# ---------------------------------------------------------------------------
+
+
+class SpeechStrategy:
+    """TTS via fal.ai ElevenLabs Turbo v2.5."""
+
+    MODEL_ID = "fal-ai/elevenlabs/tts/turbo-v2.5"
+    COST_PER_1K_CHARS = 0.05
+
+    def __init__(self, voice: str = "Roger"):
+        self.voice = voice
+
+    def generate(
+        self,
+        text: str,
+        speech_dir: str,
+        shot_index: int,
+        line_index: int,
+        offset_s: float,
+    ) -> SpeechClipResult | None:
+        """Generate a single TTS clip for one dialogue line."""
+        import fal_client
+        import httpx
+
+        clip_name = f"{shot_index:04d}-{line_index:02d}.mp3"
+        clip_path = os.path.join(speech_dir, clip_name)
+
+        try:
+            result = fal_client.subscribe(
+                self.MODEL_ID,
+                arguments={
+                    "text": text,
+                    "voice": self.voice,
+                },
+                with_logs=False,
+            )
+
+            audio_url = result["audio"]["url"]
+            resp = httpx.get(audio_url, follow_redirects=True)
+            resp.raise_for_status()
+            with open(clip_path, "wb") as f:
+                f.write(resp.content)
+
+            # Get actual duration via ffprobe
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "format=duration", "-of", "csv=p=0", clip_path],
+                capture_output=True, text=True,
+            )
+            duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0
+
+            cost = len(text) / 1000 * self.COST_PER_1K_CHARS
+            return SpeechClipResult(
+                path=clip_path,
+                duration_s=duration,
+                offset_s=offset_s,
+                cost=cost,
+            )
+
+        except Exception as e:
+            print(f"  Error generating speech {clip_name}: {e}")
+            return None
+
+
+# ---------------------------------------------------------------------------
 # Prompt formatting (strategy-independent)
 # ---------------------------------------------------------------------------
 
@@ -1363,6 +1438,126 @@ def run_audio(args, strategy: AudioStrategy):
 
 
 # ---------------------------------------------------------------------------
+# Speech generation loop
+# ---------------------------------------------------------------------------
+
+
+def run_speech(args, strategy: SpeechStrategy):
+    """Speech generation loop: read prompts, generate TTS clips, track progress."""
+    output_dir = args.output_dir
+    prompts_path = os.path.join(output_dir, "prompts.json")
+
+    if not os.path.exists(prompts_path):
+        print(f"Error: {prompts_path} not found. Run encoder first.")
+        sys.exit(1)
+
+    with open(prompts_path) as f:
+        prompts = json.load(f)
+
+    if args.start_index:
+        prompts = [p for p in prompts if p["index"] >= args.start_index]
+    if args.limit:
+        prompts = prompts[:args.limit]
+
+    speech_dir = os.path.join(output_dir, "speech")
+    os.makedirs(speech_dir, exist_ok=True)
+
+    progress_path = os.path.join(output_dir, "speech_progress.json")
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            progress = json.load(f)
+    else:
+        progress = {"completed": [], "skipped": [], "failed": [],
+                     "total_cost_estimate": 0.0, "clips": {}}
+
+    completed_set = set(progress["completed"])
+    skipped_set = set(progress.get("skipped", []))
+    generated = 0
+    skipped = 0
+    errors = 0
+
+    # Count total dialogue lines
+    total_lines = sum(
+        len(e.get("dialogue") or [])
+        for e in prompts
+        if isinstance(e.get("dialogue"), list)
+           and e.get("dialogue")
+           and isinstance(e["dialogue"][0], dict)
+    )
+
+    print(f"Generating speech for {len(prompts)} shots ({total_lines} lines) "
+          f"via ElevenLabs TTS ({len(completed_set)} shots done)...")
+
+    for entry in prompts:
+        idx = entry["index"]
+        if idx in completed_set or idx in skipped_set:
+            continue
+
+        dialogue = entry.get("dialogue")
+        if not dialogue or not isinstance(dialogue, list):
+            skipped += 1
+            progress["skipped"].append(idx)
+            skipped_set.add(idx)
+            continue
+
+        # Handle both enriched (dict) and legacy (str) formats
+        if not isinstance(dialogue[0], dict):
+            print(f"  Shot {idx}: dialogue not enriched (plain strings), skipping")
+            skipped += 1
+            progress["skipped"].append(idx)
+            skipped_set.add(idx)
+            continue
+
+        shot_clips = []
+        shot_ok = True
+        for line_idx, line in enumerate(dialogue):
+            clip_path = os.path.join(speech_dir, f"{idx:04d}-{line_idx:02d}.mp3")
+            if os.path.exists(clip_path):
+                shot_clips.append({
+                    "path": os.path.basename(clip_path),
+                    "offset_s": line["start_s"],
+                })
+                continue
+
+            result = strategy.generate(
+                line["text"], speech_dir, idx, line_idx, line["start_s"]
+            )
+            if result:
+                shot_clips.append({
+                    "path": os.path.basename(result.path),
+                    "duration_s": result.duration_s,
+                    "offset_s": result.offset_s,
+                })
+                progress["total_cost_estimate"] += result.cost
+            else:
+                errors += 1
+                shot_ok = False
+                break
+
+        if shot_ok and shot_clips:
+            generated += 1
+            progress["completed"].append(idx)
+            completed_set.add(idx)
+            progress["clips"][str(idx)] = shot_clips
+        elif not shot_ok:
+            progress["failed"].append(idx)
+
+        if generated % 5 == 0:
+            with open(progress_path, "w") as f:
+                json.dump(progress, f, indent=2)
+
+        if errors > 20:
+            print("Too many errors, saving progress and stopping.")
+            break
+
+    with open(progress_path, "w") as f:
+        json.dump(progress, f, indent=2)
+
+    print(f"\nDone. Generated speech for {generated} shots, skipped {skipped}.")
+    print(f"  Estimated cost: ${progress['total_cost_estimate']:.2f}")
+
+
+# ---------------------------------------------------------------------------
 # FFmpeg stitcher
 # ---------------------------------------------------------------------------
 
@@ -1676,6 +1871,10 @@ def main():
     parser.add_argument("--audio-strategy", choices=["elevenlabs", "mmaudio"],
                         default="elevenlabs",
                         help="Audio generation backend (default: elevenlabs)")
+    parser.add_argument("--speech", action="store_true",
+                        help="Generate speech/dialogue clips (instead of video)")
+    parser.add_argument("--speech-voice", default="Roger",
+                        help="ElevenLabs voice name for speech (default: Roger)")
     args = parser.parse_args()
 
     load_env()
@@ -1689,6 +1888,9 @@ def main():
         }
         audio_strategy = audio_strategies[args.audio_strategy]()
         run_audio(args, audio_strategy)
+    elif args.speech:
+        speech_strategy = SpeechStrategy(voice=args.speech_voice)
+        run_speech(args, speech_strategy)
     else:
         strategies = {
             "replicate-wan": ReplicateWanStrategy,
