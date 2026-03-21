@@ -332,7 +332,7 @@
       <div class="divider"></div>
       <div class="video-pane">
         <span class="pane-label reconstructed">RECONSTRUCTED</span>
-        <video id="vid-reconstructed" preload="metadata" muted></video>
+        <video id="vid-reconstructed" preload="metadata"></video>
       </div>
     </div>
   </div>
@@ -342,6 +342,7 @@
     <button id="btn-play" title="Play/pause both">Play</button>
     <button id="btn-next" title="Next shot">Next &#8594;</button>
     <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
+    <button id="btn-audio" title="Cycle audio source (M)">Audio: generated</button>
     <span class="spacer"></span>
     <select id="strategy-select" style="background:#333;color:#ddd;border:1px solid #555;padding:3px 6px;border-radius:3px;font-family:monospace;font-size:12px;display:none"></select>
     <span class="sync-indicator" id="sync-info"></span>
@@ -374,7 +375,7 @@
     </div>
     <div class="help">
       <b>Keys:</b> Space=play/pause, &#8592;/&#8594;=prev/next shot,
-      [/]=step &plusmn;1s, L=loop shot, M=mute/unmute original
+      [/]=step &plusmn;1s, L=loop shot, M=cycle audio source
     </div>
   </div>
 </div>
@@ -405,6 +406,36 @@ let prompts = [];
 let activeShot = -1;
 let loopShot = false;
 let viewMode = 'paired';
+
+// Audio source: 'generated' (recon unmuted), 'original' (orig unmuted), 'off' (both muted)
+let audioSource = 'generated';
+const btnAudio = document.getElementById('btn-audio');
+
+function setAudioSource(src) {
+  audioSource = src;
+  if (src === 'generated') {
+    vidOrig.muted = true;
+    vidRecon.muted = false;
+    btnAudio.textContent = 'Audio: generated';
+    btnAudio.classList.remove('active');
+  } else if (src === 'original') {
+    vidOrig.muted = false;
+    vidRecon.muted = true;
+    btnAudio.textContent = 'Audio: original';
+    btnAudio.classList.add('active');
+  } else {
+    vidOrig.muted = true;
+    vidRecon.muted = true;
+    btnAudio.textContent = 'Audio: off';
+    btnAudio.classList.remove('active');
+  }
+}
+
+function cycleAudioSource() {
+  if (audioSource === 'generated') setAudioSource('original');
+  else if (audioSource === 'original') setAudioSource('off');
+  else setAudioSource('generated');
+}
 
 // Reconstruction mapping: shot index -> { reconStart, reconEnd } in reconstructed video
 // null for shots that weren't decoded
@@ -896,6 +927,7 @@ btnSolo.addEventListener('click', () => {
     playBoth();
   }
 });
+btnAudio.addEventListener('click', cycleAudioSource);
 
 // -- View mode tabs --
 document.querySelectorAll('.view-tab').forEach(tab => {
@@ -943,7 +975,7 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'm':
     case 'M':
-      vidOrig.muted = !vidOrig.muted;
+      cycleAudioSource();
       break;
   }
 });
