@@ -343,6 +343,7 @@
     <button id="btn-next" title="Next shot">Next &#8594;</button>
     <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
     <button id="btn-audio" title="Cycle audio source (M)">Audio: generated</button>
+    <input id="volume-slider" type="range" min="0" max="100" value="70" title="Volume" style="width:60px;vertical-align:middle;accent-color:#fb0;cursor:pointer">
     <span class="spacer"></span>
     <select id="strategy-select" style="background:#333;color:#ddd;border:1px solid #555;padding:3px 6px;border-radius:3px;font-family:monospace;font-size:12px;display:none"></select>
     <span class="sync-indicator" id="sync-info"></span>
@@ -437,6 +438,14 @@ function cycleAudioSource() {
   else setAudioSource('generated');
 }
 
+// Volume
+const volumeSlider = document.getElementById('volume-slider');
+vidOrig.volume = vidRecon.volume = 0.7;
+volumeSlider.addEventListener('input', () => {
+  const v = volumeSlider.value / 100;
+  vidOrig.volume = vidRecon.volume = v;
+});
+
 // Reconstruction mapping: shot index -> { reconStart, reconEnd } in reconstructed video
 // null for shots that weren't decoded
 let reconMap = {};
@@ -498,8 +507,9 @@ function syncReconToOrig() {
   const mapping = reconMap[idx];
 
   if (!mapping) {
-    // Current shot not decoded — don't pause recon (browser autoplay policy
-    // would block re-playing it from a non-user-gesture context). Just show indicator.
+    // Current shot not decoded — pause recon at its current position to prevent
+    // it from running to the end and entering the 'ended' state.
+    if (!vidRecon.paused) vidRecon.pause();
     syncInfo.textContent = 'not decoded';
     syncInfo.className = 'sync-indicator warn';
     lastSyncedShot = idx;
@@ -514,8 +524,9 @@ function syncReconToOrig() {
   lastSyncedShot = idx;
 
   if (enteredNewRegion) {
-    // Entering decoded region — hard seek to correct position
+    // Entering decoded region — hard seek to correct position and resume playback
     vidRecon.currentTime = targetReconTime;
+    if (!vidOrig.paused) vidRecon.play();
     syncInfo.textContent = '';
     syncInfo.className = 'sync-indicator';
     return;
@@ -545,6 +556,10 @@ function seekBoth(origTime, shotIdx) {
   if (mapping) {
     const offsetInShot = origTime - scenes[idx].start_s;
     vidRecon.currentTime = mapping.reconStart + Math.max(0, offsetInShot);
+    // Recover from ended state when seeking back to a decoded shot
+    if (vidRecon.ended && !vidOrig.paused) {
+      vidRecon.play();
+    }
   }
   lastSyncedShot = idx;
   setTimeout(() => { isSeeking = false; }, 150);
