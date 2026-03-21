@@ -89,6 +89,22 @@ class TestBuildCommands:
         assert "--start-index" in cmds["decode"]
         assert "5" in cmds["decode"]
 
+    def test_build_commands_with_audio(self, base_args):
+        base_args.audio_strategy = "elevenlabs"
+        commands = build_commands(base_args)
+        assert "audio" in commands
+        audio_cmd = commands["audio"]
+        assert "--audio" in audio_cmd
+        assert "--audio-strategy" in audio_cmd
+        assert "elevenlabs" in audio_cmd
+
+    def test_stitch_includes_audio_strategy(self, base_args):
+        base_args.audio_strategy = "elevenlabs"
+        commands = build_commands(base_args)
+        stitch_cmd = commands["stitch"]
+        assert "--audio-strategy" in stitch_cmd
+        assert "elevenlabs" in stitch_cmd
+
 
 class TestRunPipeline:
     @patch("pipeline.subprocess.run")

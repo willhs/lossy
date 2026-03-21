@@ -6,10 +6,13 @@ import os
 import pytest
 
 from decode import (
+    AudioClipResult,
     CAMERA_TERMS,
     ClipResult,
+    ElevenLabsStrategy,
     FalSeedanceStrategy,
     FalSeedanceProStrategy,
+    MMAudioStrategy,
     ReplicateWanStrategy,
     RunPodWanStrategy,
     _format_prompt_seedance,
@@ -329,3 +332,66 @@ class TestFormatPromptSeedance:
         result = strategy.format_prompt(entry)
         word_count = len(result.split())
         assert word_count <= 60
+
+
+# ---------------------------------------------------------------------------
+# ElevenLabsStrategy._target_durations
+# ---------------------------------------------------------------------------
+
+class TestElevenLabsTargetDurations:
+    def setup_method(self):
+        self.strategy = ElevenLabsStrategy()
+
+    def test_short_clip(self):
+        assert self.strategy._target_durations(3.7) == [3.7]
+
+    def test_at_max(self):
+        assert self.strategy._target_durations(22.0) == [22.0]
+
+    def test_over_max(self):
+        assert self.strategy._target_durations(28.0) == [22.0, 6.0]
+
+    def test_much_over_max(self):
+        assert self.strategy._target_durations(50.0) == [22.0, 22.0, 6.0]
+
+    def test_very_short(self):
+        result = self.strategy._target_durations(0.1)
+        assert result == [0.5]  # Clamped to MIN_DURATION
+
+    def test_zero(self):
+        result = self.strategy._target_durations(0.0)
+        assert result == [0.5]  # Clamped to MIN_DURATION
+
+
+# ---------------------------------------------------------------------------
+# MMAudioStrategy._target_durations
+# ---------------------------------------------------------------------------
+
+class TestMMAudioTargetDurations:
+    def setup_method(self):
+        self.strategy = MMAudioStrategy()
+
+    def test_short_clip(self):
+        assert self.strategy._target_durations(5.0) == [5.0]
+
+    def test_at_max(self):
+        assert self.strategy._target_durations(30.0) == [30.0]
+
+    def test_over_max(self):
+        assert self.strategy._target_durations(35.0) == [30.0, 5.0]
+
+    def test_very_short(self):
+        result = self.strategy._target_durations(0.3)
+        assert result == [1.0]  # Clamped to MIN_DURATION
+
+
+# ---------------------------------------------------------------------------
+# AudioClipResult
+# ---------------------------------------------------------------------------
+
+class TestAudioClipResult:
+    def test_fields(self):
+        result = AudioClipResult(path="/tmp/0001.mp3", actual_duration_s=5.0, cost=0.01)
+        assert result.path == "/tmp/0001.mp3"
+        assert result.actual_duration_s == 5.0
+        assert result.cost == 0.01
