@@ -33,6 +33,9 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 |---|---|---|---|
 | `elevenlabs` | ElevenLabs SFX v2 (fal.ai) | 22s | ~$0.002/s |
 | `mmaudio` | MMAudio V2 (fal.ai) | 30s | ~$0.001/s |
+| `runpod-mmaudio` | MMAudio V2 (self-hosted RunPod) | 30s | ~$0 marginal |
+
+`runpod-mmaudio` reuses the same RunPod pod as `runpod-wan` for near-zero marginal audio cost. First run downloads ~5 GB of MMAudio models.
 
 ## Usage
 
@@ -44,6 +47,9 @@ python pipeline.py media/film.mp4 -o output/film --strategy fal-seedance
 
 # Video + audio
 python pipeline.py media/film.mp4 -o output/film --strategy fal-seedance --audio-strategy elevenlabs
+
+# Video + audio on one RunPod pod (cheapest)
+python pipeline.py media/film.mp4 -o output/film --strategy runpod-wan --audio-strategy runpod-mmaudio
 ```
 
 Options:

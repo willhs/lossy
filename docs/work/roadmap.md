@@ -21,6 +21,7 @@ related: []
 - ~~**Build the decoder**~~ — Replicate Wan 2.2 Fast (480p, ~$0.05/clip), FFmpeg stitcher with speed-adjustment. 15-clip test batch successful.
 - ~~**Fix speed-adjustment issues**~~ — added Seedance strategy with 2-12s duration control. Strategy pattern in decoder supports swappable backends.
 - ~~**Audio generation**~~ — per-shot audio from sound descriptions via ElevenLabs/MMAudio (fal.ai). Audio muxed into reconstructed film during stitch.
+- ~~**Self-hosted MMAudio**~~ — `runpod-mmaudio` audio strategy runs MMAudio V2 on the same RunPod pod as video generation, eliminating fal.ai audio costs (~$0 marginal). Shared pod lifecycle via `runpod_pod.py`.
 
 ## Next
 
