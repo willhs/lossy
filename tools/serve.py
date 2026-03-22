@@ -10,50 +10,65 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 
 
 def scan_project():
-    """Find available output directories and source videos."""
-    outputs = []
+    """Find available source videos and their reconstructed strategies.
+
+    Groups all output runs by their source media file. Each source gets a
+    flat list of strategies (labelled as "run/strategy") so the comparator
+    only needs one dropdown.
+    """
     output_dir = os.path.join(PROJECT_ROOT, "output")
+
+    # Collect all output runs with their strategies
+    # keyed by source media path -> list of {name, path, output_path, has_prompts, has_speech}
+    by_source = {}
+
     if os.path.isdir(output_dir):
         for name in sorted(os.listdir(output_dir)):
             dirpath = os.path.join(output_dir, name)
             if not os.path.isdir(dirpath):
                 continue
-            manifest = os.path.join(dirpath, "manifest.json")
-            if not os.path.isfile(manifest):
+            manifest_path = os.path.join(dirpath, "manifest.json")
+            if not os.path.isfile(manifest_path):
                 continue
-            entry = {"name": name, "path": f"/output/{name}"}
-            # Find all reconstructed videos (per-strategy and legacy)
-            strategies = []
+
+            # Read source from manifest
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+                source_info = manifest.get("source", {}) if isinstance(manifest, dict) else {}
+                source_file = source_info.get("file", "unknown")
+                source_path = source_info.get("path", f"media/{source_file}")
+            except (json.JSONDecodeError, KeyError):
+                source_file = "unknown"
+                source_path = "unknown"
+
+            has_prompts = os.path.isfile(os.path.join(dirpath, "prompts.json"))
+            has_speech = os.path.isfile(os.path.join(dirpath, "speech_track.wav"))
+
+            # Find reconstructed videos
             for fname in sorted(os.listdir(dirpath)):
                 if fname.startswith("reconstructed") and fname.endswith(".mp4"):
                     if fname == "reconstructed.mp4":
                         strategy_name = "unknown"
                     else:
-                        # reconstructed_fal-seedance.mp4 -> fal-seedance
                         strategy_name = fname[len("reconstructed_"):-len(".mp4")]
-                    strategies.append({
-                        "name": strategy_name,
-                        "path": f"/output/{name}/{fname}",
+
+                    by_source.setdefault(source_file, {
+                        "source_file": source_file,
+                        "source_path": f"/{source_path}",
+                        "strategies": [],
                     })
-            if strategies:
-                entry["strategies"] = strategies
-                entry["reconstructed"] = strategies[0]["path"]
-            # Check for prompts
-            if os.path.isfile(os.path.join(dirpath, "prompts.json")):
-                entry["has_prompts"] = True
-            # Check for speech track
-            if os.path.isfile(os.path.join(dirpath, "speech_track.wav")):
-                entry["has_speech"] = True
-            outputs.append(entry)
+                    by_source[source_file]["strategies"].append({
+                        "name": strategy_name,
+                        "label": f"{name} / {strategy_name}" if len(by_source.get(source_file, {}).get("strategies", [])) > 0 or True else strategy_name,
+                        "path": f"/output/{name}/{fname}",
+                        "output_path": f"/output/{name}",
+                        "has_prompts": has_prompts,
+                        "has_speech": has_speech,
+                    })
 
-    sources = []
-    media_dir = os.path.join(PROJECT_ROOT, "media")
-    if os.path.isdir(media_dir):
-        for name in sorted(os.listdir(media_dir)):
-            if name.endswith((".mp4", ".mkv", ".mov", ".avi")):
-                sources.append({"name": name, "path": f"/media/{name}"})
-
-    return {"outputs": outputs, "sources": sources}
+    sources = list(by_source.values())
+    return {"sources": sources}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

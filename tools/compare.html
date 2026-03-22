@@ -305,15 +305,8 @@
     <h2>lossy comparator</h2>
     <p>Start with: <code>python tools/serve.py</code></p>
     <div class="field">
-      <label>Output run</label>
-      <select id="input-output" disabled>
-        <option value="">Scanning...</option>
-      </select>
-      <div class="hint" id="output-hint"></div>
-    </div>
-    <div class="field">
-      <label>Original video</label>
-      <select id="input-original" disabled>
+      <label>Source film</label>
+      <select id="input-source" disabled>
         <option value="">Scanning...</option>
       </select>
     </div>
@@ -795,111 +788,57 @@ function init(originalSrc, reconSrc, base) {
 }
 
 // -- Scan API + setup form --
-const selectOutput = document.getElementById('input-output');
-const selectOriginal = document.getElementById('input-original');
-const outputHint = document.getElementById('output-hint');
+const selectSource = document.getElementById('input-source');
 let scanData = null;
-let currentStrategies = []; // strategies for current output
+let currentStrategies = []; // strategies for current source
 
 fetch('/api/scan')
   .then(r => r.json())
   .then(data => {
     scanData = data;
 
-    // Populate output dropdown — prefer first with a reconstructed video
-    selectOutput.innerHTML = '';
-    if (data.outputs.length === 0) {
-      selectOutput.innerHTML = '<option value="">No output runs found</option>';
-    } else {
-      let firstReconIdx = -1;
-      data.outputs.forEach((o, i) => {
-        const opt = document.createElement('option');
-        opt.value = o.path;
-        opt.textContent = o.name;
-        if (!o.reconstructed) {
-          opt.textContent += ' (no reconstructed.mp4)';
-          opt.dataset.noRecon = 'true';
-        } else if (firstReconIdx === -1) {
-          firstReconIdx = i;
-        }
-        opt.dataset.recon = o.reconstructed || '';
-        opt.dataset.strategies = JSON.stringify(o.strategies || []);
-        selectOutput.appendChild(opt);
-      });
-      if (firstReconIdx >= 0) selectOutput.selectedIndex = firstReconIdx;
-      selectOutput.disabled = false;
-      updateOutputHint();
-    }
-
-    // Populate source video dropdown
-    selectOriginal.innerHTML = '';
+    selectSource.innerHTML = '';
     if (data.sources.length === 0) {
-      selectOriginal.innerHTML = '<option value="">No videos in media/</option>';
+      selectSource.innerHTML = '<option value="">No reconstructed outputs found</option>';
     } else {
-      data.sources.forEach(s => {
+      data.sources.forEach((src, i) => {
         const opt = document.createElement('option');
-        opt.value = s.path;
-        opt.textContent = s.name;
-        selectOriginal.appendChild(opt);
+        opt.value = i;
+        opt.textContent = src.source_file;
+        opt.dataset.sourceIdx = i;
+        selectSource.appendChild(opt);
       });
-      selectOriginal.disabled = false;
-    }
+      selectSource.disabled = false;
+      document.getElementById('btn-start').disabled = false;
 
-    // Enable start if we have valid selections
-    updateStartButton();
-
-    // Auto-start from URL params: ?output=name&strategy=name
-    const params = new URLSearchParams(location.search);
-    const paramOutput = params.get('output');
-    if (paramOutput && data.outputs.length && data.sources.length) {
-      const match = data.outputs.find(o => o.name === paramOutput || o.path === `/output/${paramOutput}`);
-      if (match && match.strategies?.length) {
-        // Select matching output in dropdown
-        for (const o of selectOutput.options) {
-          if (o.value === match.path) { o.selected = true; break; }
-        }
-        const origPath = data.sources[0].path;
-        const preferStrategy = params.get('strategy') || null;
-        startComparator(match.path, origPath, match.strategies, preferStrategy);
+      // Auto-start if only one source, or from URL params
+      const params = new URLSearchParams(location.search);
+      const paramStrategy = params.get('strategy') || null;
+      if (data.sources.length === 1) {
+        startFromSource(data.sources[0], paramStrategy);
+      } else if (params.get('source')) {
+        const match = data.sources.find(s => s.source_file === params.get('source'));
+        if (match) startFromSource(match, paramStrategy);
       }
     }
   })
   .catch(() => {
-    selectOutput.innerHTML = '<option value="">Failed to scan — is serve.py running?</option>';
-    selectOriginal.innerHTML = '<option value="">Failed to scan</option>';
+    selectSource.innerHTML = '<option value="">Failed to scan — is serve.py running?</option>';
   });
 
-function updateOutputHint() {
-  const opt = selectOutput.selectedOptions[0];
-  if (opt && opt.dataset.noRecon === 'true') {
-    outputHint.innerHTML = '<span class="no-recon">This run has no reconstructed.mp4</span>';
-  } else {
-    outputHint.textContent = '';
-  }
-}
-
-function updateStartButton() {
-  const opt = selectOutput.selectedOptions[0];
-  const hasRecon = opt && opt.dataset.recon;
-  const hasSource = selectOriginal.value;
-  document.getElementById('btn-start').disabled = !(hasRecon && hasSource);
-}
-
-selectOutput.addEventListener('change', () => { updateOutputHint(); updateStartButton(); });
-selectOriginal.addEventListener('change', updateStartButton);
-
-function startComparator(outputPath, origPath, strategies, preferStrategy) {
-  currentStrategies = strategies;
+function startFromSource(source, preferStrategy) {
+  currentStrategies = source.strategies;
   strategySelect.innerHTML = '';
-  if (strategies.length > 0) {
-    strategies.forEach(s => {
+  if (source.strategies.length > 0) {
+    source.strategies.forEach(s => {
       const o = document.createElement('option');
       o.value = s.path;
-      o.textContent = s.name;
+      o.textContent = s.label;
       o.dataset.strategyName = s.name;
+      o.dataset.outputPath = s.output_path;
+      o.dataset.hasSpeech = s.has_speech || false;
       strategySelect.appendChild(o);
     });
-    // Select preferred strategy if specified
     if (preferStrategy) {
       for (const o of strategySelect.options) {
         if (o.dataset.strategyName === preferStrategy) {
@@ -914,18 +853,16 @@ function startComparator(outputPath, origPath, strategies, preferStrategy) {
   }
 
   setupOverlay.classList.add('hidden');
-  const reconPath = strategySelect.value || strategies[0]?.path;
-  if (reconPath) init(origPath, reconPath, outputPath);
+  const first = source.strategies[0];
+  const reconPath = strategySelect.value || first?.path;
+  const outputPath = strategySelect.selectedOptions[0]?.dataset.outputPath || first?.output_path;
+  if (reconPath) init(source.source_path, reconPath, outputPath);
 }
 
 document.getElementById('btn-start').addEventListener('click', () => {
-  const outputPath = selectOutput.value;
-  const opt = selectOutput.selectedOptions[0];
-  const origPath = selectOriginal.value;
-  if (!outputPath || !opt.dataset.recon || !origPath) return;
-
-  const strategies = JSON.parse(opt.dataset.strategies || '[]');
-  startComparator(outputPath, origPath, strategies, null);
+  const idx = parseInt(selectSource.value);
+  if (isNaN(idx) || !scanData) return;
+  startFromSource(scanData.sources[idx], null);
 });
 
 // Strategy switch — reload with new strategy's video and progress
@@ -937,8 +874,12 @@ strategySelect.addEventListener('change', () => {
   // Clear existing timeline
   timeline.querySelectorAll('.timeline-shot').forEach(el => el.remove());
 
+  // Get output path from selected strategy (may differ across output runs)
+  const selectedOpt = strategySelect.selectedOptions[0];
+  const newOutputBase = selectedOpt?.dataset.outputPath || outputBase;
+
   // Re-init with the new strategy (reloads progress + rebuilds timeline)
-  init(vidOrig.src, strategySelect.value, outputBase);
+  init(vidOrig.src, strategySelect.value, newOutputBase);
 
   // Restore position after load
   vidRecon.addEventListener('loadedmetadata', function onLoad() {

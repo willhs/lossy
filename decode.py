@@ -1253,6 +1253,7 @@ def run_audio(args, strategy: AudioStrategy):
     skipped = 0
     errors = 0
 
+    to_generate = total - len(completed_set) - len(skipped_set)
     print(f"Generating audio for {total} shots via {strategy.name} "
           f"({len(completed_set)} done, {len(skipped_set)} skipped)...")
 
@@ -1281,7 +1282,7 @@ def run_audio(args, strategy: AudioStrategy):
                 progress["completed"].append(idx)
             continue
 
-        print(f"  Shot {idx} ({generated + 1}/{total - len(completed_set) - len(skipped_set)} remaining)...")
+        print(f"  Shot {idx} ({generated + 1}/{to_generate} remaining)...")
 
         results = strategy.generate(sound, audio_dir, idx, entry["duration_s"], seed=idx)
 
@@ -1519,7 +1520,10 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             # Single clip -- trim or pad to match target duration
             clip_path = os.path.join(audio_dir, clips[0]["path"])
             adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
-            if not os.path.exists(adjusted_path):
+            # Regenerate if source clip is newer than adjusted (stale cache)
+            needs_regen = not os.path.exists(adjusted_path) or (
+                os.path.getmtime(clip_path) > os.path.getmtime(adjusted_path))
+            if needs_regen:
                 subprocess.run(
                     ["ffmpeg", "-y", "-i", clip_path,
                      "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
@@ -1538,7 +1542,12 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
 
             concat_path = os.path.join(adjusted_dir, f"{idx:04d}_concat.wav")
             adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
-            if not os.path.exists(adjusted_path):
+            newest_source = max(
+                os.path.getmtime(os.path.join(audio_dir, c["path"])) for c in clips
+            )
+            needs_regen = not os.path.exists(adjusted_path) or (
+                newest_source > os.path.getmtime(adjusted_path))
+            if needs_regen:
                 subprocess.run(
                     ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
                      "-i", parts_file, "-ar", "44100", "-ac", "2",
@@ -1560,7 +1569,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
         return None
 
     # Concatenate all adjusted audio into one track
-    concat_file = os.path.join(output_dir, "audio_concat.txt")
+    concat_file = os.path.join(output_dir, f"audio_concat_{audio_strategy}.txt")
     with open(concat_file, "w") as f:
         for path in audio_entries:
             f.write(f"file '{os.path.abspath(path)}'\n")
@@ -1793,14 +1802,19 @@ def stitch_clips(args):
 
         concat_list.append(adjusted_path)
 
-    # Write concat list file
-    concat_file = os.path.join(output_dir, "concat.txt")
+    # Write concat list file (per-strategy to avoid overwriting)
+    concat_file = os.path.join(output_dir, f"concat_{strategy_name}.txt")
     with open(concat_file, "w") as f:
         for path in concat_list:
             f.write(f"file '{os.path.abspath(path)}'\n")
 
-    # Concatenate
-    output_path = os.path.join(output_dir, f"reconstructed_{strategy_name}.mp4")
+    # Concatenate — include audio strategy in filename to avoid overwriting
+    audio_strategy = getattr(args, "audio_strategy", None)
+    if audio_strategy:
+        output_name = f"reconstructed_{strategy_name}+{audio_strategy}.mp4"
+    else:
+        output_name = f"reconstructed_{strategy_name}.mp4"
+    output_path = os.path.join(output_dir, output_name)
     subprocess.run(
         [
             "ffmpeg", "-f", "concat", "-safe", "0",
@@ -1822,13 +1836,24 @@ def stitch_clips(args):
     speech_voice = getattr(args, "speech_voice", None)
 
     if audio_strategy or speech_voice:
-        # Only include shots that have video clips in the stitch
-        stitched_indices = set()
-        for clip_path, _, _ in clip_entries:
-            basename = os.path.basename(clip_path)
-            idx_str = basename.split("-")[0].split(".")[0]
-            stitched_indices.add(int(idx_str))
-        stitched_prompts = [p for p in prompts_full if p["index"] in stitched_indices]
+        # Compute actual adjusted video durations per shot (may differ from
+        # original target due to setpts rounding). Audio must match these
+        # exactly to stay in sync.
+        shot_durations = {}  # index -> actual adjusted video duration
+        for adjusted_path in concat_list:
+            basename = os.path.splitext(os.path.basename(adjusted_path))[0]
+            idx_str = basename.split("-")[0]
+            idx = int(idx_str)
+            dur = _probe_duration(adjusted_path)
+            shot_durations[idx] = shot_durations.get(idx, 0) + dur
+
+        stitched_prompts = []
+        for p in prompts_full:
+            if p["index"] in shot_durations:
+                # Override duration with actual video duration for sync
+                patched = dict(p)
+                patched["duration_s"] = shot_durations[p["index"]]
+                stitched_prompts.append(patched)
 
         # Build SFX track
         audio_track = None
@@ -1844,7 +1869,7 @@ def stitch_clips(args):
         audio_to_mux = None
         if audio_track and os.path.exists(audio_track) and speech_track and os.path.exists(speech_track):
             # Mix SFX + speech into combined track
-            combined_path = os.path.join(output_dir, "combined_audio.wav")
+            combined_path = os.path.join(output_dir, f"combined_audio_{audio_strategy}.wav")
             subprocess.run(
                 ["ffmpeg", "-y",
                  "-i", audio_track, "-i", speech_track,
