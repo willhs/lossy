@@ -142,6 +142,69 @@ def run_pipeline(args):
     print_summary(timings, args)
 
 
+def aggregate_costs(output_dir, strategy, audio_strategy, timings):
+    """Read per-stage cost files and write a unified costs.json."""
+    timing_map = {stage: elapsed for stage, elapsed, status in timings if status not in ("skipped", "dry-run")}
+    costs = {"stages": {}, "total_cost_estimate": 0.0, "total_wall_clock_s": 0.0}
+
+    # Encode (Gemini) costs
+    encode_costs_path = os.path.join(output_dir, "encode_costs.json")
+    if os.path.exists(encode_costs_path):
+        with open(encode_costs_path) as f:
+            enc = json.load(f)
+        costs["stages"]["encode2"] = {
+            "provider": "gemini",
+            "model": enc.get("model", "unknown"),
+            "cost_estimate": enc.get("cost_estimate", 0.0),
+            "wall_clock_s": round(timing_map.get("encode2", 0.0), 1),
+            "shots": len(enc.get("per_shot", [])),
+            "total_input_tokens": enc.get("total_input_tokens", 0),
+            "total_output_tokens": enc.get("total_output_tokens", 0),
+        }
+        costs["total_cost_estimate"] += enc.get("cost_estimate", 0.0)
+
+    # Decode (video) costs
+    strategy_name = strategy.replace("-", "_")
+    decode_progress_path = os.path.join(output_dir, f"decode_progress_{strategy_name}.json")
+    if os.path.exists(decode_progress_path):
+        with open(decode_progress_path) as f:
+            dec = json.load(f)
+        costs["stages"]["decode"] = {
+            "provider": strategy,
+            "cost_estimate": dec.get("total_cost_estimate", 0.0),
+            "wall_clock_s": round(timing_map.get("decode", 0.0), 1),
+            "shots_completed": len(dec.get("completed", [])),
+            "shots_failed": len(dec.get("failed", [])),
+        }
+        costs["total_cost_estimate"] += dec.get("total_cost_estimate", 0.0)
+
+    # Audio costs
+    if audio_strategy:
+        audio_progress_path = os.path.join(output_dir, f"audio_progress_{audio_strategy}.json")
+        if os.path.exists(audio_progress_path):
+            with open(audio_progress_path) as f:
+                aud = json.load(f)
+            costs["stages"]["audio"] = {
+                "provider": audio_strategy,
+                "cost_estimate": aud.get("total_cost_estimate", 0.0),
+                "wall_clock_s": round(timing_map.get("audio", 0.0), 1),
+                "shots_completed": len(aud.get("completed", [])),
+                "shots_skipped": len(aud.get("skipped", [])),
+                "shots_failed": len(aud.get("failed", [])),
+            }
+            costs["total_cost_estimate"] += aud.get("total_cost_estimate", 0.0)
+
+    costs["total_cost_estimate"] = round(costs["total_cost_estimate"], 4)
+    costs["total_wall_clock_s"] = round(sum(timing_map.values()), 1)
+
+    costs_path = os.path.join(output_dir, "costs.json")
+    os.makedirs(output_dir, exist_ok=True)
+    with open(costs_path, "w") as f:
+        json.dump(costs, f, indent=2)
+
+    return costs
+
+
 def print_summary(timings, args):
     """Print a summary of all stages."""
     print(f"\n{'='*60}")
@@ -163,6 +226,15 @@ def print_summary(timings, args):
 
     print(f"  {'':10s}  -------")
     print(f"  {'total':10s}  {total:.1f}s ({total / 60:.1f}min)")
+
+    # Aggregate and print costs
+    if not args.dry_run:
+        costs = aggregate_costs(args.output, args.strategy, args.audio_strategy, timings)
+        if costs["total_cost_estimate"] > 0:
+            print(f"\n  Estimated total cost: ${costs['total_cost_estimate']:.2f}")
+            for stage_name, stage_data in costs["stages"].items():
+                print(f"    {stage_name}: ${stage_data['cost_estimate']:.4f} ({stage_data['provider']})")
+            print(f"\n  Cost breakdown: {args.output}/costs.json")
 
     # Print output paths
     print(f"\nOutput directory: {args.output}")

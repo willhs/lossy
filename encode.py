@@ -564,6 +564,10 @@ def generate_prompts(
         print("Get one at https://aistudio.google.com/apikey")
         sys.exit(1)
 
+    # Gemini Flash Lite pricing (per token)
+    GEMINI_INPUT_COST = 0.075 / 1_000_000   # $0.075 per 1M input tokens
+    GEMINI_OUTPUT_COST = 0.30 / 1_000_000   # $0.30 per 1M output tokens
+
     client = genai.Client(api_key=api_key)
     keyframes_dir = os.path.join(output_dir, "keyframes")
 
@@ -580,6 +584,11 @@ def generate_prompts(
     prompts = list(existing)
     total = len(scenes)
     errors = 0
+
+    # Cost tracking
+    encode_costs = {"model": "gemini-3.1-flash-lite-preview", "per_shot": [],
+                    "total_input_tokens": 0, "total_output_tokens": 0, "cost_estimate": 0.0}
+    costs_path = os.path.join(output_dir, "encode_costs.json")
 
     for scene in scenes:
         idx = scene["index"]
@@ -640,6 +649,18 @@ def generate_prompts(
             text = text.strip()
             description = json.loads(text)
 
+            # Track token usage and cost
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                in_tok = getattr(usage, "prompt_token_count", 0) or 0
+                out_tok = getattr(usage, "candidates_token_count", 0) or 0
+                shot_cost = in_tok * GEMINI_INPUT_COST + out_tok * GEMINI_OUTPUT_COST
+                encode_costs["total_input_tokens"] += in_tok
+                encode_costs["total_output_tokens"] += out_tok
+                encode_costs["cost_estimate"] += shot_cost
+                encode_costs["per_shot"].append(
+                    {"index": idx, "input_tokens": in_tok, "output_tokens": out_tok, "cost": round(shot_cost, 6)})
+
             prompt_entry = {
                 "index": idx,
                 "start_s": scene["start_s"],
@@ -677,6 +698,19 @@ def generate_prompts(
                     )
                     text = response.text.strip()
                     description = json.loads(text)
+
+                    # Track token usage from retry
+                    usage = getattr(response, "usage_metadata", None)
+                    if usage:
+                        in_tok = getattr(usage, "prompt_token_count", 0) or 0
+                        out_tok = getattr(usage, "candidates_token_count", 0) or 0
+                        shot_cost = in_tok * GEMINI_INPUT_COST + out_tok * GEMINI_OUTPUT_COST
+                        encode_costs["total_input_tokens"] += in_tok
+                        encode_costs["total_output_tokens"] += out_tok
+                        encode_costs["cost_estimate"] += shot_cost
+                        encode_costs["per_shot"].append(
+                            {"index": idx, "input_tokens": in_tok, "output_tokens": out_tok, "cost": round(shot_cost, 6)})
+
                     prompt_entry = {
                         "index": idx,
                         "start_s": scene["start_s"],
@@ -698,6 +732,14 @@ def generate_prompts(
             if errors > 50:
                 print("Too many errors, saving progress and stopping.")
                 break
+
+    # Write encode cost data
+    encode_costs["cost_estimate"] = round(encode_costs["cost_estimate"], 6)
+    with open(costs_path, "w") as f:
+        json.dump(encode_costs, f, indent=2)
+    if encode_costs["per_shot"]:
+        print(f"  Encode cost: ${encode_costs['cost_estimate']:.4f} "
+              f"({encode_costs['total_input_tokens']} in / {encode_costs['total_output_tokens']} out tokens)")
 
     return prompts
 
