@@ -14,6 +14,7 @@ from decode import (
     FalSeedanceProStrategy,
     MMAudioStrategy,
     ReplicateWanStrategy,
+    RunPodMMAudioStrategy,
     RunPodWanStrategy,
     SpeechClipResult,
     SpeechStrategy,
@@ -432,3 +433,31 @@ class TestSpeechStrategy:
 
     def test_cost_constant(self):
         assert SpeechStrategy.COST_PER_1K_CHARS == 0.05
+
+
+# ---------------------------------------------------------------------------
+# RunPodMMAudioStrategy._target_durations
+# ---------------------------------------------------------------------------
+
+class TestRunPodMMAudioTargetDurations:
+    def setup_method(self):
+        # Bypass __init__'s RunPodSession import
+        self.strategy = RunPodMMAudioStrategy.__new__(RunPodMMAudioStrategy)
+
+    def test_short_clip(self):
+        assert self.strategy._target_durations(5.0) == [5.0]
+
+    def test_at_max(self):
+        assert self.strategy._target_durations(30.0) == [30.0]
+
+    def test_over_max(self):
+        assert self.strategy._target_durations(35.0) == [30.0, 5.0]
+
+    def test_much_over_max(self):
+        assert self.strategy._target_durations(65.0) == [30.0, 30.0, 5.0]
+
+    def test_very_short(self):
+        assert self.strategy._target_durations(0.3) == [1.0]
+
+    def test_zero(self):
+        assert self.strategy._target_durations(0.0) == [1.0]

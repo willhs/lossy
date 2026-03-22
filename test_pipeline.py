@@ -128,6 +128,26 @@ class TestBuildCommands:
         assert "speech" in STAGES
         # base_args has speech_voice=None, so speech gets auto-skipped
 
+    def test_build_commands_runpod_keep_pod(self, base_args):
+        """Decode command gets --keep-pod when runpod-wan + runpod-mmaudio."""
+        base_args.strategy = "runpod-wan"
+        base_args.audio_strategy = "runpod-mmaudio"
+        commands = build_commands(base_args)
+        assert "--keep-pod" in commands["decode"]
+
+    def test_build_commands_no_keep_pod_without_runpod_audio(self, base_args):
+        """No --keep-pod when audio strategy is not runpod-mmaudio."""
+        base_args.strategy = "runpod-wan"
+        base_args.audio_strategy = "elevenlabs"
+        commands = build_commands(base_args)
+        assert "--keep-pod" not in commands["decode"]
+
+    def test_build_commands_runpod_mmaudio_audio(self, base_args):
+        """Audio command uses runpod-mmaudio."""
+        base_args.audio_strategy = "runpod-mmaudio"
+        commands = build_commands(base_args)
+        assert "runpod-mmaudio" in commands["audio"]
+
 
 class TestRunPipeline:
     @patch("pipeline.subprocess.run")

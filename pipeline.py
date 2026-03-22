@@ -2,6 +2,8 @@
 """Pipeline orchestrator — chains encode → decode → stitch in one command."""
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 import time
@@ -10,7 +12,7 @@ STAGES = ["encode1", "encode2", "decode", "audio", "speech", "stitch"]
 
 STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"]
 
-AUDIO_STRATEGIES = ["elevenlabs", "mmaudio"]
+AUDIO_STRATEGIES = ["elevenlabs", "mmaudio", "runpod-mmaudio"]
 
 
 def build_commands(args):
@@ -36,6 +38,9 @@ def build_commands(args):
         sys.executable, "decode.py", args.output,
         "--strategy", args.strategy,
     ]
+    # Keep pod alive when audio stage will reuse it
+    if args.strategy == "runpod-wan" and args.audio_strategy == "runpod-mmaudio":
+        commands["decode"].append("--keep-pod")
     if args.start_index is not None:
         commands["decode"] += ["--start-index", str(args.start_index)]
     if args.limit:
@@ -116,6 +121,23 @@ def run_pipeline(args):
             sys.exit(1)
 
         timings.append((stage, elapsed, "ok"))
+
+    # Clean up RunPod pod state file (pod is terminated by the last stage that uses it)
+    pod_state = os.path.join(args.output, "runpod_pod.json")
+    if os.path.exists(pod_state):
+        # Pod wasn't cleaned up — terminate it as safety net
+        try:
+            with open(pod_state) as f:
+                state = json.load(f)
+            import runpod
+            runpod.api_key = os.environ.get("RUNPOD_API_KEY")
+            if runpod.api_key and state.get("pod_id"):
+                runpod.terminate_pod(state["pod_id"])
+                print(f"  Safety net: terminated pod {state['pod_id']}")
+            os.remove(pod_state)
+        except Exception as e:
+            print(f"  Warning: Could not clean up pod: {e}")
+            print(f"  Check https://www.runpod.io/console/pods")
 
     print_summary(timings, args)
 
