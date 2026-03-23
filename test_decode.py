@@ -166,8 +166,13 @@ class TestRunPodWanStrategy:
     def test_name(self):
         assert RunPodWanStrategy.name == "runpod-wan"
 
-    def test_clip_duration_constant(self):
-        assert RunPodWanStrategy.CLIP_DURATION == pytest.approx(5.0625)
+    def test_frame_constants(self):
+        assert RunPodWanStrategy.FPS == 16
+        assert RunPodWanStrategy.MIN_FRAMES == 33
+        assert RunPodWanStrategy.MAX_FRAMES == 97
+        # All frame constants must satisfy 4n+1
+        assert (RunPodWanStrategy.MIN_FRAMES - 1) % 4 == 0
+        assert (RunPodWanStrategy.MAX_FRAMES - 1) % 4 == 0
 
     def test_build_workflow_structure(self):
         strategy = RunPodWanStrategy()
@@ -187,11 +192,16 @@ class TestRunPodWanStrategy:
         # Output dimensions are 480p 16:9
         assert workflow["7"]["inputs"]["width"] == 848
         assert workflow["7"]["inputs"]["height"] == 480
-        assert workflow["7"]["inputs"]["length"] == 81
+        assert workflow["7"]["inputs"]["length"] == 81  # default
 
         # Model filenames match what we download
         assert "wan2.1" in workflow["1"]["inputs"]["unet_name"]
         assert "umt5_xxl" in workflow["2"]["inputs"]["clip_name"]
+
+    def test_build_workflow_custom_length(self):
+        strategy = RunPodWanStrategy()
+        workflow = strategy._build_workflow("test", seed=1, length=49)
+        assert workflow["7"]["inputs"]["length"] == 49
 
     def test_build_workflow_has_chinese_negative_prompt(self):
         strategy = RunPodWanStrategy()
@@ -199,6 +209,89 @@ class TestRunPodWanStrategy:
         neg_text = workflow["5"]["inputs"]["text"]
         assert len(neg_text) > 0, "Negative prompt should not be empty"
         assert any('\u4e00' <= c <= '\u9fff' for c in neg_text), "Negative prompt should contain Chinese characters"
+
+
+class TestRunPodWanTargetFrames:
+    """Tests for RunPodWanStrategy._target_frames()."""
+
+    def setup_method(self):
+        self.strategy = RunPodWanStrategy()
+
+    def test_short_shots_clamped_to_min(self):
+        assert self.strategy._target_frames(0.5) == 33
+        assert self.strategy._target_frames(1.0) == 33
+        assert self.strategy._target_frames(1.5) == 33
+
+    def test_normal_durations(self):
+        assert self.strategy._target_frames(3.0) == 49   # 3.0 * 16 = 48 -> (48-1)/4 = 11.75 -> round(11.75) = 12 -> 12*4+1 = 49
+        assert self.strategy._target_frames(5.0) == 81   # 5.0 * 16 = 80 -> (80-1)/4 = 19.75 -> round(19.75) = 20 -> 20*4+1 = 81
+        assert self.strategy._target_frames(6.0) == 97   # 6.0 * 16 = 96 -> (96-1)/4 = 23.75 -> round(23.75) = 24 -> 24*4+1 = 97
+
+    def test_long_shots_clamped_to_max(self):
+        assert self.strategy._target_frames(9.0) == 97
+        assert self.strategy._target_frames(15.0) == 97
+
+    def test_boundary_values(self):
+        # MIN_FRAMES = 33 -> 33/16 = 2.0625s
+        assert self.strategy._target_frames(2.0) == 33
+        # MAX_FRAMES = 97 -> 97/16 = 6.0625s
+        assert self.strategy._target_frames(6.0) == 97
+
+    def test_result_always_4n_plus_1(self):
+        for duration in [0.5, 1.0, 2.0, 3.0, 3.7, 4.5, 5.0, 6.3, 7.0, 8.0, 10.0]:
+            frames = self.strategy._target_frames(duration)
+            assert (frames - 1) % 4 == 0, f"duration={duration} -> frames={frames} not 4n+1"
+
+    def test_result_always_in_range(self):
+        for duration in [0.1, 0.5, 1.0, 3.0, 5.0, 8.0, 15.0, 30.0]:
+            frames = self.strategy._target_frames(duration)
+            assert 33 <= frames <= 97, f"duration={duration} -> frames={frames} out of range"
+
+
+class TestRunPodWanTargetDurations:
+    """Tests for RunPodWanStrategy._target_durations()."""
+
+    def setup_method(self):
+        self.strategy = RunPodWanStrategy()
+
+    def test_short_shot_single_clip(self):
+        result = self.strategy._target_durations(3.0)
+        assert len(result) == 1
+        assert result[0] == 49
+
+    def test_medium_shot_single_clip(self):
+        result = self.strategy._target_durations(5.0)
+        assert len(result) == 1
+        assert result[0] == 81
+
+    def test_max_duration_single_clip(self):
+        result = self.strategy._target_durations(6.0)
+        assert len(result) == 1
+        assert result[0] == 97
+
+    def test_long_shot_splits(self):
+        # 15s -> 6.06s + 6.06s + 2.88s
+        result = self.strategy._target_durations(15.0)
+        assert len(result) >= 2
+        assert result[0] == 97  # max chunk
+        for frames in result:
+            assert (frames - 1) % 4 == 0  # all valid 4n+1
+
+    def test_very_long_shot_splits(self):
+        # 25s -> multiple ~6s chunks
+        result = self.strategy._target_durations(25.0)
+        assert len(result) >= 4
+        assert result[0] == 97
+        assert result[1] == 97
+        for frames in result:
+            assert 33 <= frames <= 97
+
+    def test_all_parts_valid_frame_counts(self):
+        for duration in [3.0, 8.0, 12.0, 20.0, 35.0]:
+            parts = self.strategy._target_durations(duration)
+            for frames in parts:
+                assert (frames - 1) % 4 == 0, f"duration={duration}: {frames} not 4n+1"
+                assert 33 <= frames <= 97, f"duration={duration}: {frames} out of range"
 
 
 # ---------------------------------------------------------------------------

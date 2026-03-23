@@ -14,7 +14,11 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 ## Key Files
 
 - `encode.py` -- encoder CLI (stage1: shots+keyframes, stage2: prompts via Gemini)
-- `decode.py` -- decoder CLI (generate clips via strategy, stitch with FFmpeg)
+- `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols
+- `prompt_format.py` -- prompt formatting functions (CAMERA_TERMS, format_prompt, model-specific variants)
+- `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod)
+- `strategies_audio.py` -- audio/speech generation strategies (AudioStrategy base + ElevenLabs, MMAudio, RunPod, SpeechStrategy)
+- `stitch.py` -- FFmpeg stitching (video concat, audio/speech track building, muxing)
 - `pipeline.py` -- orchestrator (chains all stages via subprocess)
 - `tools/serve.py` -- dev server for compare tool
 

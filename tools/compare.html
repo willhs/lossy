@@ -709,6 +709,10 @@ function init(originalSrc, reconSrc, base) {
   const progressUrls = [];
   if (strategyName && strategyName !== 'default') {
     progressUrls.push(`${base}/decode_progress_${strategyName}.json`);
+    // For combined names like "runpod-wan+elevenlabs", also try the video strategy alone
+    if (strategyName.includes('+')) {
+      progressUrls.push(`${base}/decode_progress_${strategyName.split('+')[0]}.json`);
+    }
   }
   progressUrls.push(`${base}/decode_progress.json`);
 
