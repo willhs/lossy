@@ -19,11 +19,10 @@ Usage (on the pod):
         --output /tmp/rain.flac
 
 Requirements on pod:
-    - mmaudio package (installed via ComfyUI-MMAudio requirements)
+    - mmaudio package (pip install mmaudio)
     - torch with CUDA
     - torchaudio
-    - safetensors
-    - Model files in the models directory (Kijai fp16 safetensors)
+    - Internet access (downloads ~5GB of model weights on first run)
 
 Based on: https://github.com/hkchengrex/MMAudio/blob/main/demo.py
 """
@@ -67,13 +66,16 @@ def run_inference(
 ) -> bool:
     """Run MMAudio text-to-audio inference and save as FLAC.
 
-    Uses the official MMAudio evaluation pipeline with safetensors weights
-    from the Kijai/MMAudio_safetensors repository.
+    Uses the official MMAudio evaluation pipeline. Downloads standard .pth
+    weights via model.download_if_needed() on first run (FeaturesUtils uses
+    torch.load() internally, so safetensors won't work for VAE/synchformer).
+
+    The models_dir argument is currently unused but reserved for a future
+    optimization where we load Kijai safetensors directly (bypassing
+    FeaturesUtils, similar to how ComfyUI-MMAudio does it).
 
     Returns True on success, False on failure.
     """
-    from safetensors.torch import load_file
-
     from mmaudio.eval_utils import (ModelConfig, all_model_cfg, generate,
                                     setup_eval_logging)
     from mmaudio.model.flow_matching import FlowMatching
@@ -93,7 +95,6 @@ def run_inference(
     if model_name not in all_model_cfg:
         available = list(all_model_cfg.keys())
         print(f"Available model configs: {available}")
-        # Try to find a suitable alternative
         for name in available:
             if "large" in name and "44k" in name:
                 model_name = name
@@ -105,33 +106,17 @@ def run_inference(
     model: ModelConfig = all_model_cfg[model_name]
     seq_cfg = model.seq_cfg
 
-    # Check that our safetensors model files exist
-    model_files = {
-        "main": os.path.join(models_dir, "mmaudio_large_44k_v2_fp16.safetensors"),
-        "vae": os.path.join(models_dir, "mmaudio_vae_44k_fp16.safetensors"),
-        "synchformer": os.path.join(models_dir, "mmaudio_synchformer_fp16.safetensors"),
-        "clip": os.path.join(models_dir, "apple_DFN5B-CLIP-ViT-H-14-384_fp16.safetensors"),
-    }
-
-    for name, path in model_files.items():
-        if not os.path.exists(path):
-            print(f"Error: {name} model not found: {path}")
-            return False
-
-    # Override model config paths to use our local safetensors files.
-    # The standard ModelConfig expects .pth from HuggingFace cache,
-    # but we have fp16 safetensors from Kijai. We patch the paths so
-    # FeaturesUtils can find vae/synchformer, then load main weights manually.
-    model.vae_path = model_files["vae"]
-    model.synchformer_ckpt = model_files["synchformer"]
+    # Download standard .pth weights if not cached.
+    # FeaturesUtils uses torch.load() internally for VAE/synchformer,
+    # so we can't pass safetensors paths directly. The standard download
+    # path is simplest for the prototype.
+    print("Checking model weights (will download ~5GB on first run)...")
+    model.download_if_needed()
 
     # Load the main network
     net: MMAudio = get_my_mmaudio(model.model_name).to(device, dtype).eval()
-
-    # Load weights from safetensors instead of torch.load
-    main_weights = load_file(model_files["main"])
-    net.load_weights(main_weights)
-    print(f"Loaded main model from {model_files['main']}")
+    net.load_weights(torch.load(model.model_path, map_location=device, weights_only=True))
+    print(f"Loaded main model from {model.model_path}")
 
     vram_after_net = get_vram_mb()
     print(f"VRAM after net load: {vram_after_net} MiB")
