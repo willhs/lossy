@@ -51,42 +51,42 @@ If both peak simultaneously, worst-case is ~16 GB. The RTX 4090 should handle th
 
 MMAudio's `force_offload: True` setting moves models to CPU after inference. In the standalone runner, we can manually `torch.cuda.empty_cache()` after each clip to release VRAM back to the system, preventing accumulation across multiple clips.
 
-## Benchmarking (Pending)
+## Benchmarking
 
-**Status**: Tools created, awaiting manual execution on a live pod.
-
-- `tools/vram_benchmark.sh` -- Interactive script to measure peak VRAM during Wan and MMAudio generation separately
-- `tools/mmaudio_standalone.py` -- Standalone MMAudio inference script (bypasses ComfyUI) for concurrent testing
-
-### How to Benchmark
-
-1. Start a pod: `python decode.py <output_dir> --strategy runpod-wan --limit 1 --keep-pod`
-2. Run VRAM benchmark: `./tools/vram_benchmark.sh <output_dir>`
-3. Test concurrent execution: Start a Wan workflow via ComfyUI, then SSH in and run `mmaudio_standalone.py` simultaneously
-4. Record actual peak VRAM numbers below
+Benchmarked on two GPUs across two sessions. VRAM measured via `nvidia-smi -l 1` during generation.
 
 ### Benchmark Results
 
-Measured on NVIDIA RTX 4000 Ada Generation (20,475 MiB total VRAM). This GPU has less VRAM than the RTX 4090 (24 GB) but the Wan VRAM usage is model-dependent, not GPU-dependent.
+| Metric | RTX 4000 Ada (20 GB) | RTX A6000 (48 GB) |
+|--------|---------------------|-------------------|
+| Baseline VRAM (ComfyUI idle) | 306 MiB | 428 MiB |
+| **Wan peak VRAM** | **14,994 MiB** | **15,116 MiB** |
+| **MMAudio standalone peak** | not measured | **7,225 MiB** |
+| **Concurrent peak (Wan + MMAudio)** | not tested | **19,961 MiB** |
+| Wan generation time (33 frames) | ~71s | ~41s |
+| MMAudio standalone time (5s clip) | not tested | **1.8s** |
+| OOM during concurrent? | -- | **No** |
 
-| Metric | Value |
-|--------|-------|
-| Baseline VRAM (ComfyUI idle) | 306 MiB |
-| Wan peak VRAM | **14,994 MiB (~15 GB)** |
-| MMAudio peak VRAM (standalone) | Not measured (ComfyUI node install failed on this pod) |
-| MMAudio peak VRAM (estimated) | ~4-6 GB (from model specs) |
-| Concurrent peak (estimated) | ~19-21 GB |
-| RTX 4090 headroom | ~3-9 GB (tight) |
-| RTX A6000 headroom | ~27-33 GB (safe) |
+### Key Findings
 
-**Key finding**: Wan uses ~15 GB peak -- significantly more than the ~8-10 GB estimate. This changes the feasibility assessment:
-- **RTX 4090 (24 GB)**: Only ~3-9 GB headroom for concurrent MMAudio. Risky.
-- **RTX A6000 (48 GB)**: ~27-33 GB headroom. Trivially safe.
-- **RTX 4000 Ada (20 GB)**: Would OOM during concurrent generation.
+1. **Wan uses ~15 GB peak** -- consistent across both GPUs, higher than the ~8-10 GB estimate.
+2. **MMAudio standalone uses ~7 GB peak** (nvidia-smi), ~6 GB (PyTorch self-reported).
+3. **Concurrent peak is ~20 GB** -- both models ran simultaneously without OOM on A6000.
+4. **Standalone MMAudio is 10-15x faster** than ComfyUI-based audio (1.8s vs ~20-30s per clip).
+5. **RTX 4090 (24 GB) would fit** with ~4 GB headroom (24 - 20 = 4 GB). Tight but viable.
+6. **RTX A6000 (48 GB) has 28 GB headroom** -- trivially safe.
 
-**Note**: ComfyUI-MMAudio nodes failed to register after installation + restart on this pod. This reinforces the case for the standalone MMAudio runner approach -- it doesn't depend on ComfyUI's custom node loading.
+### Concurrent Test Details
 
-**A6000 availability**: A6000 was unavailable on community cloud during this test (2026-03-24). The 4090 was also unavailable. Only the RTX 4000 Ada was available. Availability is unpredictable.
+Tested on A6000: submitted an 81-frame Wan workflow via ComfyUI API, waited 10s for model loading to begin, then launched `mmaudio_standalone.py` via SSH simultaneously. MMAudio completed in ~4s while Wan continued generating for another ~115s. Both completed successfully.
+
+Peak VRAM during concurrent execution ramped to 19,961 MiB as both models were loaded and actively inferring.
+
+### A6000 vs 4090 Availability
+
+- First test session (2026-03-24 ~22:30): A6000 and 4090 both unavailable, got RTX 4000 Ada.
+- Second test session (2026-03-24 ~23:15): A6000 available, got it on first try.
+- Availability is unpredictable on community cloud -- the GPU_TYPES fallback chain handles this.
 
 ## Standalone MMAudio Runner
 
@@ -109,14 +109,14 @@ This script would be uploaded to the pod via SCP and invoked via SSH, running in
 
 ### RunPod GPU Options
 
-| GPU | VRAM | $/hr (community) | Concurrent headroom (measured) | Notes |
-|-----|------|-------------------|-------------------------------|-------|
-| RTX 4000 Ada | 20 GB | $0.34 | ~0-5 GB | Too tight, likely OOM |
-| RTX 4090 | 24 GB | $0.34 | ~3-9 GB | Risky -- depends on MMAudio actual peak |
-| RTX A6000 | 48 GB | $0.25-0.33 | **~27-33 GB** | **Cheaper than 4090**, safe. Availability issues. |
-| L40S | 48 GB | $0.79 | ~27-33 GB | 2.3x cost, same headroom as A6000 |
-| RTX 6000 Ada | 48 GB | $0.74 | ~27-33 GB | Similar to L40S |
-| A100 PCIe 80GB | 80 GB | $1.19 | ~59-65 GB | Overkill for this workload |
+| GPU | VRAM | $/hr (community) | Concurrent headroom (measured: peak=20 GB) | Notes |
+|-----|------|-------------------|---------------------------------------------|-------|
+| RTX 4000 Ada | 20 GB | $0.34 | ~0 GB | Would OOM |
+| RTX 4090 | 24 GB | $0.34 | **~4 GB** | Viable but tight |
+| RTX A6000 | 48 GB | $0.25-0.33 | **~28 GB** | **Cheaper than 4090**, safe. Availability varies. |
+| L40S | 48 GB | $0.79 | ~28 GB | 2.3x cost, same headroom as A6000 |
+| RTX 6000 Ada | 48 GB | $0.74 | ~28 GB | Similar to L40S |
+| A100 PCIe 80GB | 80 GB | $1.19 | ~60 GB | Overkill for this workload |
 
 **Key finding**: The RTX A6000 (48 GB) is actually **cheaper** than the RTX 4090 ($0.25-0.33 vs $0.34/hr) on RunPod community cloud, with double the VRAM. This makes concurrent generation trivially safe on A6000 with massive headroom. Availability may vary.
 
@@ -190,8 +190,8 @@ For a typical 200-clip film (avg 5s per clip, ~3.3 hrs total generation time):
 | Approach | Audio wall time | Total cost | Extra cost | Complexity | Risk |
 |----------|----------------|------------|------------|------------|------|
 | Sequential on 4090 (current) | ~1.5 hrs | $1.12 | baseline | None | None |
-| Concurrent on 4090 | ~0 min | $1.12 | $0 | High | OOM |
-| **Concurrent on A6000** | **~0 min** | **$0.83-1.09** | **-$0.03-0.29** | **High** | **Low** |
+| Concurrent on 4090 | ~0 min | $1.12 | $0 | High | Tight (4 GB spare) |
+| **Concurrent on A6000** | **~0 min** | **$0.83-1.09** | **-$0.03-0.29** | **High** | **Tested, safe** |
 | Two 4090 pods | ~0 min | $2.24 | +$1.12 | Medium | Low |
 | fal.ai audio + RunPod video | ~0 min | $2.12 | +$1.00 | None | None |
 | Sequential optimized | ~1.0 hrs | $1.12 | $0 | Low | None |
@@ -220,7 +220,26 @@ If concurrent generation proves too complex or unreliable, the existing `MMAudio
 
 ## Raw Data / Logs
 
-> **TODO**: Attach benchmark logs after running `tools/vram_benchmark.sh`
+### A6000 Wan VRAM Profile (nvidia-smi unique values, ascending)
+
+```
+428, 3276, 5324, 7404, 9772, 10188, 11084, 11116, 11468, 14380, 15116
+```
+
+### A6000 Concurrent VRAM Profile (nvidia-smi unique top values)
+
+```
+15213, 15495, 17685, 19813, 19911, 19913, 19929, 19951, 19959, 19961
+```
+
+### MMAudio Standalone Runner Output (concurrent test)
+
+```
+Inference: 4.2s, peak VRAM: 5976 MiB
+Saved: /tmp/concurrent_audio.flac (sample rate: 44100)
+VRAM after cleanup: 9 MiB
+Peak VRAM (total session): 5976 MiB
+```
 
 ## References
 
