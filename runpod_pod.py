@@ -9,12 +9,12 @@ import sys
 import time
 
 
-# Default GPU preferences (cheapest first)
+# Default GPU preferences (cheapest first, with VRAM headroom preference)
 GPU_TYPES = [
-    ("NVIDIA GeForce RTX 4090", 0.34),
+    ("NVIDIA RTX A6000", 0.33),          # 48 GB, $0.25-0.33/hr community
+    ("NVIDIA GeForce RTX 4090", 0.34),   # 24 GB, $0.34/hr community
     ("NVIDIA RTX 4000 Ada Generation", 0.34),
-    ("NVIDIA RTX A6000", 0.52),
-    ("NVIDIA L40S", 0.54),
+    ("NVIDIA L40S", 0.54),               # 48 GB
 ]
 
 DOCKER_IMAGE = "runpod/comfyui:latest"

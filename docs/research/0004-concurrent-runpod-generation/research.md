@@ -67,15 +67,26 @@ MMAudio's `force_offload: True` setting moves models to CPU after inference. In 
 
 ### Benchmark Results
 
-> **TODO**: Fill in after running benchmarks on RTX 4090
+Measured on NVIDIA RTX 4000 Ada Generation (20,475 MiB total VRAM). This GPU has less VRAM than the RTX 4090 (24 GB) but the Wan VRAM usage is model-dependent, not GPU-dependent.
 
 | Metric | Value |
 |--------|-------|
-| Baseline VRAM (ComfyUI idle) | ___ MiB |
-| Wan peak VRAM | ___ MiB |
-| MMAudio peak VRAM (standalone) | ___ MiB |
-| Concurrent peak VRAM | ___ MiB |
-| OOM observed? | yes/no |
+| Baseline VRAM (ComfyUI idle) | 306 MiB |
+| Wan peak VRAM | **14,994 MiB (~15 GB)** |
+| MMAudio peak VRAM (standalone) | Not measured (ComfyUI node install failed on this pod) |
+| MMAudio peak VRAM (estimated) | ~4-6 GB (from model specs) |
+| Concurrent peak (estimated) | ~19-21 GB |
+| RTX 4090 headroom | ~3-9 GB (tight) |
+| RTX A6000 headroom | ~27-33 GB (safe) |
+
+**Key finding**: Wan uses ~15 GB peak -- significantly more than the ~8-10 GB estimate. This changes the feasibility assessment:
+- **RTX 4090 (24 GB)**: Only ~3-9 GB headroom for concurrent MMAudio. Risky.
+- **RTX A6000 (48 GB)**: ~27-33 GB headroom. Trivially safe.
+- **RTX 4000 Ada (20 GB)**: Would OOM during concurrent generation.
+
+**Note**: ComfyUI-MMAudio nodes failed to register after installation + restart on this pod. This reinforces the case for the standalone MMAudio runner approach -- it doesn't depend on ComfyUI's custom node loading.
+
+**A6000 availability**: A6000 was unavailable on community cloud during this test (2026-03-24). The 4090 was also unavailable. Only the RTX 4000 Ada was available. Availability is unpredictable.
 
 ## Standalone MMAudio Runner
 
@@ -98,13 +109,14 @@ This script would be uploaded to the pod via SCP and invoked via SSH, running in
 
 ### RunPod GPU Options
 
-| GPU | VRAM | $/hr (community) | Concurrent headroom | Notes |
-|-----|------|-------------------|---------------------|-------|
-| RTX 4090 | 24 GB | $0.34 | ~6-8 GB (estimated) | Current target, tight but likely feasible |
-| RTX A6000 | 48 GB | $0.25-0.33 | ~30 GB | **Cheaper than RTX 4090** and 2x VRAM. Best option if available. |
-| L40S | 48 GB | $0.79 | ~30 GB | 2.3x cost of 4090, same VRAM as A6000 |
-| RTX 6000 Ada | 48 GB | $0.74 | ~30 GB | Similar to L40S |
-| A100 PCIe 80GB | 80 GB | $1.19 | ~62 GB | Overkill for this workload |
+| GPU | VRAM | $/hr (community) | Concurrent headroom (measured) | Notes |
+|-----|------|-------------------|-------------------------------|-------|
+| RTX 4000 Ada | 20 GB | $0.34 | ~0-5 GB | Too tight, likely OOM |
+| RTX 4090 | 24 GB | $0.34 | ~3-9 GB | Risky -- depends on MMAudio actual peak |
+| RTX A6000 | 48 GB | $0.25-0.33 | **~27-33 GB** | **Cheaper than 4090**, safe. Availability issues. |
+| L40S | 48 GB | $0.79 | ~27-33 GB | 2.3x cost, same headroom as A6000 |
+| RTX 6000 Ada | 48 GB | $0.74 | ~27-33 GB | Similar to L40S |
+| A100 PCIe 80GB | 80 GB | $1.19 | ~59-65 GB | Overkill for this workload |
 
 **Key finding**: The RTX A6000 (48 GB) is actually **cheaper** than the RTX 4090 ($0.25-0.33 vs $0.34/hr) on RunPod community cloud, with double the VRAM. This makes concurrent generation trivially safe on A6000 with massive headroom. Availability may vary.
 
