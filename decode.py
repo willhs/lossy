@@ -13,7 +13,6 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
 
 
 def load_env():
@@ -28,34 +27,7 @@ def load_env():
                     os.environ.setdefault(k.strip(), v.strip())
 
 
-# ---------------------------------------------------------------------------
-# Strategy pattern for video generation backends
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ClipResult:
-    """Result of generating a single video clip."""
-    path: str
-    actual_duration_s: float
-    cost: float
-
-
-@dataclass
-class AudioClipResult:
-    """Result of generating a single audio clip."""
-    path: str
-    actual_duration_s: float
-    cost: float
-
-
-@dataclass
-class SpeechClipResult:
-    """Result of generating a single speech clip."""
-    path: str
-    duration_s: float
-    offset_s: float  # shot-relative offset for placement
-    cost: float
+from clip_types import ClipResult, AudioClipResult, SpeechClipResult  # noqa: E402
 
 
 from prompt_format import (  # noqa: E402 -- re-export for backwards compat
@@ -148,7 +120,7 @@ def run_decode(args, strategy: GenerationStrategy):
         prompt_text = strategy.format_prompt(entry)
         print(f"  Shot {idx} ({generated + 1}/{total - len(completed_set)} remaining)...")
 
-        results = strategy.generate(prompt_text, clips_dir, idx, entry["duration_s"], seed=idx)
+        results = strategy.generate(prompt_text, clips_dir, idx, entry["duration_s"], seed=idx, entry=entry)
 
         if results:
             generated += 1
@@ -166,7 +138,7 @@ def run_decode(args, strategy: GenerationStrategy):
             # Retry once after a short wait
             print(f"  Retrying shot {idx} in 10s...")
             time.sleep(10)
-            results = strategy.generate(prompt_text, clips_dir, idx, entry["duration_s"], seed=idx)
+            results = strategy.generate(prompt_text, clips_dir, idx, entry["duration_s"], seed=idx, entry=entry)
             if results:
                 generated += 1
                 progress["completed"].append(idx)
@@ -188,9 +160,35 @@ def run_decode(args, strategy: GenerationStrategy):
             print("Too many errors, saving progress and stopping.")
             break
 
+    # Finish pipelined audio (last shot + wait for thread)
+    if hasattr(strategy, 'finish_audio'):
+        strategy.finish_audio()
+
     # Final save
     with open(progress_path, "w") as f:
         json.dump(progress, f, indent=2)
+
+    # Save audio progress if pipelined audio was used
+    if hasattr(strategy, 'get_audio_results'):
+        audio_results, audio_failures = strategy.get_audio_results()
+        if audio_results or audio_failures:
+            audio_progress_path = os.path.join(output_dir, "audio_progress_runpod-mmaudio-pipelined.json")
+            audio_progress = {
+                "completed": sorted(audio_results.keys()),
+                "failed": audio_failures,
+                "skipped": [],
+                "total_cost_estimate": 0.0,
+                "clips": {
+                    str(idx): [
+                        {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
+                        for r in results_list
+                    ]
+                    for idx, results_list in audio_results.items()
+                },
+            }
+            with open(audio_progress_path, "w") as f:
+                json.dump(audio_progress, f, indent=2)
+            print(f"  Pipelined audio: {len(audio_results)} completed, {len(audio_failures)} failed")
 
     # Signal clean exit for --keep-pod support
     if hasattr(strategy, 'mark_clean_exit'):
@@ -477,6 +475,8 @@ def main():
                         help="Generate speech/dialogue clips (instead of video)")
     parser.add_argument("--speech-voice", default="Roger",
                         help="ElevenLabs voice name for speech (default: Roger)")
+    parser.add_argument("--concurrent-audio", action="store_true",
+                        help="Generate audio concurrently with video on RunPod (requires >=24GB VRAM)")
     args = parser.parse_args()
 
     load_env()
@@ -502,6 +502,7 @@ def main():
             "runpod-wan": lambda: RunPodWanStrategy(
                 output_dir=args.output_dir,
                 keep_pod=getattr(args, "keep_pod", False),
+                concurrent_audio=getattr(args, "concurrent_audio", False),
             ),
         }
         strategy = strategies[args.strategy]()

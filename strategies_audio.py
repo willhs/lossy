@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from decode import AudioClipResult, SpeechClipResult
+from clip_types import AudioClipResult, SpeechClipResult
 
 
 def _split_duration(target: float, min_val: float, max_val: float) -> list[float]:

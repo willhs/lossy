@@ -7,9 +7,10 @@ formatting, duration splitting, and clip download.
 
 import os
 import subprocess
+import threading
 import time
 
-from decode import ClipResult
+from clip_types import AudioClipResult, ClipResult
 from prompt_format import _format_prompt_wan, _format_prompt_seedance, format_prompt
 
 
@@ -25,10 +26,12 @@ class GenerationStrategy:
         shot_index: int,
         target_duration_s: float,
         seed: int | None = None,
+        entry: dict | None = None,
     ) -> list[ClipResult]:
         """Generate clip(s) for a shot.
 
         Returns a list because long shots may be split into multiple clips.
+        entry is the full prompt dict (used by RunPod for concurrent audio).
         """
         raise NotImplementedError
 
@@ -56,6 +59,7 @@ class ReplicateWanStrategy(GenerationStrategy):
         shot_index: int,
         target_duration_s: float,
         seed: int | None = None,
+        entry: dict | None = None,
     ) -> list[ClipResult]:
         import httpx
         import replicate
@@ -137,6 +141,7 @@ class FalSeedanceStrategy(GenerationStrategy):
         shot_index: int,
         target_duration_s: float,
         seed: int | None = None,
+        entry: dict | None = None,
     ) -> list[ClipResult]:
         import fal_client
         import httpx
@@ -221,10 +226,18 @@ class RunPodWanStrategy(GenerationStrategy):
         ),
     ]
 
-    def __init__(self, output_dir: str = "", keep_pod: bool = False):
+    def __init__(self, output_dir: str = "", keep_pod: bool = False, concurrent_audio: bool = False):
         from runpod_pod import RunPodSession
         self._session = RunPodSession(output_dir, keep_pod=keep_pod)
         self._setup_done = False
+        # Concurrent audio state
+        self._concurrent_audio = concurrent_audio
+        self._audio_capable = False
+        self._audio_thread: threading.Thread | None = None
+        self._audio_results: dict[int, list[AudioClipResult]] = {}
+        self._audio_failures: list[int] = []
+        self._audio_dir: str | None = None
+        self._pending_audio: tuple | None = None
 
     def format_prompt(self, entry: dict) -> str:
         return _format_prompt_wan(entry)
@@ -266,6 +279,8 @@ class RunPodWanStrategy(GenerationStrategy):
             time.sleep(10)
             self._session.download_models(self.WAN_MODELS)
             self._session.restart_comfyui()
+            if self._concurrent_audio:
+                self._setup_audio()
         else:
             print("  Warning: No SSH access. Waiting for ComfyUI without model setup.")
             self._session.wait_for_comfyui()
@@ -274,6 +289,170 @@ class RunPodWanStrategy(GenerationStrategy):
     def mark_clean_exit(self):
         """Called by run_decode after successful completion."""
         self._session.mark_clean_exit()
+
+    # -- Concurrent audio pipelining --
+
+    def _setup_audio(self):
+        """Upload mmaudio_standalone.py, install mmaudio, download weights, check VRAM."""
+        # Check GPU VRAM
+        result = self._session.ssh_cmd(
+            "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits",
+            timeout=10,
+        )
+        vram_mb = 0
+        if result.returncode == 0:
+            try:
+                vram_mb = int(result.stdout.strip().split("\n")[0])
+            except (ValueError, IndexError):
+                pass
+        if vram_mb < 24000:
+            print(f"  Concurrent audio disabled: GPU has {vram_mb} MB VRAM (<24 GB)")
+            return
+
+        # Upload mmaudio_standalone.py
+        local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "mmaudio_standalone.py")
+        with open(local_path) as f:
+            script_content = f.read()
+        # Use base64 to safely transfer the script (avoids shell escaping issues)
+        import base64
+        encoded = base64.b64encode(script_content.encode()).decode()
+        result = self._session.ssh_cmd(
+            f"echo '{encoded}' | base64 -d > /tmp/mmaudio_standalone.py && echo OK",
+            timeout=30,
+        )
+        if "OK" not in (result.stdout or ""):
+            print(f"  Warning: Failed to upload mmaudio_standalone.py")
+            return
+
+        # Install mmaudio pip package
+        print("  Installing mmaudio package on pod...")
+        result = self._session.ssh_cmd(
+            "pip install mmaudio 2>&1 | tail -3 && echo OK",
+            timeout=300,
+        )
+        if "OK" not in (result.stdout or ""):
+            print(f"  Warning: mmaudio pip install may have failed")
+            return
+
+        # Pre-download standard weights (~5 GB first time)
+        print("  Downloading MMAudio weights...")
+        result = self._session.ssh_cmd(
+            'python3 -c "'
+            "from mmaudio.eval_utils import all_model_cfg; "
+            "all_model_cfg['large_44k_v2'].download_if_needed(); "
+            "print('OK')"
+            '"',
+            timeout=600,
+        )
+        if "OK" in (result.stdout or ""):
+            print("  MMAudio weights: ready")
+        else:
+            print("  Warning: MMAudio weight download uncertain, will retry on first use")
+
+        self._audio_capable = True
+        print(f"  Concurrent audio: enabled ({vram_mb} MB VRAM)")
+
+    def _generate_audio_ssh(
+        self, shot_index: int, sound: str, duration: float, seed: int, audio_dir: str,
+    ) -> list[AudioClipResult]:
+        """Generate audio for one shot via SSH to mmaudio_standalone.py. Runs in background thread."""
+        from strategies_audio import _split_duration
+
+        durations = _split_duration(duration, 1.0, 30.0)
+        results = []
+
+        for part_idx, dur in enumerate(durations):
+            if len(durations) == 1:
+                clip_name = f"{shot_index:04d}.flac"
+            else:
+                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.flac"
+
+            remote_path = f"/tmp/audio_{shot_index:04d}_{part_idx:02d}.flac"
+            local_path = os.path.join(audio_dir, clip_name)
+            effective_seed = (seed + part_idx) % 65536
+
+            # Escape single quotes in sound description for shell
+            escaped_sound = sound.replace("'", "'\\''")
+            result = self._session.ssh_cmd(
+                f"python3 /tmp/mmaudio_standalone.py "
+                f"--prompt '{escaped_sound}' "
+                f"--duration {dur} "
+                f"--seed {effective_seed} "
+                f"--output {remote_path}",
+                timeout=120,
+            )
+
+            if result.returncode != 0:
+                print(f"  [audio] Error for shot {shot_index}: {(result.stderr or '')[:200]}")
+                return []
+
+            # Download FLAC via SSH binary transfer (ssh_cmd uses text=True, can't use it)
+            dl = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "LogLevel=ERROR",
+                    "-p", str(self._session.ssh_port),
+                    f"root@{self._session.ssh_host}",
+                    f"cat {remote_path}",
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if dl.returncode != 0 or not dl.stdout:
+                print(f"  [audio] Download failed for shot {shot_index}")
+                return []
+
+            with open(local_path, "wb") as f:
+                f.write(dl.stdout)
+
+            # Clean up remote file
+            self._session.ssh_cmd(f"rm -f {remote_path}", timeout=10)
+
+            results.append(AudioClipResult(path=local_path, actual_duration_s=dur, cost=0.0))
+
+        return results
+
+    def _collect_audio_thread(self):
+        """Wait for the current audio thread to finish, if any."""
+        if self._audio_thread is not None and self._audio_thread.is_alive():
+            self._audio_thread.join(timeout=180)
+            if self._audio_thread.is_alive():
+                print("  [audio] Warning: audio thread still running after 180s, continuing")
+        self._audio_thread = None
+
+    def _start_audio_thread(self, shot_index: int, sound: str, duration: float, seed: int, audio_dir: str):
+        """Start background audio generation. Waits for any previous audio thread first."""
+        self._collect_audio_thread()
+
+        def _run():
+            try:
+                results = self._generate_audio_ssh(shot_index, sound, duration, seed, audio_dir)
+                if results:
+                    self._audio_results[shot_index] = results
+                    print(f"  [audio] Shot {shot_index}: done ({len(results)} clip(s))")
+                else:
+                    self._audio_failures.append(shot_index)
+                    print(f"  [audio] Shot {shot_index}: failed")
+            except Exception as e:
+                self._audio_failures.append(shot_index)
+                print(f"  [audio] Shot {shot_index}: error: {e}")
+
+        self._audio_thread = threading.Thread(target=_run, daemon=True)
+        self._audio_thread.start()
+
+    def finish_audio(self):
+        """Generate audio for the final shot and wait for completion."""
+        if self._audio_capable and self._pending_audio is not None:
+            pa = self._pending_audio
+            self._pending_audio = None
+            self._start_audio_thread(pa[0], pa[1], pa[2], pa[3], pa[4])
+        self._collect_audio_thread()
+
+    def get_audio_results(self) -> tuple[dict[int, list[AudioClipResult]], list[int]]:
+        """Return accumulated audio results and failures. Call after finish_audio()."""
+        return self._audio_results, self._audio_failures
 
     def _build_workflow(self, prompt: str, seed: int, length: int = 81) -> dict:
         """Build ComfyUI API-format workflow JSON for Wan T2V."""
@@ -435,9 +614,16 @@ class RunPodWanStrategy(GenerationStrategy):
         shot_index: int,
         target_duration_s: float,
         seed: int | None = None,
+        entry: dict | None = None,
     ) -> list[ClipResult]:
         self._ensure_pod()
         effective_seed = seed if seed is not None else shot_index
+
+        # Fire audio for the PREVIOUS shot (queued last iteration)
+        if self._audio_capable and self._pending_audio is not None:
+            pa = self._pending_audio
+            self._pending_audio = None
+            self._start_audio_thread(pa[0], pa[1], pa[2], pa[3], pa[4])
 
         frame_counts = self._target_durations(target_duration_s)
         results = []
@@ -454,5 +640,16 @@ class RunPodWanStrategy(GenerationStrategy):
             if clip_result is None:
                 return []  # Fail the whole shot if any part fails
             results.append(clip_result)
+
+        # Queue THIS shot's audio for the NEXT iteration
+        if self._audio_capable and entry is not None:
+            sound = entry.get("description", {}).get("sound")
+            if sound:
+                if self._audio_dir is None:
+                    self._audio_dir = os.path.join(
+                        os.path.dirname(clips_dir), "..", "audio", "runpod-mmaudio-pipelined"
+                    )
+                    os.makedirs(self._audio_dir, exist_ok=True)
+                self._pending_audio = (shot_index, sound, target_duration_s, effective_seed, self._audio_dir)
 
         return results

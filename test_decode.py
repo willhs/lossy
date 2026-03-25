@@ -2,6 +2,8 @@
 
 import json
 import os
+import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -554,3 +556,185 @@ class TestRunPodMMAudioTargetDurations:
 
     def test_zero(self):
         assert self.strategy._target_durations(0.0) == [1.0]
+
+
+# ---------------------------------------------------------------------------
+# RunPodWanStrategy concurrent audio pipelining
+# ---------------------------------------------------------------------------
+
+class TestRunPodWanConcurrentAudio:
+    """Tests for the concurrent audio pipelining added to RunPodWanStrategy."""
+
+    def _make_strategy(self, concurrent_audio=True, audio_capable=True):
+        """Create a RunPodWanStrategy with mocked internals."""
+        strategy = RunPodWanStrategy.__new__(RunPodWanStrategy)
+        strategy._session = MagicMock()
+        strategy._setup_done = True
+        strategy._concurrent_audio = concurrent_audio
+        strategy._audio_capable = audio_capable
+        strategy._audio_thread = None
+        strategy._audio_results = {}
+        strategy._audio_failures = []
+        strategy._audio_dir = "/tmp/test_audio"
+        strategy._pending_audio = None
+        return strategy
+
+    def test_generate_accepts_entry_kwarg(self):
+        """All strategies should accept the entry kwarg without error."""
+        strategy = self._make_strategy(audio_capable=False)
+        strategy._ensure_pod = MagicMock()
+        strategy._generate_one_clip = MagicMock(return_value=ClipResult(
+            path="/tmp/0001.mp4", actual_duration_s=5.0, cost=0.01,
+        ))
+
+        entry = {"description": {"sound": "Wind blowing"}, "duration_s": 5.0}
+        results = strategy.generate("test prompt", "/tmp/clips", 1, 5.0, seed=1, entry=entry)
+        assert len(results) == 1
+
+    def test_audio_queued_when_capable(self):
+        """generate() should queue audio when audio_capable and entry has sound."""
+        strategy = self._make_strategy(audio_capable=True)
+        strategy._ensure_pod = MagicMock()
+        strategy._generate_one_clip = MagicMock(return_value=ClipResult(
+            path="/tmp/0001.mp4", actual_duration_s=5.0, cost=0.01,
+        ))
+
+        entry = {"description": {"sound": "Wind blowing"}, "duration_s": 5.0}
+        strategy.generate("test prompt", "/tmp/clips", 1, 5.0, seed=1, entry=entry)
+
+        assert strategy._pending_audio is not None
+        assert strategy._pending_audio[0] == 1  # shot_index
+        assert strategy._pending_audio[1] == "Wind blowing"  # sound
+
+    def test_audio_not_queued_when_disabled(self):
+        """generate() should not queue audio when audio_capable is False."""
+        strategy = self._make_strategy(audio_capable=False)
+        strategy._ensure_pod = MagicMock()
+        strategy._generate_one_clip = MagicMock(return_value=ClipResult(
+            path="/tmp/0001.mp4", actual_duration_s=5.0, cost=0.01,
+        ))
+
+        entry = {"description": {"sound": "Wind blowing"}, "duration_s": 5.0}
+        strategy.generate("test prompt", "/tmp/clips", 1, 5.0, seed=1, entry=entry)
+
+        assert strategy._pending_audio is None
+
+    def test_audio_not_queued_when_no_sound(self):
+        """generate() should not queue audio when entry has no sound description."""
+        strategy = self._make_strategy(audio_capable=True)
+        strategy._ensure_pod = MagicMock()
+        strategy._generate_one_clip = MagicMock(return_value=ClipResult(
+            path="/tmp/0001.mp4", actual_duration_s=5.0, cost=0.01,
+        ))
+
+        entry = {"description": {"action": "A door opens"}, "duration_s": 5.0}
+        strategy.generate("test prompt", "/tmp/clips", 1, 5.0, seed=1, entry=entry)
+
+        assert strategy._pending_audio is None
+
+    def test_pending_audio_fired_on_next_generate(self):
+        """Pending audio from shot N should fire at the start of shot N+1."""
+        strategy = self._make_strategy(audio_capable=True)
+        strategy._ensure_pod = MagicMock()
+        strategy._generate_one_clip = MagicMock(return_value=ClipResult(
+            path="/tmp/0001.mp4", actual_duration_s=5.0, cost=0.01,
+        ))
+        strategy._start_audio_thread = MagicMock()
+
+        # Set pending audio from previous shot
+        strategy._pending_audio = (0, "Thunder rumbling", 4.0, 0, "/tmp/audio")
+
+        entry = {"description": {"sound": "Rain falling"}, "duration_s": 5.0}
+        strategy.generate("test prompt", "/tmp/clips", 1, 5.0, seed=1, entry=entry)
+
+        # Previous audio should have been fired
+        strategy._start_audio_thread.assert_called_once_with(0, "Thunder rumbling", 4.0, 0, "/tmp/audio")
+        # New audio should be queued
+        assert strategy._pending_audio[0] == 1
+        assert strategy._pending_audio[1] == "Rain falling"
+
+    def test_collect_audio_thread_noop_when_none(self):
+        """_collect_audio_thread should be safe to call with no thread."""
+        strategy = self._make_strategy()
+        strategy._audio_thread = None
+        strategy._collect_audio_thread()  # should not raise
+        assert strategy._audio_thread is None
+
+    def test_collect_audio_thread_joins_finished_thread(self):
+        """_collect_audio_thread should join a completed thread."""
+        strategy = self._make_strategy()
+        t = threading.Thread(target=lambda: None)
+        t.start()
+        t.join()  # ensure it finishes
+        strategy._audio_thread = t
+        strategy._collect_audio_thread()
+        assert strategy._audio_thread is None
+
+    def test_finish_audio_fires_pending(self):
+        """finish_audio() should fire and wait for the last pending audio."""
+        strategy = self._make_strategy(audio_capable=True)
+        strategy._start_audio_thread = MagicMock()
+        strategy._collect_audio_thread = MagicMock()
+        strategy._pending_audio = (5, "Explosion", 3.0, 5, "/tmp/audio")
+
+        strategy.finish_audio()
+
+        strategy._start_audio_thread.assert_called_once_with(5, "Explosion", 3.0, 5, "/tmp/audio")
+        strategy._collect_audio_thread.assert_called_once()
+        assert strategy._pending_audio is None
+
+    def test_finish_audio_noop_when_nothing_pending(self):
+        """finish_audio() should just collect when nothing is pending."""
+        strategy = self._make_strategy(audio_capable=True)
+        strategy._start_audio_thread = MagicMock()
+        strategy._collect_audio_thread = MagicMock()
+        strategy._pending_audio = None
+
+        strategy.finish_audio()
+
+        strategy._start_audio_thread.assert_not_called()
+        strategy._collect_audio_thread.assert_called_once()
+
+    def test_get_audio_results_returns_accumulated(self):
+        """get_audio_results() should return results and failures."""
+        strategy = self._make_strategy()
+        from clip_types import AudioClipResult
+        strategy._audio_results = {
+            0: [AudioClipResult(path="/tmp/0000.flac", actual_duration_s=5.0, cost=0.0)],
+            1: [AudioClipResult(path="/tmp/0001.flac", actual_duration_s=3.0, cost=0.0)],
+        }
+        strategy._audio_failures = [2]
+
+        results, failures = strategy.get_audio_results()
+        assert len(results) == 2
+        assert failures == [2]
+
+    def test_setup_audio_skips_low_vram(self):
+        """_setup_audio should disable audio when GPU VRAM < 24 GB."""
+        strategy = self._make_strategy(audio_capable=False)
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "16000\n"
+        strategy._session.ssh_cmd = MagicMock(return_value=mock_result)
+
+        strategy._setup_audio()
+
+        assert strategy._audio_capable is False
+
+    def test_setup_audio_enables_on_sufficient_vram(self):
+        """_setup_audio should enable audio when GPU VRAM >= 24 GB."""
+        strategy = self._make_strategy(audio_capable=False)
+
+        # Mock all ssh_cmd calls in order
+        vram_result = MagicMock(returncode=0, stdout="49140\n")
+        ok_result = MagicMock(returncode=0, stdout="OK\n", stderr="")
+        strategy._session.ssh_cmd = MagicMock(side_effect=[
+            vram_result,  # nvidia-smi
+            ok_result,    # upload script
+            ok_result,    # pip install
+            ok_result,    # download weights
+        ])
+
+        strategy._setup_audio()
+
+        assert strategy._audio_capable is True
