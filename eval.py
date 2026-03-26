@@ -494,7 +494,10 @@ def main():
     eval_dir = output_dir / "eval" / args.strategy
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    scenes = manifest["scenes"]
+    # Scope scenes to only those that have prompts (manifest may cover more)
+    prompt_indices = {p["index"] for p in prompts}
+    scenes = [s for s in manifest["scenes"] if s["index"] in prompt_indices]
+    print(f"Evaluating {len(scenes)} shots (of {len(manifest['scenes'])} in manifest)")
 
     # Phase 1: Extract keyframes
     print("Extracting keyframes from reconstructed video...")
