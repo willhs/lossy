@@ -80,6 +80,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                     ["ffmpeg", "-y", "-i", clip_path,
                      "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
                      "-ar", "44100", "-ac", "2",
+                     "-t", str(target_duration),
                      adjusted_path],
                     capture_output=True,
                 )
@@ -109,6 +110,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                 subprocess.run(
                     ["ffmpeg", "-y", "-i", concat_path,
                      "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
+                     "-t", str(target_duration),
                      adjusted_path],
                     capture_output=True,
                 )
@@ -192,7 +194,9 @@ def _stitch_speech(output_dir: str, prompts: list[dict],
                      "-af", (f"adelay={delay_ms}|{delay_ms},"
                              f"apad=whole_dur={target_duration},"
                              f"atrim=0:{target_duration}"),
-                     "-ar", "44100", "-ac", "2", adjusted_path],
+                     "-ar", "44100", "-ac", "2",
+                     "-t", str(target_duration),
+                     adjusted_path],
                     capture_output=True,
                 )
             else:
@@ -217,7 +221,9 @@ def _stitch_speech(output_dir: str, prompts: list[dict],
                     ["ffmpeg", "-y"] + inputs +
                     ["-filter_complex", filter_complex,
                      "-map", "[out]",
-                     "-ar", "44100", "-ac", "2", adjusted_path],
+                     "-ar", "44100", "-ac", "2",
+                     "-t", str(target_duration),
+                     adjusted_path],
                     capture_output=True,
                 )
 
