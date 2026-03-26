@@ -3,6 +3,7 @@
 import http.server
 import json
 import os
+import socketserver
 import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,17 +59,23 @@ def scan_project():
                         "source_path": f"/{source_path}",
                         "strategies": [],
                     })
+                    # Determine clips path — video strategy is before '+' in combined names
+                    video_strat = strategy_name.split("+")[0] if "+" in strategy_name else strategy_name
+                    adj_dir = os.path.join(dirpath, "adjusted", video_strat)
+                    clips_path = f"/output/{name}/adjusted/{video_strat}" if os.path.isdir(adj_dir) else None
+
                     by_source[source_file]["strategies"].append({
                         "name": strategy_name,
                         "label": f"{name} / {strategy_name}" if len(by_source.get(source_file, {}).get("strategies", [])) > 0 or True else strategy_name,
                         "path": f"/output/{name}/{fname}",
+                        "clips_path": clips_path,
                         "output_path": f"/output/{name}",
                         "has_prompts": has_prompts,
                         "has_speech": has_speech,
                     })
 
     sources = list(by_source.values())
-    return {"sources": sources}
+    return {"sources": sources, "project_root": PROJECT_ROOT}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -143,9 +150,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().log_message(format, *args)
 
 
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+
 if __name__ == "__main__":
-    server = http.server.HTTPServer(("", PORT), Handler)
-    print(f"lossy dev server on http://localhost:{PORT}")
+    server = ThreadedHTTPServer(("", PORT), Handler)
+    print(f"lossy dev server on http://localhost:{PORT} (threaded)")
     print(f"  comparator: http://localhost:{PORT}/tools/compare.html")
     print(f"  shot verify: http://localhost:{PORT}/tools/verify_shots.html")
     print(f"  project root: {PROJECT_ROOT}")

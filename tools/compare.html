@@ -340,6 +340,7 @@
     <input id="volume-slider" type="range" min="0" max="100" value="70" title="Volume" style="width:60px;vertical-align:middle;accent-color:#fb0;cursor:pointer">
     <span class="spacer"></span>
     <select id="strategy-select" style="background:#333;color:#ddd;border:1px solid #555;padding:3px 6px;border-radius:3px;font-family:monospace;font-size:12px;display:none"></select>
+    <label style="font-size:11px;color:#888;cursor:pointer;margin-left:8px" title="Serve videos directly from disk (avoids HTTP buffering issues with large files)"><input type="checkbox" id="use-file-urls" style="vertical-align:middle;accent-color:#fb0;cursor:pointer"> file://</label>
     <span class="sync-indicator" id="sync-info"></span>
     <span class="shot-info-bar" id="shot-info">Loading...</span>
   </div>
@@ -454,10 +455,16 @@ volumeSlider.addEventListener('input', () => {
   vidOrig.volume = vidRecon.volume = speechAudio.volume = v;
 });
 
-// Reconstruction mapping: shot index -> { reconStart, reconEnd } in reconstructed video
-// null for shots that weren't decoded
-let reconMap = {};
+// Clip-based playback: each decoded shot maps to individual clip file(s)
+// instead of seeking within one large concatenated video.
+let clipMap = {};        // shot index -> { clips: [{src, duration}], totalDuration }
 let decodedShots = new Set();
+let clipsBasePath = '';  // e.g. "/output/star_wars_iv_v2/adjusted/runpod-wan"
+let currentClipShotIdx = -1;  // which shot's clip is loaded in vidRecon
+let currentSubClipIdx = 0;    // for split shots: which sub-clip is active
+let isSeeking = false;
+let lastSyncedShot = -1;
+let pendingLoad = null;  // debounce: cancel stale clip loads
 
 // -- Formatting --
 function fmt(s) {
@@ -479,44 +486,132 @@ function findShot(time) {
   return Math.max(0, Math.min(lo, scenes.length - 1));
 }
 
-// -- Build reconstruction time mapping --
-function buildReconMap(decodedIndices) {
-  reconMap = {};
-  decodedShots = new Set(decodedIndices);
-  // Decoded shots are stitched sequentially in the reconstructed video
-  const sorted = [...decodedIndices].sort((a, b) => a - b);
-  let offset = 0;
-  for (const idx of sorted) {
-    const dur = scenes[idx].duration_s;
-    reconMap[idx] = { reconStart: offset, reconEnd: offset + dur };
-    offset += dur;
+// -- Build clip map from decode progress --
+function buildClipMap(progress, basePath) {
+  clipMap = {};
+  decodedShots = new Set();
+  clipsBasePath = basePath;
+
+  if (!progress) return;
+
+  // Use clips metadata if available (has per-shot filenames)
+  const clipsMeta = progress.clips || {};
+  const completed = progress.completed || [];
+
+  for (const idx of completed) {
+    const idxStr = String(idx);
+    if (clipsMeta[idxStr]) {
+      // Has detailed clip info — use filenames from progress
+      const clips = clipsMeta[idxStr].map(c => ({
+        src: `${basePath}/${c.path}`,
+        duration: c.duration_s
+      }));
+      clipMap[idx] = {
+        clips,
+        totalDuration: clips.reduce((sum, c) => sum + c.duration, 0)
+      };
+    } else {
+      // Fallback: assume single clip named {NNNN}.mp4
+      const dur = scenes[idx] ? scenes[idx].duration_s : 5;
+      clipMap[idx] = {
+        clips: [{ src: `${basePath}/${String(idx).padStart(4, '0')}.mp4`, duration: dur }],
+        totalDuration: dur
+      };
+    }
+    decodedShots.add(idx);
   }
 }
 
-// Get reconstructed video time for a given shot index + offset within shot
-function reconTimeForShot(idx, offsetInShot = 0) {
-  const mapping = reconMap[idx];
-  if (!mapping) return null;
-  return mapping.reconStart + offsetInShot;
+// For split shots: find which sub-clip and position within it
+function resolveSubClip(mapping, offsetInShot) {
+  let cumulative = 0;
+  for (let i = 0; i < mapping.clips.length; i++) {
+    const clipDur = mapping.clips[i].duration;
+    if (offsetInShot < cumulative + clipDur || i === mapping.clips.length - 1) {
+      return { subIdx: i, posInClip: Math.max(0, offsetInShot - cumulative) };
+    }
+    cumulative += clipDur;
+  }
+  return { subIdx: 0, posInClip: 0 };
+}
+
+// -- Clip loading --
+let clipErrorHandler = null;
+
+function safePlay(el) {
+  const p = el.play();
+  if (p && p.catch) p.catch(() => {}); // swallow autoplay rejections
+}
+
+function loadClip(shotIdx, subIdx, seekTo) {
+  const mapping = clipMap[shotIdx];
+  if (!mapping) return;
+  const clip = mapping.clips[subIdx];
+
+  let src = clip.src;
+  if (useFileUrls.checked && projectRoot) {
+    src = toFileUrl(src);
+  }
+
+  // Already loaded — just seek within it
+  if (currentClipShotIdx === shotIdx && currentSubClipIdx === subIdx && vidRecon.readyState >= 2) {
+    vidRecon.currentTime = Math.max(0, seekTo);
+    if (!vidOrig.paused && vidRecon.paused) safePlay(vidRecon);
+    return;
+  }
+
+  currentClipShotIdx = shotIdx;
+  currentSubClipIdx = subIdx;
+
+  // Cancel any pending load
+  if (pendingLoad) {
+    vidRecon.removeEventListener('canplay', pendingLoad);
+    pendingLoad = null;
+  }
+  if (clipErrorHandler) {
+    vidRecon.removeEventListener('error', clipErrorHandler);
+    clipErrorHandler = null;
+  }
+
+  vidRecon.src = src;
+
+  pendingLoad = function onReady() {
+    vidRecon.removeEventListener('canplay', onReady);
+    vidRecon.removeEventListener('error', clipErrorHandler);
+    pendingLoad = null;
+    clipErrorHandler = null;
+    vidRecon.currentTime = Math.max(0, seekTo);
+    if (!vidOrig.paused) safePlay(vidRecon);
+  };
+
+  clipErrorHandler = function onError() {
+    vidRecon.removeEventListener('canplay', pendingLoad);
+    vidRecon.removeEventListener('error', onError);
+    pendingLoad = null;
+    clipErrorHandler = null;
+    console.warn(`[lossy] failed to load clip: ${src}`);
+    syncInfo.textContent = 'clip error';
+    syncInfo.className = 'sync-indicator warn';
+  };
+
+  vidRecon.addEventListener('canplay', pendingLoad);
+  vidRecon.addEventListener('error', clipErrorHandler);
+  vidRecon.load();
 }
 
 // -- Sync engine --
-// Original is the leader; reconstructed follows via shot mapping.
-// For contiguous decoded shots, both videos play freely at 1x — no seeking needed.
-// We only seek the reconstructed video on explicit jumps or when entering/leaving
-// decoded regions. Light drift correction at large thresholds only.
-let isSeeking = false;
-let lastSyncedShot = -1;  // Track shot transitions
-
+// Original is the leader. For each decoded shot, the corresponding individual
+// clip file is loaded into vidRecon. For split shots (multiple sub-clips per shot),
+// sub-clip advancement is handled by the 'ended' event — the sync engine only
+// swaps clips on shot boundaries.
 function syncReconToOrig() {
   if (isSeeking) return;
   const t = vidOrig.currentTime;
   const idx = findShot(t);
-  const mapping = reconMap[idx];
+  const mapping = clipMap[idx];
 
   if (!mapping) {
-    // Current shot not decoded — pause recon at its current position to prevent
-    // it from running to the end and entering the 'ended' state.
+    // Not decoded — pause recon
     if (!vidRecon.paused) vidRecon.pause();
     syncInfo.textContent = 'not decoded';
     syncInfo.className = 'sync-indicator warn';
@@ -524,62 +619,66 @@ function syncReconToOrig() {
     return;
   }
 
-  const offsetInShot = t - scenes[idx].start_s;
-  const targetReconTime = mapping.reconStart + offsetInShot;
-
-  // Did we just transition into a decoded shot from a non-decoded region?
-  const enteredNewRegion = lastSyncedShot !== -1 && !decodedShots.has(lastSyncedShot) && decodedShots.has(idx);
-  lastSyncedShot = idx;
-
-  if (enteredNewRegion) {
-    // Entering decoded region — hard seek to correct position and resume playback
-    vidRecon.currentTime = targetReconTime;
-    if (!vidOrig.paused) vidRecon.play();
+  // Shot changed — load first sub-clip of new shot
+  if (idx !== currentClipShotIdx) {
+    const offsetInShot = t - scenes[idx].start_s;
+    const { subIdx, posInClip } = resolveSubClip(mapping, offsetInShot);
+    loadClip(idx, subIdx, posInClip);
+    lastSyncedShot = idx;
     syncInfo.textContent = '';
     syncInfo.className = 'sync-indicator';
     return;
   }
 
-  // During normal playback of contiguous decoded shots, only correct large drift.
-  // Small drift is natural; seeking causes stutter and can break playback.
-  const drift = Math.abs(vidRecon.currentTime - targetReconTime);
-  if (drift > 1.0) {
-    vidRecon.currentTime = targetReconTime;
-    syncInfo.textContent = `corrected ${drift.toFixed(1)}s`;
-    syncInfo.className = 'sync-indicator warn';
-  } else if (drift > 0.5) {
-    syncInfo.textContent = `drift: ${drift.toFixed(2)}s`;
-    syncInfo.className = 'sync-indicator warn';
-  } else {
+  // Same shot — ensure recon is playing.
+  // Sub-clip transitions within the shot are driven by the 'ended' event.
+  if (vidRecon.readyState >= 2) {
+    if (!vidOrig.paused && vidRecon.paused) {
+      if (vidRecon.ended) {
+        // Clip finished — seek back to start so it can play again if needed
+        vidRecon.currentTime = 0;
+      }
+      safePlay(vidRecon);
+    }
+
     syncInfo.textContent = '';
     syncInfo.className = 'sync-indicator';
   }
+
+  lastSyncedShot = idx;
 }
+
+// Handle split shots: when a sub-clip ends, advance to next sub-clip
+vidRecon.addEventListener('ended', () => {
+  if (currentClipShotIdx < 0) return;
+  const mapping = clipMap[currentClipShotIdx];
+  if (!mapping) return;
+  if (currentSubClipIdx + 1 < mapping.clips.length) {
+    loadClip(currentClipShotIdx, currentSubClipIdx + 1, 0);
+  }
+  // Otherwise sync engine handles shot transition on next timeupdate
+});
 
 function seekBoth(origTime, shotIdx) {
   isSeeking = true;
   vidOrig.currentTime = origTime;
   if (hasSpeech) speechAudio.currentTime = origTime;
   const idx = shotIdx !== undefined ? shotIdx : findShot(origTime);
-  const mapping = reconMap[idx];
+  const mapping = clipMap[idx];
   if (mapping) {
     const offsetInShot = origTime - scenes[idx].start_s;
-    vidRecon.currentTime = mapping.reconStart + Math.max(0, offsetInShot);
-    // Recover from ended state when seeking back to a decoded shot
-    if (vidRecon.ended && !vidOrig.paused) {
-      vidRecon.play();
-    }
+    const { subIdx, posInClip } = resolveSubClip(mapping, offsetInShot);
+    loadClip(idx, subIdx, Math.max(0, posInClip));
   }
   lastSyncedShot = idx;
-  setTimeout(() => { isSeeking = false; }, 150);
+  setTimeout(() => { isSeeking = false; }, 250);
 }
 
 function playBoth() {
-  vidOrig.play();
-  // Always play reconstructed — browser requires user-gesture to start playback.
-  // If current shot isn't decoded, sync engine will just let it sit at its position.
-  vidRecon.play();
-  if (hasSpeech) speechAudio.play();
+  safePlay(vidOrig);
+  const mapping = clipMap[findShot(vidOrig.currentTime)];
+  if (mapping && vidRecon.readyState >= 2) safePlay(vidRecon);
+  if (hasSpeech) safePlay(speechAudio);
   btnPlay.textContent = 'Pause';
 }
 
@@ -694,24 +793,43 @@ function buildShotList() {
 }
 
 let outputBase = ''; // e.g. "/output/star_wars_iv_v2"
+let currentOrigSrc = ''; // HTTP path to original video (preserved for re-init)
+
+// Convert a server-relative path (e.g. "/media/foo.mp4") to a file:// URL
+function toFileUrl(httpPath) {
+  // Strip leading slash, join with project root
+  const rel = httpPath.replace(/^\//, '');
+  return 'file://' + projectRoot + '/' + rel;
+}
 
 // -- Initialization --
 function init(originalSrc, reconSrc, base) {
   outputBase = base;
-  vidOrig.src = originalSrc;
-  vidRecon.src = reconSrc;
+  currentOrigSrc = originalSrc;
+  if (useFileUrls.checked && projectRoot) {
+    vidOrig.src = toFileUrl(originalSrc);
+  } else {
+    vidOrig.src = originalSrc;
+  }
+  // Reset clip state — vidRecon.src is set per-clip by loadClip()
+  currentClipShotIdx = -1;
+  currentSubClipIdx = 0;
+  lastSyncedShot = -1;
 
-  // Determine strategy name for per-strategy progress file
+  // Determine strategy name for per-strategy progress + clips path
   const strategyOpt = strategySelect.selectedOptions[0];
   const strategyName = strategyOpt ? strategyOpt.dataset.strategyName : null;
+  // Video strategy name (before +audio suffix) for clips directory
+  const videoStrategy = strategyName && strategyName.includes('+')
+    ? strategyName.split('+')[0]
+    : strategyName;
 
   // Try per-strategy progress first, fall back to legacy
   const progressUrls = [];
   if (strategyName && strategyName !== 'default') {
     progressUrls.push(`${base}/decode_progress_${strategyName}.json`);
-    // For combined names like "runpod-wan+elevenlabs", also try the video strategy alone
     if (strategyName.includes('+')) {
-      progressUrls.push(`${base}/decode_progress_${strategyName.split('+')[0]}.json`);
+      progressUrls.push(`${base}/decode_progress_${videoStrategy}.json`);
     }
   }
   progressUrls.push(`${base}/decode_progress.json`);
@@ -747,24 +865,19 @@ function init(originalSrc, reconSrc, base) {
     scenes = manifest.scenes;
     prompts = promptData;
 
-    // Build reconstruction mapping from decode progress
-    let decodedIndices = [];
-    if (progress && progress.completed) {
-      decodedIndices = progress.completed;
-    } else {
-      // Fallback: assume all shots are decoded (full reconstruction)
-      decodedIndices = scenes.map((_, i) => i);
-    }
-    buildReconMap(decodedIndices);
+    // Build clip map — clips live in adjusted/{videoStrategy}/
+    const adjBase = `${base}/adjusted/${videoStrategy}`;
+    buildClipMap(progress, adjBase);
 
-    const decodedCount = decodedIndices.length;
+    const decodedCount = decodedShots.size;
     shotCount.textContent = `${decodedCount}/${scenes.length}`;
 
     buildTimeline();
     buildShotList();
 
     // Start on the first decoded shot if possible
-    const firstDecoded = [...decodedIndices].sort((a, b) => a - b)[0] || 0;
+    const sorted = [...decodedShots].sort((a, b) => a - b);
+    const firstDecoded = sorted[0] || 0;
     setActiveShot(firstDecoded);
     seekBoth(scenes[firstDecoded].start_s, firstDecoded);
   });
@@ -793,13 +906,16 @@ function init(originalSrc, reconSrc, base) {
 
 // -- Scan API + setup form --
 const selectSource = document.getElementById('input-source');
+const useFileUrls = document.getElementById('use-file-urls');
 let scanData = null;
+let projectRoot = ''; // absolute path from server, for file:// URLs
 let currentStrategies = []; // strategies for current source
 
 fetch('/api/scan')
   .then(r => r.json())
   .then(data => {
     scanData = data;
+    projectRoot = data.project_root || '';
 
     selectSource.innerHTML = '';
     if (data.sources.length === 0) {
@@ -815,13 +931,14 @@ fetch('/api/scan')
       selectSource.disabled = false;
       document.getElementById('btn-start').disabled = false;
 
-      // Auto-start if only one source, or from URL params
+      // Auto-start from URL params, or fall back to default
       const params = new URLSearchParams(location.search);
-      const paramStrategy = params.get('strategy') || null;
+      const paramSource = params.get('source') || 'star_wars_iv.mp4';
+      const paramStrategy = params.get('strategy') || 'runpod-wan+runpod-mmaudio';
       if (data.sources.length === 1) {
         startFromSource(data.sources[0], paramStrategy);
-      } else if (params.get('source')) {
-        const match = data.sources.find(s => s.source_file === params.get('source'));
+      } else {
+        const match = data.sources.find(s => s.source_file === paramSource);
         if (match) startFromSource(match, paramStrategy);
       }
     }
@@ -869,7 +986,7 @@ document.getElementById('btn-start').addEventListener('click', () => {
   startFromSource(scanData.sources[idx], null);
 });
 
-// Strategy switch — reload with new strategy's video and progress
+// Strategy switch — reload with new strategy's clips and progress
 strategySelect.addEventListener('change', () => {
   const wasPlaying = !vidOrig.paused;
   if (wasPlaying) pauseBoth();
@@ -883,15 +1000,16 @@ strategySelect.addEventListener('change', () => {
   const newOutputBase = selectedOpt?.dataset.outputPath || outputBase;
 
   // Re-init with the new strategy (reloads progress + rebuilds timeline)
-  init(vidOrig.src, strategySelect.value, newOutputBase);
+  init(currentOrigSrc, strategySelect.value, newOutputBase);
+});
 
-  // Restore position after load
-  vidRecon.addEventListener('loadedmetadata', function onLoad() {
-    vidRecon.removeEventListener('loadedmetadata', onLoad);
-    const idx = findShot(origTime);
-    seekBoth(origTime, idx);
-    if (wasPlaying) playBoth();
-  });
+// -- file:// toggle --
+useFileUrls.addEventListener('change', () => {
+  if (!currentOrigSrc || !outputBase) return;
+  const wasPlaying = !vidOrig.paused;
+  if (wasPlaying) pauseBoth();
+  timeline.querySelectorAll('.timeline-shot').forEach(el => el.remove());
+  init(currentOrigSrc, strategySelect.value, outputBase);
 });
 
 // -- Timeline click --
