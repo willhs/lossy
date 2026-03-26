@@ -465,19 +465,334 @@ def generate_report(
 
 
 # ---------------------------------------------------------------------------
+# Audio clip judge
+# ---------------------------------------------------------------------------
+
+
+AUDIO_JUDGE_PROMPT = """You are evaluating AI-generated audio for a film reconstruction.
+You will hear an audio clip and be given the intended sound description.
+
+Rate the audio on two dimensions:
+1. **relevance** (0.0-1.0): Does the audio match the description? Are the described sounds present?
+2. **quality** (0.0-1.0): Is the audio clean and recognizable, or does it contain glitches, artifacts, distortion, or noise that makes it sound broken/synthetic?
+
+Quality guide:
+- 1.0 = Clean, natural, could pass as real audio
+- 0.7-0.9 = Mostly clean, minor imperfections
+- 0.4-0.6 = Noticeably synthetic but recognizable sounds
+- 0.1-0.3 = Heavy artifacts, glitchy, mostly unrecognizable
+- 0.0 = Pure noise/garbage
+
+Respond with ONLY a JSON object: {"relevance": <float>, "quality": <float>, "notes": "<brief observation>"}"""
+
+
+def judge_audio_clip(client, clip_path: str, sound_description: str) -> dict:
+    """Send an audio clip to Gemini for quality/relevance judgment.
+
+    Returns {"relevance": float, "quality": float, "notes": str} or
+    {"error": str} on failure.
+    """
+    with open(clip_path, "rb") as f:
+        audio_data = f.read()
+
+    mime = "audio/flac" if clip_path.endswith(".flac") else "audio/mpeg"
+    parts = [
+        genai_types.Part.from_bytes(data=audio_data, mime_type=mime),
+        genai_types.Part.from_text(text=f"Intended sound: {sound_description}"),
+    ]
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite-preview",
+            contents=[genai_types.Content(role="user", parts=parts)],
+            config=genai_types.GenerateContentConfig(
+                system_instruction=AUDIO_JUDGE_PROMPT,
+                temperature=0.0,
+                response_mime_type="application/json",
+            ),
+        )
+        result = json.loads(response.text.strip())
+        return {
+            "relevance": float(result.get("relevance", 0)),
+            "quality": float(result.get("quality", 0)),
+            "notes": result.get("notes", ""),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def run_audio_clip_eval(
+    output_dir: Path,
+    audio_strategy: str,
+    prompts: list[dict],
+    sample_every: int | None,
+    report_dir: str,
+):
+    """Evaluate individual audio clips for quality and relevance."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not set")
+        sys.exit(1)
+
+    client = genai.Client(api_key=api_key)
+    audio_dir = output_dir / "audio" / audio_strategy
+
+    if not audio_dir.exists():
+        print(f"Error: audio directory not found: {audio_dir}")
+        sys.exit(1)
+
+    # Build list of clips to evaluate
+    clips_to_eval = []
+    for prompt in prompts:
+        idx = prompt["index"]
+        sound_desc = (prompt.get("description") or {}).get("sound", "")
+        if not sound_desc:
+            continue
+
+        # Find the clip file (flac or mp3)
+        for ext in [".flac", ".mp3"]:
+            clip_path = audio_dir / f"{idx:04d}{ext}"
+            if clip_path.exists():
+                clips_to_eval.append((idx, str(clip_path), sound_desc))
+                break
+
+    if sample_every and sample_every > 1:
+        clips_to_eval = clips_to_eval[::sample_every]
+
+    print(f"Evaluating {len(clips_to_eval)} audio clips from {audio_strategy}...")
+
+    results = []
+    cost_tokens = {"input": 0, "output": 0}
+
+    for i, (idx, clip_path, sound_desc) in enumerate(clips_to_eval):
+        result = judge_audio_clip(client, clip_path, sound_desc)
+        result["index"] = idx
+        result["sound_description"] = sound_desc
+
+        if "error" in result:
+            print(f"  Shot {idx}: error -- {result['error']}")
+        else:
+            print(f"  Shot {idx}: relevance={result['relevance']:.1f} quality={result['quality']:.1f} -- {result['notes'][:80]}")
+
+        results.append(result)
+
+        # Progress every 50 clips
+        if (i + 1) % 50 == 0:
+            scored = [r for r in results if "error" not in r]
+            if scored:
+                avg_q = sum(r["quality"] for r in scored) / len(scored)
+                avg_r = sum(r["relevance"] for r in scored) / len(scored)
+                print(f"  ... {i + 1}/{len(clips_to_eval)} done (avg quality={avg_q:.2f}, relevance={avg_r:.2f})")
+
+    # Compute aggregates
+    scored = [r for r in results if "error" not in r]
+    if not scored:
+        print("No clips were successfully evaluated.")
+        return
+
+    avg_quality = sum(r["quality"] for r in scored) / len(scored)
+    avg_relevance = sum(r["relevance"] for r in scored) / len(scored)
+
+    # Quality distribution buckets
+    buckets = {"good (>=0.7)": 0, "ok (0.4-0.7)": 0, "poor (<0.4)": 0}
+    for r in scored:
+        q = r["quality"]
+        if q >= 0.7:
+            buckets["good (>=0.7)"] += 1
+        elif q >= 0.4:
+            buckets["ok (0.4-0.7)"] += 1
+        else:
+            buckets["poor (<0.4)"] += 1
+
+    # Find quality transition point (where does quality drop?)
+    if len(scored) >= 10:
+        window = max(5, len(scored) // 20)
+        rolling_quality = []
+        for i in range(len(scored) - window + 1):
+            avg = sum(r["quality"] for r in scored[i:i + window]) / window
+            rolling_quality.append((scored[i]["index"], avg))
+
+    # Worst clips
+    worst = sorted(scored, key=lambda r: r["quality"])[:10]
+    # Best clips
+    best = sorted(scored, key=lambda r: r["quality"], reverse=True)[:5]
+
+    # Print summary
+    print(f"\n=== Audio Clip Eval: {audio_strategy} ===")
+    print(f"  Clips evaluated: {len(scored)} ({len(results) - len(scored)} errors)")
+    print(f"  Avg quality:   {avg_quality:.2f}")
+    print(f"  Avg relevance: {avg_relevance:.2f}")
+    print(f"  Distribution:  {buckets['good (>=0.7)']} good, {buckets['ok (0.4-0.7)']} ok, {buckets['poor (<0.4)']} poor")
+    print(f"\n  Best clips:")
+    for r in best:
+        print(f"    Shot {r['index']}: quality={r['quality']:.1f} relevance={r['relevance']:.1f} -- {r['notes'][:60]}")
+    print(f"\n  Worst clips:")
+    for r in worst[:5]:
+        print(f"    Shot {r['index']}: quality={r['quality']:.1f} relevance={r['relevance']:.1f} -- {r['notes'][:60]}")
+
+    # Write report
+    report_path = _write_audio_clip_report(
+        output_dir=str(output_dir),
+        audio_strategy=audio_strategy,
+        scored=scored,
+        avg_quality=avg_quality,
+        avg_relevance=avg_relevance,
+        buckets=buckets,
+        worst=worst,
+        best=best,
+        report_dir=report_dir,
+    )
+
+    # Save JSON results
+    eval_dir = output_dir / "eval" / audio_strategy
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    with open(eval_dir / "audio_clip_eval.json", "w") as f:
+        json.dump({
+            "audio_strategy": audio_strategy,
+            "timestamp": datetime.now().isoformat(),
+            "clips_evaluated": len(scored),
+            "avg_quality": avg_quality,
+            "avg_relevance": avg_relevance,
+            "buckets": buckets,
+            "results": results,
+        }, f, indent=2)
+
+    print(f"\nReport written to: {report_path}")
+
+
+def _write_audio_clip_report(
+    output_dir: str,
+    audio_strategy: str,
+    scored: list[dict],
+    avg_quality: float,
+    avg_relevance: float,
+    buckets: dict,
+    worst: list[dict],
+    best: list[dict],
+    report_dir: str,
+) -> str:
+    """Write markdown report for audio clip evaluation."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    date_slug = datetime.now().strftime("%Y%m%d-%H%M")
+    source_name = Path(output_dir).name
+
+    report_base = Path(report_dir)
+    report_base.mkdir(parents=True, exist_ok=True)
+    report_path = report_base / f"eval-audio-{source_name}-{audio_strategy}-{date_slug}.md"
+
+    lines = []
+    lines.append(f"# Audio Clip Eval: {source_name} / {audio_strategy}")
+    lines.append("")
+    lines.append(f"**Date**: {timestamp}")
+    lines.append(f"**Clips evaluated**: {len(scored)}")
+    lines.append(f"**Avg Quality**: {avg_quality:.3f}")
+    lines.append(f"**Avg Relevance**: {avg_relevance:.3f}")
+    lines.append("")
+
+    # Distribution
+    lines.append("## Quality Distribution")
+    lines.append("")
+    lines.append("| Bucket | Count | % |")
+    lines.append("|--------|-------|---|")
+    for label, count in buckets.items():
+        pct = count / len(scored) * 100 if scored else 0
+        lines.append(f"| {label} | {count} | {pct:.0f}% |")
+    lines.append("")
+
+    # Quality over time (by shot index)
+    lines.append("## Quality Over Shot Index")
+    lines.append("")
+    lines.append("Shows how quality varies across the film (by shot index).")
+    lines.append("")
+    # Group into ranges
+    if scored:
+        max_idx = max(r["index"] for r in scored)
+        range_size = max(1, (max_idx + 1) // 10)
+        ranges = {}
+        for r in scored:
+            bucket_start = (r["index"] // range_size) * range_size
+            bucket_label = f"{bucket_start}-{bucket_start + range_size - 1}"
+            if bucket_label not in ranges:
+                ranges[bucket_label] = []
+            ranges[bucket_label].append(r)
+
+        lines.append("| Shot Range | Clips | Avg Quality | Avg Relevance |")
+        lines.append("|------------|-------|-------------|---------------|")
+        for label, clips in sorted(ranges.items(), key=lambda x: int(x[0].split("-")[0])):
+            avg_q = sum(r["quality"] for r in clips) / len(clips)
+            avg_r = sum(r["relevance"] for r in clips) / len(clips)
+            lines.append(f"| {label} | {len(clips)} | {avg_q:.2f} | {avg_r:.2f} |")
+        lines.append("")
+
+    # Best clips
+    lines.append("## Best Clips")
+    lines.append("")
+    lines.append("| Shot | Quality | Relevance | Notes |")
+    lines.append("|------|---------|-----------|-------|")
+    for r in best:
+        lines.append(f"| {r['index']} | {r['quality']:.1f} | {r['relevance']:.1f} | {r['notes'][:80]} |")
+    lines.append("")
+
+    # Worst clips
+    lines.append("## Worst Clips")
+    lines.append("")
+    lines.append("| Shot | Quality | Relevance | Notes |")
+    lines.append("|------|---------|-----------|-------|")
+    for r in worst:
+        lines.append(f"| {r['index']} | {r['quality']:.1f} | {r['relevance']:.1f} | {r['notes'][:80]} |")
+    lines.append("")
+
+    # Common issues in worst clips
+    lines.append("## Common Issues")
+    lines.append("")
+    low_quality = [r for r in scored if r["quality"] < 0.4]
+    low_relevance = [r for r in scored if r["relevance"] < 0.4]
+    lines.append(f"- **Low quality (<0.4)**: {len(low_quality)} clips ({len(low_quality)/len(scored)*100:.0f}%)")
+    lines.append(f"- **Low relevance (<0.4)**: {len(low_relevance)} clips ({len(low_relevance)/len(scored)*100:.0f}%)")
+    lines.append("")
+
+    report_path.write_text("\n".join(lines))
+    return str(report_path)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate reconstruction quality")
-    parser.add_argument("output_dir", help="Path to the pipeline output directory")
-    parser.add_argument("--strategy", required=True, help="Strategy name (e.g. fal-seedance)")
-    parser.add_argument("--report-dir", default="docs/research", help="Directory for markdown report")
-    args = parser.parse_args()
+    subparsers = parser.add_subparsers(dest="command")
 
+    # Video eval (default / original mode)
+    video_parser = subparsers.add_parser("video", help="Evaluate reconstructed video quality")
+    video_parser.add_argument("output_dir", help="Path to the pipeline output directory")
+    video_parser.add_argument("--strategy", required=True, help="Video strategy name (e.g. fal-seedance)")
+    video_parser.add_argument("--report-dir", default="docs/research", help="Directory for markdown report")
+
+    # Audio clip eval
+    audio_parser = subparsers.add_parser("audio", help="Evaluate individual audio clips")
+    audio_parser.add_argument("output_dir", help="Path to the pipeline output directory")
+    audio_parser.add_argument("--strategy", required=True, help="Audio strategy name (e.g. runpod-mmaudio)")
+    audio_parser.add_argument("--sample", type=int, default=None, help="Evaluate every Nth clip (e.g. --sample 10)")
+    audio_parser.add_argument("--report-dir", default="docs/research", help="Directory for markdown report")
+
+    args = parser.parse_args()
     load_env()
 
+    # Default to video if no subcommand (backwards compat)
+    if args.command is None:
+        # Re-parse as video for backwards compat with old CLI
+        parser.print_help()
+        sys.exit(1)
+
+    if args.command == "audio":
+        output_dir = Path(args.output_dir)
+        prompts = load_json(output_dir / "prompts.json")
+        run_audio_clip_eval(output_dir, args.strategy, prompts, args.sample, args.report_dir)
+        return
+
+    # Video eval
     output_dir = Path(args.output_dir)
     manifest = load_json(output_dir / "manifest.json")
     prompts = load_json(output_dir / "prompts.json")
