@@ -467,8 +467,8 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Generate audio clips (instead of video)")
     parser.add_argument("--audio-strategy", choices=["elevenlabs", "mmaudio", "runpod-mmaudio"],
-                        default="elevenlabs",
-                        help="Audio generation backend (default: elevenlabs)")
+                        default=None,
+                        help="Audio generation backend (default: auto-detect all for stitch, elevenlabs for generate)")
     parser.add_argument("--keep-pod", action="store_true",
                         help="Keep RunPod pod alive after decode (for subsequent audio stage)")
     parser.add_argument("--speech", action="store_true",
@@ -489,7 +489,8 @@ def main():
             "mmaudio": lambda: MMAudioStrategy(),
             "runpod-mmaudio": lambda: RunPodMMAudioStrategy(output_dir=args.output_dir),
         }
-        audio_strategy = audio_strategies[args.audio_strategy]()
+        audio_name = args.audio_strategy or "elevenlabs"
+        audio_strategy = audio_strategies[audio_name]()
         run_audio(args, audio_strategy)
     elif args.speech:
         speech_strategy = SpeechStrategy(voice=args.speech_voice)

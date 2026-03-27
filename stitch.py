@@ -266,43 +266,23 @@ def _probe_duration(clip_path: str) -> float:
         return 81 / 16  # Last resort fallback
 
 
-def stitch_clips(args):
-    """Concatenate all clips into a single reconstructed video.
+def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
+                  clips_meta: dict, clips_dir: str, adjusted_dir: str,
+                  start_index: int | None, end_index: int | None,
+                  output_path: str, audio_strategy: str | None,
+                  speech_voice: str | None, label: str = "film") -> str | None:
+    """Stitch a range of clips into a single video with optional audio.
 
-    Speed-adjusts each clip to match original shot duration using FFmpeg's
-    setpts filter. Uses clip metadata from decode_progress.json when available,
-    falls back to ffprobe for clips without metadata.
+    Filters prompts to start_index <= index <= end_index, collects and
+    speed-adjusts clips, concatenates via FFmpeg, and optionally muxes
+    audio/speech tracks. Returns the output path, or None if no clips found.
     """
-    output_dir = args.output_dir
-    strategy_name = args.strategy
-    clips_dir = os.path.join(output_dir, "clips", strategy_name)
-    prompts_path = os.path.join(output_dir, "prompts.json")
-
-    if not os.path.exists(clips_dir):
-        # Fall back to flat clips/ for backwards compat with old runs
-        clips_dir_flat = os.path.join(output_dir, "clips")
-        if os.path.exists(clips_dir_flat):
-            clips_dir = clips_dir_flat
-        else:
-            print(f"Error: {clips_dir} not found. Run decode first.")
-            sys.exit(1)
-
-    with open(prompts_path) as f:
-        prompts_full = json.load(f)
-
+    # Filter prompts to range
     prompts = prompts_full
-    if args.start_index:
-        prompts = [p for p in prompts if p["index"] >= args.start_index]
-
-    # Load clip metadata from progress (try per-strategy, fall back to legacy)
-    progress_path = os.path.join(output_dir, f"decode_progress_{strategy_name}.json")
-    if not os.path.exists(progress_path):
-        progress_path = os.path.join(output_dir, "decode_progress.json")
-    clips_meta = {}
-    if os.path.exists(progress_path):
-        with open(progress_path) as f:
-            progress = json.load(f)
-        clips_meta = progress.get("clips", {})
+    if start_index is not None:
+        prompts = [p for p in prompts if p["index"] >= start_index]
+    if end_index is not None:
+        prompts = [p for p in prompts if p["index"] <= end_index]
 
     # Collect existing clips in order
     clip_entries = []
@@ -311,26 +291,23 @@ def stitch_clips(args):
         idx_str = str(idx)
 
         if idx_str in clips_meta:
-            # Use metadata -- handles both single clips and splits
             for clip_info in clips_meta[idx_str]:
                 clip_path = os.path.join(clips_dir, clip_info["path"])
                 if os.path.exists(clip_path):
                     clip_entries.append((clip_path, entry["duration_s"], clip_info["duration_s"]))
         else:
-            # Backwards compat: single clip, probe or assume old default
             clip_path = os.path.join(clips_dir, f"{idx:04d}.mp4")
             if os.path.exists(clip_path):
                 clip_duration = _probe_duration(clip_path)
                 clip_entries.append((clip_path, entry["duration_s"], clip_duration))
 
     if not clip_entries:
-        print("No clips found to stitch.")
-        sys.exit(1)
+        print(f"  No clips found for {label}.")
+        return None
 
-    print(f"Stitching {len(clip_entries)} clips...")
+    print(f"Stitching {len(clip_entries)} clips for {label}...")
 
-    # Speed-adjust each clip to match original duration, write to temp dir
-    adjusted_dir = os.path.join(output_dir, "adjusted", strategy_name)
+    # Speed-adjust each clip (reuses cached adjusted clips)
     os.makedirs(adjusted_dir, exist_ok=True)
 
     concat_list = []
@@ -339,14 +316,12 @@ def stitch_clips(args):
         adjusted_path = os.path.join(adjusted_dir, f"{basename}.mp4")
 
         if not os.path.exists(adjusted_path):
-            # For split clips, don't speed-adjust -- they're already duration-matched
             if "-" in basename:
                 speed_factor = 1.0
             else:
                 speed_factor = original_duration / actual_duration if actual_duration > 0 else 1.0
 
             if abs(speed_factor - 1.0) < 0.05:
-                # Close enough -- just copy
                 subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
             else:
                 subprocess.run(
@@ -360,19 +335,16 @@ def stitch_clips(args):
 
         concat_list.append(adjusted_path)
 
-    # Write concat list file (per-strategy to avoid overwriting)
-    concat_file = os.path.join(output_dir, f"concat_{strategy_name}.txt")
+    # Write range-specific concat file
+    range_suffix = ""
+    if start_index is not None or end_index is not None:
+        range_suffix = f"_{start_index or 'start'}-{end_index or 'end'}"
+    concat_file = os.path.join(output_dir, f"concat_{strategy_name}{range_suffix}.txt")
     with open(concat_file, "w") as f:
         for path in concat_list:
             f.write(f"file '{os.path.abspath(path)}'\n")
 
-    # Concatenate — include audio strategy in filename to avoid overwriting
-    audio_strategy = getattr(args, "audio_strategy", None)
-    if audio_strategy:
-        output_name = f"reconstructed_{strategy_name}+{audio_strategy}.mp4"
-    else:
-        output_name = f"reconstructed_{strategy_name}.mp4"
-    output_path = os.path.join(output_dir, output_name)
+    # Concatenate video
     subprocess.run(
         [
             "ffmpeg", "-f", "concat", "-safe", "0",
@@ -382,81 +354,222 @@ def stitch_clips(args):
         capture_output=True,
     )
 
-    print(f"Reconstructed film saved to {output_path}")
+    print(f"  Saved to {output_path}")
 
     # Report stats
     total_original = sum(orig_dur for _, orig_dur, _ in clip_entries)
     print(f"  Original duration: {total_original:.1f}s ({total_original / 60:.1f}min)")
     print(f"  Clips used: {len(clip_entries)}")
 
-    # Mux audio if available (SFX and/or speech)
+    # Mux audio (auto-discovers all available audio strategies if none specified)
+    _mux_audio(output_dir, output_path, concat_list, prompts_full,
+               audio_strategy, speech_voice)
+
+    return output_path
+
+
+def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
+               prompts_full: list[dict], audio_strategy: str | None,
+               speech_voice: str | None):
+    """Build and mux audio/speech tracks into a video file.
+
+    If audio_strategy is given, only that SFX track is used. Otherwise,
+    auto-discovers all audio strategy directories and mixes them together.
+    """
+    # Compute actual adjusted video durations per shot
+    shot_durations = {}
+    for adjusted_path in concat_list:
+        basename = os.path.splitext(os.path.basename(adjusted_path))[0]
+        idx_str = basename.split("-")[0]
+        idx = int(idx_str)
+        dur = _probe_duration(adjusted_path)
+        shot_durations[idx] = shot_durations.get(idx, 0) + dur
+
+    stitched_prompts = []
+    for p in prompts_full:
+        if p["index"] in shot_durations:
+            patched = dict(p)
+            patched["duration_s"] = shot_durations[p["index"]]
+            stitched_prompts.append(patched)
+
+    # Build SFX track(s)
+    audio_tracks = []
+    if audio_strategy:
+        strategies = [audio_strategy]
+    else:
+        # Auto-discover all audio strategy directories
+        audio_root = os.path.join(output_dir, "audio")
+        if os.path.isdir(audio_root):
+            strategies = sorted(
+                d for d in os.listdir(audio_root)
+                if os.path.isdir(os.path.join(audio_root, d))
+            )
+        else:
+            strategies = []
+
+    for strat in strategies:
+        track = _stitch_audio(output_dir, strat, stitched_prompts, None)
+        if track and os.path.exists(track):
+            audio_tracks.append(track)
+
+    # Build speech track
+    speech_track = None
+    if speech_voice:
+        speech_track = _stitch_speech(output_dir, stitched_prompts, None)
+
+    # Collect all tracks to mix, with volume levels:
+    #   SFX tracks are ducked to sit behind dialogue
+    #   Speech is boosted to be clearly audible over SFX
+    SFX_VOLUME_DB = -8   # duck SFX
+    SPEECH_VOLUME_DB = 6  # boost speech
+
+    sfx_tracks = [(t, SFX_VOLUME_DB) for t in audio_tracks]
+    if speech_track and os.path.exists(speech_track):
+        sfx_tracks.append((speech_track, SPEECH_VOLUME_DB))
+
+    # Determine final audio to mux
+    audio_to_mux = None
+    if len(sfx_tracks) > 1:
+        combined_label = audio_strategy or "all"
+        combined_path = os.path.join(output_dir, f"combined_audio_{combined_label}.wav")
+        inputs = []
+        filters = []
+        for i, (t, vol) in enumerate(sfx_tracks):
+            inputs.extend(["-i", t])
+            filters.append(f"[{i}]volume={vol}dB[v{i}]")
+        mix_inputs = "".join(f"[v{i}]" for i in range(len(sfx_tracks)))
+        filters.append(
+            f"{mix_inputs}amix=inputs={len(sfx_tracks)}:duration=longest:normalize=0,"
+            f"alimiter=limit=0.95[out]"
+        )
+        subprocess.run(
+            ["ffmpeg", "-y"] + inputs +
+            ["-filter_complex", ";".join(filters),
+             "-map", "[out]",
+             combined_path],
+            capture_output=True,
+        )
+        audio_to_mux = combined_path
+    elif len(sfx_tracks) == 1:
+        audio_to_mux = sfx_tracks[0][0]
+
+    if audio_to_mux:
+        muxed_path = video_path.replace(".mp4", "_with_audio.mp4")
+        result = subprocess.run(
+            ["ffmpeg", "-y",
+             "-i", video_path,
+             "-i", audio_to_mux,
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+             "-shortest",
+             muxed_path],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            os.replace(muxed_path, video_path)
+            labels = [s for s in strategies if any(s in t for t in audio_tracks)]
+            if speech_track and os.path.exists(speech_track):
+                labels.append("speech")
+            print(f"  {'+'.join(labels)} muxed into {video_path}")
+        else:
+            print(f"  Warning: audio mux failed, silent video preserved")
+            if os.path.exists(muxed_path):
+                os.remove(muxed_path)
+
+
+def stitch_clips(args):
+    """Concatenate all clips into a single reconstructed video.
+
+    Speed-adjusts each clip to match original shot duration using FFmpeg's
+    setpts filter. Uses clip metadata from decode_progress.json when available,
+    falls back to ffprobe for clips without metadata.
+
+    If a scenes.json file exists in the output directory, also produces
+    separate videos for each named scene range.
+    """
+    output_dir = args.output_dir
+    strategy_name = args.strategy
+    clips_dir = os.path.join(output_dir, "clips", strategy_name)
+    prompts_path = os.path.join(output_dir, "prompts.json")
+
+    if not os.path.exists(clips_dir):
+        clips_dir_flat = os.path.join(output_dir, "clips")
+        if os.path.exists(clips_dir_flat):
+            clips_dir = clips_dir_flat
+        else:
+            print(f"Error: {clips_dir} not found. Run decode first.")
+            sys.exit(1)
+
+    with open(prompts_path) as f:
+        prompts_full = json.load(f)
+
+    # Load clip metadata from progress (try per-strategy, fall back to legacy)
+    progress_path = os.path.join(output_dir, f"decode_progress_{strategy_name}.json")
+    if not os.path.exists(progress_path):
+        progress_path = os.path.join(output_dir, "decode_progress.json")
+    clips_meta = {}
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            progress = json.load(f)
+        clips_meta = progress.get("clips", {})
+
+    adjusted_dir = os.path.join(output_dir, "adjusted", strategy_name)
     audio_strategy = getattr(args, "audio_strategy", None)
     speech_voice = getattr(args, "speech_voice", None)
+    start_index = getattr(args, "start_index", None)
 
-    if audio_strategy or speech_voice:
-        # Compute actual adjusted video durations per shot (may differ from
-        # original target due to setpts rounding). Audio must match these
-        # exactly to stay in sync.
-        shot_durations = {}  # index -> actual adjusted video duration
-        for adjusted_path in concat_list:
-            basename = os.path.splitext(os.path.basename(adjusted_path))[0]
-            idx_str = basename.split("-")[0]
-            idx = int(idx_str)
-            dur = _probe_duration(adjusted_path)
-            shot_durations[idx] = shot_durations.get(idx, 0) + dur
+    # Auto-detect speech if speech_progress.json exists
+    if not speech_voice:
+        speech_progress = os.path.join(output_dir, "speech_progress.json")
+        if os.path.exists(speech_progress):
+            speech_voice = "auto"
 
-        stitched_prompts = []
-        for p in prompts_full:
-            if p["index"] in shot_durations:
-                # Override duration with actual video duration for sync
-                patched = dict(p)
-                patched["duration_s"] = shot_durations[p["index"]]
-                stitched_prompts.append(patched)
+    # Build output filename
+    if audio_strategy:
+        output_name = f"reconstructed_{strategy_name}+{audio_strategy}.mp4"
+    else:
+        output_name = f"reconstructed_{strategy_name}.mp4"
+    output_path = os.path.join(output_dir, output_name)
 
-        # Build SFX track
-        audio_track = None
-        if audio_strategy:
-            audio_track = _stitch_audio(output_dir, audio_strategy, stitched_prompts, None)
+    # Stitch the full (or --start-index filtered) video
+    result = _stitch_range(
+        output_dir, strategy_name, prompts_full, clips_meta, clips_dir,
+        adjusted_dir, start_index, None, output_path,
+        audio_strategy, speech_voice, label="full reconstruction",
+    )
+    if result is None:
+        print("No clips found to stitch.")
+        sys.exit(1)
 
-        # Build speech track
-        speech_track = None
-        if speech_voice:
-            speech_track = _stitch_speech(output_dir, stitched_prompts, None)
+    # Stitch named scenes if scenes.json exists
+    scenes_path = os.path.join(output_dir, "scenes.json")
+    if os.path.exists(scenes_path):
+        with open(scenes_path) as f:
+            scenes = json.load(f)
 
-        # Determine final audio to mux
-        audio_to_mux = None
-        if audio_track and os.path.exists(audio_track) and speech_track and os.path.exists(speech_track):
-            # Mix SFX + speech into combined track
-            combined_path = os.path.join(output_dir, f"combined_audio_{audio_strategy}.wav")
-            subprocess.run(
-                ["ffmpeg", "-y",
-                 "-i", audio_track, "-i", speech_track,
-                 "-filter_complex", "amix=inputs=2:duration=longest",
-                 combined_path],
-                capture_output=True,
+        if scenes:
+            print(f"\n{'='*40}")
+            print(f"Stitching {len(scenes)} scene(s)...")
+            print(f"{'='*40}")
+
+        scene_outputs = []
+        for scene in scenes:
+            name = scene["name"]
+            scene_start = scene["start"]
+            scene_end = scene["end"]
+            scene_output = os.path.join(
+                output_dir, f"scene_{name}_{strategy_name}.mp4"
             )
-            audio_to_mux = combined_path
-        elif audio_track and os.path.exists(audio_track):
-            audio_to_mux = audio_track
-        elif speech_track and os.path.exists(speech_track):
-            audio_to_mux = speech_track
 
-        if audio_to_mux:
-            muxed_path = output_path.replace(".mp4", "_with_audio.mp4")
-            result = subprocess.run(
-                ["ffmpeg", "-y",
-                 "-i", output_path,
-                 "-i", audio_to_mux,
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                 "-shortest",
-                 muxed_path],
-                capture_output=True,
+            scene_result = _stitch_range(
+                output_dir, strategy_name, prompts_full, clips_meta, clips_dir,
+                adjusted_dir, scene_start, scene_end, scene_output,
+                audio_strategy, speech_voice,
+                label=f"scene '{name}' (#{scene_start}-#{scene_end})",
             )
-            if result.returncode == 0:
-                os.replace(muxed_path, output_path)
-                label = "SFX+speech" if audio_track and speech_track else ("speech" if speech_track else "SFX")
-                print(f"  {label} muxed into {output_path}")
-            else:
-                print(f"  Warning: audio mux failed, silent video preserved")
-                if os.path.exists(muxed_path):
-                    os.remove(muxed_path)
+            if scene_result:
+                scene_outputs.append((name, scene_result))
+
+        if scene_outputs:
+            print(f"\nScene videos:")
+            for name, path in scene_outputs:
+                print(f"  {name}: {path}")
