@@ -531,7 +531,7 @@ Return a JSON object with these fields:
 - "color_palette": dominant colors
 - "mood": emotional tone or atmosphere
 - "setting": location/environment description
-- "sound": description of the soundtrack — what you'd expect to hear based on the visuals and the detected audio labels. Describe music style/mood, sound effects, ambient sounds, and atmosphere. If silence or near-silence, say so.
+- "sound": description of the non-speech soundtrack — music, sound effects, ambient sounds, and atmosphere only. Do NOT include dialogue, voices, or speech — those are handled by a separate system. If silence or near-silence, say so.
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
 
