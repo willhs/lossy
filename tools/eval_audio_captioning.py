@@ -116,6 +116,11 @@ def run_whisper(clip_paths, shot_indices):
     model_id = "MU-NLPC/whisper-small-audio-captioning"
     model = WhisperForConditionalGeneration.from_pretrained(model_id, trust_remote_code=True)
     feature_extractor = WhisperFeatureExtractor.from_pretrained(model_id)
+    from transformers import WhisperTokenizer
+    tokenizer = WhisperTokenizer.from_pretrained(model_id)
+    forced_decoder_ids = tokenizer.get_decoder_prompt_ids(
+        language="en", task="transcribe", no_timestamps=True,
+    )
     model.eval()
 
     results = {}
@@ -128,15 +133,11 @@ def run_whisper(clip_paths, shot_indices):
             generated = model.generate(
                 features.input_features,
                 max_length=100,
-                forced_decoder_ids=feature_extractor.get_decoder_prompt_ids(
-                    language="en", task="transcribe", no_timestamps=True,
-                ),
+                forced_decoder_ids=forced_decoder_ids,
             )
         elapsed = time.perf_counter() - t0
-        # Decode and strip the "clotho > caption:" prefix if present
-        from transformers import WhisperTokenizer
-        tokenizer = WhisperTokenizer.from_pretrained(model_id)
         caption = tokenizer.decode(generated[0], skip_special_tokens=True)
+        # Strip the "clotho > caption:" prefix if present
         caption = re.sub(r"^.*?caption:\s*", "", caption)
         results[idx] = (caption, elapsed)
         print(f"  Shot {idx:>5d}: {elapsed:.2f}s — {caption}")

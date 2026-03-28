@@ -1,9 +1,9 @@
 ---
 id: "0008"
 type: research
-purpose: Evaluate whether CLAPCap can replace the YAMNet + Gemini pipeline for generating sound descriptions
+purpose: Evaluate whether CLAPCap or Whisper Audio Captioning can replace the YAMNet + Gemini pipeline for generating sound descriptions
 scope: audio encoding
-tags: [audio, captioning, clapcap, yamnet, encoder, eval]
+tags: [audio, captioning, clapcap, whisper, yamnet, encoder, eval]
 ---
 
 # Audio Captioning Model Evaluation
@@ -25,24 +25,28 @@ Local audio captioning models generate natural-language descriptions directly fr
 
 ## Approach
 
-Evaluated **CLAPCap** (`msclap` PyPI package, MIT license, ~200M params) on 19 representative shots from the star_wars_iv_v2 encode, spanning all audio buckets (music, effects, speech, other, silence) with durations from 0.8s to 11.5s.
+Evaluated two models on 19 representative shots from the star_wars_iv_v2 encode, spanning all audio buckets (music, effects, speech, other, silence) with durations from 0.8s to 11.5s:
 
-CoNeTTE was excluded (requires Python <3.11). Whisper Audio Captioning was excluded (CC BY-NC license, install friction).
+1. **CLAPCap** (`msclap` PyPI package, MIT license, ~200M params) -- primary candidate
+2. **Whisper Audio Captioning** (`MU-NLPC/whisper-small-audio-captioning`, CC BY-NC, 244M params) -- secondary candidate
 
-The eval script (`tools/eval_audio_captioning.py`) extracts audio clips via ffmpeg, runs CLAPCap on each, and produces a side-by-side comparison against YAMNet labels and Gemini sound descriptions.
+CoNeTTE was excluded (requires Python <3.11).
+
+The eval script (`tools/eval_audio_captioning.py`) extracts audio clips via ffmpeg, runs each model, and produces a side-by-side comparison against YAMNet labels and Gemini sound descriptions.
 
 ## Results
 
 ### Summary Metrics
 
-| Metric | CLAPCap | Gemini (baseline) |
-|--------|---------|-------------------|
-| Avg inference time | 2.47s/clip | ~2s/shot (API) |
-| Speech leak rate | 7/19 (37%) | ~45% (from 0007 data) |
-| Avg caption length | 53 chars | ~90 chars |
-| Descriptive captions (>20 chars) | 18/19 (95%) | 19/19 (100%) |
-| Projected full-film time (1750 shots) | ~72 min | ~58 min |
-| Degenerate outputs | 1/19 (5%) | 0/19 (0%) |
+| Metric | CLAPCap | Whisper AC | Gemini (baseline) |
+|--------|---------|------------|-------------------|
+| Avg inference time | 2.47s/clip | 1.16s/clip | ~2s/shot (API) |
+| Speech leak rate | 7/19 (37%) | 5/19 (26%) | ~45% (from 0007 data) |
+| Avg caption length | 53 chars | 46 chars | ~90 chars |
+| Descriptive captions (>20 chars) | 18/19 (95%) | 17/19 (89%) | 19/19 (100%) |
+| Projected full-film time (1750 shots) | ~72 min | ~34 min | ~58 min |
+| Degenerate outputs | 1/19 (5%) | 0/19 (0%) | 0/19 (0%) |
+| Output format | Natural language | AudioSet-style keyword lists | Natural language |
 
 ### Audio Grounding Assessment
 
@@ -97,6 +101,19 @@ CLAPCap consistently collapses rich audio into generic categories ("music is pla
 
 Throughput is acceptable but not a meaningful advantage given the quality gap.
 
+### Whisper Audio Captioning
+
+Whisper Audio Captioning produced **AudioSet-style keyword lists** rather than natural language captions, despite being described as a captioning model. Outputs are prefixed with "audioset" fragments and contain comma-separated labels:
+
+- **Shot 5** (orchestral score): "audiosetells, music, music mood, tender music"
+- **Shot 63** (blaster fire): "audiosetrain, vehicle horn, rail transport, train, sounds of things"
+- **Shot 1098** (tense orchestral): "audioset keywords are explosion, boom"
+- **Shot 210** (cave acoustics): "audioset" (empty -- no useful output)
+
+This makes Whisper AC functionally equivalent to YAMNet (keyword classification) rather than a replacement for Gemini (natural language descriptions). It cannot be used directly as the `sound` field for MMAudio prompts. Its keyword outputs are also less accurate than YAMNet's -- e.g., labeling the opening orchestral crawl as "tender music" rather than "Orchestra, Theme music".
+
+Additionally, the CC BY-NC license makes it unsuitable for production use.
+
 ## Comparison: Key Examples
 
 ### CLAPCap wins (none convincing)
@@ -118,7 +135,7 @@ No shot in the eval produced a CLAPCap caption that was clearly better than Gemi
 
 ## Recommendation
 
-**Do not adopt CLAPCap.** Keep the current YAMNet + Gemini pipeline.
+**Do not adopt either model.** Keep the current YAMNet + Gemini pipeline.
 
 CLAPCap fails on all four evaluation criteria:
 
@@ -127,7 +144,9 @@ CLAPCap fails on all four evaluation criteria:
 3. **MMAudio descriptiveness**: Significantly worse than Gemini. Captions collapse to generic categories.
 4. **Throughput**: Acceptable but irrelevant given quality problems.
 
-The model appears to be limited by its training data (AudioCaps/Clotho) which consists of short, simple audio events -- not the complex film soundscapes in this use case. Gemini's ability to combine visual context with audio labels produces richer, more useful descriptions despite the hallucination and speech leakage problems.
+Whisper Audio Captioning is even less viable -- it produces keyword lists rather than natural language captions, making it functionally a worse YAMNet rather than a Gemini replacement. Its CC BY-NC license is also restrictive.
+
+Both models appear limited by their training data (AudioCaps/Clotho) which consists of short, simple audio events -- not the complex film soundscapes in this use case. Gemini's ability to combine visual context with audio labels produces richer, more useful descriptions despite the hallucination and speech leakage problems.
 
 ### What would change this assessment
 
