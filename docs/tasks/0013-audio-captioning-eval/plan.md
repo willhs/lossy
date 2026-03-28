@@ -157,8 +157,8 @@ Run the eval, analyze results, and write the research document.
 
 #### 1. Run CLAPCap eval
 
-- [ ] Run: `python tools/eval_audio_captioning.py output/star_wars_iv_v2/`
-- [ ] Manual: Review `output/star_wars_iv_v2/eval_audio_captioning/report.md` and assess:
+- [x] Run: `python tools/eval_audio_captioning.py output/star_wars_iv_v2/`
+- [x] Manual: Review `output/star_wars_iv_v2/eval_audio_captioning/report.md` and assess:
   - Are CLAPCap captions grounded in actual audio? (Compare against what the shot should sound like)
   - How many captions leak speech references?
   - Are captions descriptive enough for MMAudio prompts? (Compare richness to Gemini descriptions)
@@ -166,12 +166,12 @@ Run the eval, analyze results, and write the research document.
 
 #### 2. Run Whisper eval (if installed)
 
-- [ ] Run: `python tools/eval_audio_captioning.py output/star_wars_iv_v2/ --model whisper`
-- [ ] Manual: Compare Whisper results against CLAPCap
+- [x] Run: `python tools/eval_audio_captioning.py output/star_wars_iv_v2/ --model whisper`
+- [x] Manual: Compare Whisper results against CLAPCap
 
 #### 3. Write research doc
 
-- [ ] Create `docs/research/0008-audio-captioning/research.md` following the project's research doc format (see `docs/research/0007-speech-filter/research.md` for structure):
+- [x] Create `docs/research/0008-audio-captioning/research.md` following the project's research doc format (see `docs/research/0007-speech-filter/research.md` for structure):
   - **Problem**: YAMNet+Gemini pipeline hallucinates, leaks speech, heavy dependency
   - **Approach**: Evaluated CLAPCap (and optionally Whisper) on 19 representative shots
   - **Results**: Per-model table with metrics (speech leak rate, avg caption length, avg inference time, qualitative grounding assessment)
@@ -181,23 +181,23 @@ Run the eval, analyze results, and write the research document.
 
 ### Success Criteria
 
-- [ ] `docs/research/0008-audio-captioning/research.md` exists with complete findings
-- [ ] Research doc answers all four success criteria from the task spec: (1) audio grounding, (2) speech-freedom, (3) MMAudio descriptiveness, (4) throughput
-- [ ] Clear recommendation with rationale
+- [x] `docs/research/0008-audio-captioning/research.md` exists with complete findings
+- [x] Research doc answers all four success criteria from the task spec: (1) audio grounding, (2) speech-freedom, (3) MMAudio descriptiveness, (4) throughput
+- [x] Clear recommendation with rationale
 
 ---
 
 ## Final Checklist
 
-- [ ] All phases complete
-- [ ] Eval script runs cleanly: `python tools/eval_audio_captioning.py output/star_wars_iv_v2/`
-- [ ] Research doc written with recommendation
-- [ ] No changes to pipeline code (`encode.py`, `decode.py`, `stitch.py`, `strategies_*.py`)
+- [x] All phases complete
+- [x] Eval script runs cleanly: `python tools/eval_audio_captioning.py output/star_wars_iv_v2/`
+- [x] Research doc written with recommendation
+- [x] No changes to pipeline code (`encode.py`, `decode.py`, `stitch.py`, `strategies_*.py`)
 
 ## Documentation Updates
 
-- [ ] Create `docs/research/0008-audio-captioning/research.md` with findings and recommendation
-- [ ] If recommending CLAPCap adoption: note a follow-up task is needed for `encode.py` integration
+- [x] Create `docs/research/0008-audio-captioning/research.md` with findings and recommendation
+- [x] If recommending CLAPCap adoption: note a follow-up task is needed for `encode.py` integration
 
 ## References
 
