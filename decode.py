@@ -42,6 +42,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     FalSeedanceStrategy,
     FalSeedanceProStrategy,
     RunPodWanStrategy,
+    RunPodVaceStrategy,
 )
 
 
@@ -53,6 +54,77 @@ from strategies_audio import (  # noqa: E402 -- re-export for backwards compat
     SpeechStrategy,
     filter_speech_from_sound,
 )
+
+
+# ---------------------------------------------------------------------------
+# Portrait generation
+# ---------------------------------------------------------------------------
+
+
+def generate_portraits(characters_path: str, output_dir: str) -> dict:
+    """Generate canonical portrait images for each character.
+
+    Returns {character_name: portrait_path} mapping.
+    """
+    import fal_client
+    import httpx
+
+    with open(characters_path) as f:
+        characters_data = json.load(f)
+
+    characters_dir = os.path.join(output_dir, "characters")
+    os.makedirs(characters_dir, exist_ok=True)
+
+    portraits = {}
+    for char in characters_data.get("characters", []):
+        name = char["name"]
+        portrait_path = os.path.join(characters_dir, f"{name}.png")
+
+        if os.path.exists(portrait_path):
+            print(f"  Portrait exists: {name}")
+            portraits[name] = portrait_path
+            continue
+
+        prompt = (
+            f"Professional portrait photograph of {char['description']}. "
+            f"Clean background, studio lighting, sharp focus, photorealistic, "
+            f"head and shoulders framing, neutral expression."
+        )
+
+        print(f"  Generating portrait: {char['display_name']}...")
+        try:
+            result = fal_client.subscribe(
+                "fal-ai/flux/schnell",
+                arguments={
+                    "prompt": prompt,
+                    "image_size": "square_hd",
+                    "num_images": 1,
+                },
+                with_logs=False,
+            )
+
+            image_url = result["images"][0]["url"]
+            resp = httpx.get(image_url, follow_redirects=True)
+            resp.raise_for_status()
+            with open(portrait_path, "wb") as f:
+                f.write(resp.content)
+
+            portraits[name] = portrait_path
+            print(f"    Saved: {portrait_path}")
+
+        except Exception as e:
+            print(f"    Error generating portrait for {name}: {e}")
+
+    return portraits
+
+
+def build_character_shot_map(characters_data: dict) -> dict:
+    """Build reverse mapping from shot index to character names."""
+    shot_map = {}
+    for char in characters_data.get("characters", []):
+        for shot_idx in char.get("shots", []):
+            shot_map.setdefault(shot_idx, []).append(char["name"])
+    return shot_map
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +534,7 @@ def main():
                         help="Process only first N shots (after start-index)")
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
-    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"],
+    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-vace"],
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
     parser.add_argument("--audio", action="store_true",
@@ -506,9 +578,34 @@ def main():
                 keep_pod=getattr(args, "keep_pod", False),
                 concurrent_audio=getattr(args, "concurrent_audio", False),
             ),
+            "runpod-vace": lambda: _create_vace_strategy(args),
         }
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
+
+
+def _create_vace_strategy(args):
+    output_dir = args.output_dir
+    characters_path = os.path.join(output_dir, "characters.json")
+
+    portraits = {}
+    character_shot_map = {}
+
+    if os.path.exists(characters_path):
+        with open(characters_path) as f:
+            characters_data = json.load(f)
+        portraits = generate_portraits(characters_path, output_dir)
+        character_shot_map = build_character_shot_map(characters_data)
+    else:
+        print("Warning: characters.json not found. Running VACE without reference images (T2V fallback).")
+
+    return RunPodVaceStrategy(
+        output_dir=output_dir,
+        keep_pod=getattr(args, "keep_pod", False),
+        concurrent_audio=getattr(args, "concurrent_audio", False),
+        portraits=portraits,
+        character_shot_map=character_shot_map,
+    )
 
 
 if __name__ == "__main__":

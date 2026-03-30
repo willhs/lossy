@@ -24,4 +24,16 @@ override-dependencies = ["tf-keras>=2.16"]
 [dependency-groups]
 dev = [
     "pytest",
+    "spec-check @ git+https://github.com/willhs/spec-check.git@main",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "req(ids): Links test to spec requirement(s) e.g. @pytest.mark.req('SPEC-100/REQ-001')",
+]
+
+[tool.spec-check.check-coverage]
+specs_dir = "docs/design"
+tests_dir = "."
+min_coverage = 90.0
+use_gitignore = true

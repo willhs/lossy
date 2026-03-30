@@ -745,6 +745,102 @@ def generate_prompts(
 
 
 # ---------------------------------------------------------------------------
+# Stage 3: Character registry
+# ---------------------------------------------------------------------------
+
+STAGE3_SYSTEM_PROMPT = """You are a film analysis expert. Given a list of subject descriptions from every shot of a film, identify the distinct named characters and create a canonical appearance description for each.
+
+Return a JSON object with a "characters" array. Each character entry has:
+- "name": a short identifier (e.g., "luke", "han_solo", "vader") — lowercase, underscores, no spaces
+- "display_name": the character's name as it would appear in credits (e.g., "Luke Skywalker")
+- "description": a canonical appearance description — specific enough to generate a consistent portrait. Include: age range, gender, ethnicity/skin tone, hair color/style, eye color, facial features, typical clothing/costume. ~50-80 words.
+- "shots": list of shot indices (integers) where this character appears
+
+Rules:
+- Merge different descriptions of the same character across shots (e.g., "a young man with blond hair" and "Luke, wearing a white tunic" are the same person)
+- Only include characters who appear in at least 2 shots
+- Limit to the 5 most prominent characters (by shot count)
+- If a character cannot be identified by name, use a descriptive identifier (e.g., "tall_officer", "bartender")
+
+Output ONLY valid JSON."""
+
+
+def run_stage3(args):
+    """Stage 3: Build character registry from prompts.json subjects."""
+    from google import genai
+    from google.genai import types
+
+    output_dir = args.output_dir
+    prompts_path = os.path.join(output_dir, "prompts.json")
+
+    if not os.path.exists(prompts_path):
+        print(f"Error: {prompts_path} not found. Run stage2 first.")
+        sys.exit(1)
+
+    with open(prompts_path) as f:
+        prompts = json.load(f)
+
+    # Collect subjects with shot indices
+    subjects_by_shot = []
+    for entry in prompts:
+        subjects = entry.get("description", {}).get("subjects", "")
+        if subjects:
+            subjects_by_shot.append(f"Shot {entry['index']}: {subjects}")
+
+    if not subjects_by_shot:
+        print("No subjects found in prompts.json")
+        sys.exit(1)
+
+    # Load .env for API key
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as ef:
+            for line in ef:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not set")
+        sys.exit(1)
+
+    client = genai.Client(api_key=api_key)
+
+    user_text = (
+        f"Film has {len(prompts)} shots. "
+        f"Subject descriptions from each shot:\n\n"
+        + "\n".join(subjects_by_shot)
+    )
+
+    print(f"Analyzing subjects across {len(prompts)} shots...")
+    response = client.models.generate_content(
+        model="gemini-3.1-flash-lite-preview",
+        contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
+        config=types.GenerateContentConfig(
+            system_instruction=STAGE3_SYSTEM_PROMPT,
+            temperature=0.3,
+            response_mime_type="application/json",
+        ),
+    )
+
+    characters_data = json.loads(response.text.strip())
+
+    # Validate structure
+    characters = characters_data.get("characters", [])
+    print(f"Found {len(characters)} characters:")
+    for char in characters:
+        print(f"  {char['display_name']} ({char['name']}): {len(char['shots'])} shots")
+
+    characters_path = os.path.join(output_dir, "characters.json")
+    with open(characters_path, "w") as f:
+        json.dump(characters_data, f, indent=2)
+
+    print(f"\nCharacter registry saved to {characters_path}")
+
+
+# ---------------------------------------------------------------------------
 # CLI entry points
 # ---------------------------------------------------------------------------
 
@@ -840,6 +936,11 @@ def main():
     s2.add_argument("--limit", type=int, default=None, help="Process only first N shots")
     s2.add_argument("--provider", default="gemini", choices=["gemini"], help="Vision API provider")
     s2.set_defaults(func=run_stage2)
+
+    # Stage 3
+    s3 = subparsers.add_parser("stage3", help="Build character registry from prompts")
+    s3.add_argument("output_dir", help="Output directory from stage 2")
+    s3.set_defaults(func=run_stage3)
 
     args = parser.parse_args()
     args.func(args)

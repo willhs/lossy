@@ -1,5 +1,9 @@
 """Tests for encode.py data transformation functions."""
 
+import argparse
+import json
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 
@@ -10,6 +14,7 @@ from encode import (
     classify_motion,
     frames_for_duration,
     parse_srt,
+    run_stage3,
 )
 
 
@@ -387,3 +392,87 @@ class TestAggregateShotAudio:
         scores[10:, 179] = 0.9  # Orchestra in second half
         result = aggregate_shot_audio(scores, self._class_names(), 4.0, 6.0)
         assert result["bucket"] in ("speech", "music")
+
+
+# ---------------------------------------------------------------------------
+# run_stage3
+# ---------------------------------------------------------------------------
+
+class TestStage3:
+    """Tests for encode stage 3 — character registry."""
+
+    def test_stage3_produces_characters_json(self, tmp_path, monkeypatch):
+        """Stage 3 reads prompts.json subjects and writes characters.json."""
+        prompts = [
+            {"index": 0, "description": {"subjects": "Luke, a young man with sandy blond hair"}},
+            {"index": 1, "description": {"subjects": "Han Solo, a roguish man in a vest"}},
+            {"index": 2, "description": {"subjects": "Luke wearing a white tunic"}},
+            {"index": 3, "description": {"subjects": "Han Solo shooting a blaster"}},
+        ]
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+
+        mock_response = {
+            "characters": [
+                {
+                    "name": "luke",
+                    "display_name": "Luke Skywalker",
+                    "description": "Young man, early 20s, sandy blond hair...",
+                    "shots": [0, 2],
+                },
+                {
+                    "name": "han_solo",
+                    "display_name": "Han Solo",
+                    "description": "Roguish man, mid 30s, dark hair...",
+                    "shots": [1, 3],
+                },
+            ]
+        }
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(mock_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        run_stage3(args)
+
+        characters_path = tmp_path / "characters.json"
+        assert characters_path.exists()
+        data = json.loads(characters_path.read_text())
+        assert len(data["characters"]) == 2
+        assert data["characters"][0]["name"] == "luke"
+        assert 0 in data["characters"][0]["shots"]
+
+    def test_stage3_missing_prompts_exits(self, tmp_path):
+        """stage3 exits with error if prompts.json is missing."""
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            run_stage3(args)
+
+    def test_stage3_no_subjects_exits(self, tmp_path, monkeypatch):
+        """stage3 exits if prompts.json has no subjects fields."""
+        prompts = [
+            {"index": 0, "description": {"action": "A door opens."}},
+        ]
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            run_stage3(args)
+
+    def test_stage3_missing_api_key_exits(self, tmp_path, monkeypatch):
+        """stage3 exits if GEMINI_API_KEY is not set."""
+        prompts = [
+            {"index": 0, "description": {"subjects": "Luke"}},
+        ]
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        # Set to empty string (falsy) so setdefault() won't overwrite it with
+        # the real key from the .env file.
+        monkeypatch.setenv("GEMINI_API_KEY", "")
+
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            run_stage3(args)

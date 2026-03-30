@@ -656,3 +656,313 @@ class RunPodWanStrategy(GenerationStrategy):
                 self._pending_audio = (shot_index, sound, target_duration_s, effective_seed, self._audio_dir)
 
         return results
+
+
+class RunPodVaceStrategy(RunPodWanStrategy):
+    """RunPod self-hosted Wan 2.1 VACE-1.3B -- reference-conditioned video generation."""
+
+    name = "runpod-vace"
+
+    VACE_MODELS = [
+        (
+            "vae/wan_2.1_vae.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+        ),
+        (
+            "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        ),
+        (
+            "diffusion_models/wan2.1_vace_1.3B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_vace_1.3B_fp16.safetensors",
+        ),
+        # T2V model needed for shots without character references (fallback workflow)
+        (
+            "diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+        ),
+    ]
+
+    def __init__(
+        self,
+        output_dir: str = "",
+        keep_pod: bool = False,
+        concurrent_audio: bool = False,
+        portraits: dict | None = None,
+        character_shot_map: dict | None = None,
+    ):
+        super().__init__(output_dir, keep_pod, concurrent_audio)
+        self._portraits = portraits or {}
+        self._character_shot_map = character_shot_map or {}
+        self._uploaded_portraits: dict = {}  # name -> remote filename
+
+    def _ensure_pod(self):
+        if self._setup_done:
+            return
+        self._session.ensure_pod()
+        if self._session.ssh_host:
+            self._session.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+            time.sleep(2)
+            print("  Waiting for SSH...")
+            time.sleep(10)
+            self._session.download_models(self.VACE_MODELS)
+            self._upload_portraits()
+            self._session.restart_comfyui()
+            if self._concurrent_audio:
+                self._setup_audio()
+        else:
+            print("  Warning: No SSH access.")
+            self._session.wait_for_comfyui()
+        self._setup_done = True
+
+    def _upload_portraits(self):
+        """Upload character portrait images to the pod's ComfyUI input directory."""
+        if not self._portraits:
+            return
+        from runpod_pod import COMFYUI_DIR
+        import base64
+        remote_input_dir = f"{COMFYUI_DIR}/input"
+        for name, local_path in self._portraits.items():
+            remote_path = f"{remote_input_dir}/{name}.png"
+            with open(local_path, "rb") as f:
+                data = base64.b64encode(f.read()).decode()
+            result = self._session.ssh_cmd(
+                f"echo '{data}' | base64 -d > {remote_path} && echo OK",
+                timeout=30,
+            )
+            if "OK" in (result.stdout or ""):
+                self._uploaded_portraits[name] = f"{name}.png"
+                print(f"  Uploaded portrait: {name}")
+            else:
+                print(f"  Warning: Failed to upload portrait for {name}")
+
+    def _build_vace_workflow(self, prompt: str, seed: int, length: int, reference_image: str) -> dict:
+        """Build ComfyUI API-format workflow for VACE reference-to-video."""
+        return {
+            "1": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "wan2.1_vace_1.3B_fp16.safetensors",
+                    "weight_dtype": "default",
+                },
+            },
+            "2": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                    "type": "wan",
+                    "device": "default",
+                },
+            },
+            "3": {
+                "class_type": "VAELoader",
+                "inputs": {
+                    "vae_name": "wan_2.1_vae.safetensors",
+                },
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": prompt,
+                    "clip": ["2", 0],
+                },
+            },
+            "5": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": "\u4f4e\u8d28\u91cf, \u6a21\u7cca, \u53d8\u5f62, \u5931\u771f, \u6c34\u5370, \u6587\u5b57, \u5b57\u5e55, \u4f4e\u5206\u8fa8\u7387, \u8fc7\u66dd, \u6b20\u66dd",
+                    "clip": ["2", 0],
+                },
+            },
+            "6": {
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "shift": 8.0,
+                    "model": ["1", 0],
+                },
+            },
+            "7": {
+                "class_type": "LoadImage",
+                "inputs": {
+                    "image": reference_image,
+                },
+            },
+            "8": {
+                "class_type": "WanVaceToVideo",
+                "inputs": {
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "vae": ["3", 0],
+                    "width": 848,
+                    "height": 480,
+                    "length": length,
+                    "batch_size": 1,
+                    "strength": 1.0,
+                    "reference_image": ["7", 0],
+                },
+            },
+            "9": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": 20,
+                    "cfg": 6.0,
+                    "sampler_name": "uni_pc",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["6", 0],
+                    "positive": ["8", 0],
+                    "negative": ["8", 1],
+                    "latent_image": ["8", 2],
+                },
+            },
+            "10": {
+                "class_type": "TrimVideoLatent",
+                "inputs": {
+                    "samples": ["9", 0],
+                    "trim_amount": ["8", 3],
+                },
+            },
+            "11": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["10", 0],
+                    "vae": ["3", 0],
+                },
+            },
+            "12": {
+                "class_type": "SaveWEBM",
+                "inputs": {
+                    "filename_prefix": "lossy",
+                    "fps": 16,
+                    "lossless": False,
+                    "quality": 80,
+                    "method": "default",
+                    "crf": 20,
+                    "codec": "vp9",
+                    "images": ["11", 0],
+                },
+            },
+        }
+
+    def _generate_one_clip(
+        self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
+        reference_image: str | None = None,
+    ) -> ClipResult | None:
+        """Generate a single clip, optionally with VACE reference image."""
+        clip_path = os.path.join(clips_dir, clip_name)
+
+        try:
+            if reference_image:
+                workflow = self._build_vace_workflow(prompt, seed, length=frames, reference_image=reference_image)
+            else:
+                workflow = self._build_workflow(prompt, seed, length=frames)
+
+            history = self._session.submit_workflow(workflow, timeout=300)
+            if not history:
+                return None
+
+            outputs = history.get("outputs", {})
+            output_file = None
+            for node_id, node_output in outputs.items():
+                if "images" in node_output:
+                    for item in node_output["images"]:
+                        output_file = item
+                        break
+                    if output_file:
+                        break
+
+            if not output_file:
+                print(f"  No output file found for {clip_name}")
+                return None
+
+            data = self._session.download_output(output_file)
+            if not data:
+                return None
+
+            raw_ext = os.path.splitext(output_file["filename"])[1] or ".webm"
+            raw_path = clip_path.replace(".mp4", raw_ext)
+            with open(raw_path, "wb") as f:
+                f.write(data)
+
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", raw_path,
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 clip_path],
+                capture_output=True,
+            )
+            if result.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                os.remove(raw_path)
+            else:
+                if os.path.exists(clip_path):
+                    os.remove(clip_path)
+                os.rename(raw_path, clip_path)
+
+            elapsed_h = (time.time() - self._session.pod_start_time) / 3600 if self._session.pod_start_time else 0
+            clips_so_far = len([f for f in os.listdir(clips_dir) if f.endswith(".mp4")])
+            per_clip_cost = (elapsed_h * self._session.gpu_hourly_rate) / max(clips_so_far, 1)
+
+            self._session.free_vram()
+
+            return ClipResult(path=clip_path, actual_duration_s=frames / self.FPS, cost=per_clip_cost)
+        except Exception as e:
+            print(f"  Error generating {clip_name}: {e}")
+            return None
+
+    def generate(
+        self,
+        prompt: str,
+        clips_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+        entry: dict | None = None,
+    ) -> list[ClipResult]:
+        self._ensure_pod()
+        effective_seed = seed if seed is not None else shot_index
+
+        # Fire audio for the PREVIOUS shot (same pipelining as parent)
+        if self._audio_capable and self._pending_audio is not None:
+            pa = self._pending_audio
+            self._pending_audio = None
+            self._start_audio_thread(pa[0], pa[1], pa[2], pa[3], pa[4])
+
+        # Look up reference image for this shot
+        char_names = self._character_shot_map.get(shot_index, [])
+        reference_image = None
+        if char_names:
+            primary_char = char_names[0]
+            reference_image = self._uploaded_portraits.get(primary_char)
+
+        frame_counts = self._target_durations(target_duration_s)
+        results = []
+
+        for part_idx, frames in enumerate(frame_counts):
+            if len(frame_counts) == 1:
+                clip_name = f"{shot_index:04d}.mp4"
+            else:
+                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp4"
+
+            clip_result = self._generate_one_clip(
+                prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
+                reference_image=reference_image,
+            )
+            if clip_result is None:
+                return []
+            results.append(clip_result)
+
+        # Queue audio (same pipelining as parent)
+        if self._audio_capable and entry is not None:
+            sound = entry.get("description", {}).get("sound")
+            if sound:
+                from strategies_audio import filter_speech_from_sound
+                sound = filter_speech_from_sound(sound)
+            if sound:
+                if self._audio_dir is None:
+                    self._audio_dir = os.path.join(
+                        os.path.dirname(clips_dir), "..", "audio", "runpod-mmaudio-pipelined"
+                    )
+                    os.makedirs(self._audio_dir, exist_ok=True)
+                self._pending_audio = (shot_index, sound, target_duration_s, effective_seed, self._audio_dir)
+
+        return results

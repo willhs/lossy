@@ -8,9 +8,9 @@ import subprocess
 import sys
 import time
 
-STAGES = ["encode1", "encode2", "decode", "audio", "speech", "stitch"]
+STAGES = ["encode1", "encode2", "encode3", "decode", "audio", "speech", "stitch"]
 
-STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan"]
+STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-vace"]
 
 AUDIO_STRATEGIES = ["elevenlabs", "mmaudio", "runpod-mmaudio"]
 
@@ -34,12 +34,16 @@ def build_commands(args):
     if args.limit:
         commands["encode2"] += ["--limit", str(args.limit)]
 
+    commands["encode3"] = [
+        sys.executable, "encode.py", "stage3", args.output,
+    ]
+
     commands["decode"] = [
         sys.executable, "decode.py", args.output,
         "--strategy", args.strategy,
     ]
     # When both video and audio are on RunPod, run audio concurrently on the same pod
-    if args.strategy == "runpod-wan" and args.audio_strategy == "runpod-mmaudio":
+    if args.strategy in ("runpod-wan", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
         commands["decode"].append("--concurrent-audio")
         commands["decode"].append("--keep-pod")
     if args.start_index is not None:
@@ -84,10 +88,13 @@ def run_pipeline(args):
     if not args.audio_strategy:
         skip.add("audio")
     # Skip separate audio stage when decode handles it concurrently
-    if args.strategy == "runpod-wan" and args.audio_strategy == "runpod-mmaudio":
+    if args.strategy in ("runpod-wan", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
         skip.add("audio")
     if not args.speech_voice:
         skip.add("speech")
+    # encode3 (character registry) is only needed for VACE
+    if args.strategy != "runpod-vace":
+        skip.add("encode3")
     commands = build_commands(args)
     timings = []
 
