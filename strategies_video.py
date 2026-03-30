@@ -358,7 +358,7 @@ class RunPodWanStrategy(GenerationStrategy):
         """Generate audio for one shot via SSH to mmaudio_standalone.py. Runs in background thread."""
         from strategies_audio import _split_duration
 
-        durations = _split_duration(duration, 1.0, 30.0)
+        durations = _split_duration(duration, 5.0, 10.0)
         results = []
 
         for part_idx, dur in enumerate(durations):
@@ -644,6 +644,9 @@ class RunPodWanStrategy(GenerationStrategy):
         # Queue THIS shot's audio for the NEXT iteration
         if self._audio_capable and entry is not None:
             sound = entry.get("description", {}).get("sound")
+            if sound:
+                from strategies_audio import filter_speech_from_sound
+                sound = filter_speech_from_sound(sound)
             if sound:
                 if self._audio_dir is None:
                     self._audio_dir = os.path.join(

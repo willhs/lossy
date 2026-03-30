@@ -86,14 +86,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                 )
             audio_entries.append(adjusted_path)
         else:
-            # Multiple clips (split shot) -- concatenate parts, then adjust
-            parts_file = os.path.join(adjusted_dir, f"{idx:04d}_parts.txt")
-            with open(parts_file, "w") as f:
-                for clip_info in clips:
-                    clip_path = os.path.join(audio_dir, clip_info["path"])
-                    f.write(f"file '{os.path.abspath(clip_path)}'\n")
-
-            concat_path = os.path.join(adjusted_dir, f"{idx:04d}_concat.wav")
+            # Multiple clips (split shot) -- crossfade parts, then adjust
             adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
             newest_source = max(
                 os.path.getmtime(os.path.join(audio_dir, c["path"])) for c in clips
@@ -101,21 +94,38 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             needs_regen = not os.path.exists(adjusted_path) or (
                 newest_source > os.path.getmtime(adjusted_path))
             if needs_regen:
+                clip_paths = [
+                    os.path.join(audio_dir, c["path"]) for c in clips
+                ]
+                crossfade_s = 0.5
+                # Build acrossfade filter chain:
+                # For N clips, chain N-1 acrossfade filters.
+                inputs = []
+                for i, cp in enumerate(clip_paths):
+                    inputs += ["-i", cp]
+                if len(clip_paths) == 2:
+                    af = (f"[0:a][1:a]acrossfade=d={crossfade_s}:c1=tri:c2=tri,"
+                          f"apad=whole_dur={target_duration},atrim=0:{target_duration}")
+                else:
+                    # Chain: first pair -> [tmp1], then [tmp1][2:a] -> [tmp2], etc.
+                    parts = []
+                    for i in range(len(clip_paths) - 1):
+                        left = f"[{i}:a]" if i == 0 else f"[tmp{i}]"
+                        right = f"[{i + 1}:a]"
+                        out = f"[tmp{i + 1}]" if i < len(clip_paths) - 2 else ""
+                        parts.append(
+                            f"{left}{right}acrossfade=d={crossfade_s}:c1=tri:c2=tri{out}"
+                        )
+                    af = (";".join(parts)
+                          + f",apad=whole_dur={target_duration},atrim=0:{target_duration}")
                 subprocess.run(
-                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                     "-i", parts_file, "-ar", "44100", "-ac", "2",
-                     concat_path],
-                    capture_output=True,
-                )
-                subprocess.run(
-                    ["ffmpeg", "-y", "-i", concat_path,
-                     "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
+                    ["ffmpeg", "-y"] + inputs +
+                    ["-filter_complex", af,
+                     "-ar", "44100", "-ac", "2",
                      "-t", str(target_duration),
                      adjusted_path],
                     capture_output=True,
                 )
-                if os.path.exists(concat_path):
-                    os.remove(concat_path)
 
             audio_entries.append(adjusted_path)
 

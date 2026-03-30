@@ -6,11 +6,136 @@ for dialogue lines.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
 
 from clip_types import AudioClipResult, SpeechClipResult
+
+
+# ---------------------------------------------------------------------------
+# Speech-cue filter for MMAudio prompts
+# ---------------------------------------------------------------------------
+
+_SPEECH_RE = re.compile(
+    r"\bvoice(?:s)?\b"
+    r"|\bspeaking\b|\bspeaks\b|\bspoken\b|\bspeech\b"
+    r"|\bdialogue\b"
+    r"|\btalking\b|\btalks\b"
+    r"|\bconversation\b"
+    r"|\bsays\b|\bsaying\b"
+    r"|\bshout(?:s|ing)?\b"
+    r"|\bwhisper(?:s|ing)?\b"
+    r"|\bscream(?:s|ing)?\b"
+    r"|\byell(?:s|ing)?\b"
+    r"|\bmurmur(?:s|ing)?\b"
+    r"|\bnarrat(?:es?|ing|ion)\b"
+    r"|\bvocal\b",
+    re.IGNORECASE,
+)
+
+# Split into clauses at major descriptive boundaries (not bare commas)
+_CLAUSE_SPLIT_RE = re.compile(
+    r"(?<=\.)\s+"
+    r"|(?<=;)\s+"
+    r"|,\s+(?=accompanied\s+by\b)"
+    r"|,\s+(?=followed\s+by\b)"
+    r"|,\s+(?=along\s+with\b)"
+    r"|,\s+(?=set\s+against\b)"
+    r"|,\s+(?=creating\s)"
+    r"|,\s+(?=interspersed\b)",
+    re.IGNORECASE,
+)
+
+# Inline removal patterns for speech items within a clause (order matters)
+_SPEECH_INLINE_RE = re.compile(
+    # " and [possessive] [adj,adj] voice/dialogue [verb]" — and-joined speech clause
+    r"\s+and\s+(?:[\w'-]+\s+)?[\w,\s-]*?\b(?:voice(?:s)?|dialogue|conversation)\b"
+    r"(?:\s+[\w'-]+(?:ing|out)\b)?[^,.]*"
+    # ", [and] [the] [0-3 adj] speech_verb [of/from/in X] [rest]" — list item with speech verb
+    # (?!voice\b) prevents "voice" from being consumed as a prefix word (it's not an adjective)
+    r"|,\s+(?:and\s+)?(?:the\s+)?(?:(?!voice\b)[\w'-]+\s+){0,3}"
+    r"\b(?:shouting|whispering|screaming|yelling|murmuring|speaking|talking|saying|narrating|vocal)\b"
+    r"(?:\s+(?:of|from|at|in)\s+[\w\s]+?)?[^,.]*(?=[,.]|$)"
+    # ", [and] [determiner/possessive] [adj] voice/dialogue [verb]" — list item with voice
+    # (requires determiner or possessive to avoid consuming unrelated items)
+    r"|,\s+(?:and\s+)?(?:(?:the|a|an|his|her|its|their)\s+|[\w'-]+(?:'s)\s+)"
+    r"[\w,\s-]*?\b(?:voice(?:s)?|dialogue|conversation)\b"
+    r"(?:\s+[\w'-]+(?:ing|out)\b)?[^,.]*(?=[,.]|$)"
+    # Start-of-clause "[possessive] voice [verb], " or " and " — speech before other content
+    r"|^(?:[\w'-]+\s+)?[\w,\s-]*?\b(?:voice(?:s)?|dialogue|conversation)\b"
+    r"(?:\s+[\w'-]+(?:ing|out)\b)?[^,.]*(?:,\s+|\s+and\s+)"
+    # Start-of-clause "speech_verb [of/in X], " — speech verb before other content
+    r"|^(?:the\s+)?(?:(?!voice\b)[\w'-]+\s+){0,3}"
+    r"\b(?:shouting|whispering|screaming|yelling|murmuring|speaking|talking|saying|narrating|vocal)\b"
+    r"(?:\s+(?:of|from|at|in)\s+[\w\s]+?)?[^,.]*(?:,\s+|\s+and\s+)",
+    re.IGNORECASE,
+)
+
+
+def filter_speech_from_sound(sound_description: str) -> str | None:
+    """Remove speech/dialogue/voice references from a sound description.
+
+    MMAudio is an SFX/ambiance model that produces poor output with speech cues.
+    Splits on clause boundaries, removes speech items inline where possible,
+    and drops entire clauses when speech is the main subject.
+
+    Returns the filtered description, or None if nothing meaningful remains.
+    """
+    clauses = _CLAUSE_SPLIT_RE.split(sound_description)
+    kept = []
+    modified = False
+
+    for clause in clauses:
+        if not _SPEECH_RE.search(clause):
+            kept.append(clause)
+            continue
+
+        modified = True
+        # Try removing speech items inline within this clause
+        cleaned = _SPEECH_INLINE_RE.sub("", clause)
+        if cleaned != clause:
+            cleaned = _cleanup_text(cleaned)
+            if cleaned and len(cleaned) >= 5 and not _SPEECH_RE.search(cleaned):
+                kept.append(cleaned)
+        # Otherwise the whole clause is speech-dominated — drop it
+
+    if not kept:
+        return None
+
+    # Rejoin: use period-space if previous clause ends with period, else comma
+    result = kept[0]
+    for clause in kept[1:]:
+        if result.endswith("."):
+            result += " " + clause
+        else:
+            result += ", " + clause
+
+    result = _cleanup_text(result)
+
+    if not result or len(result) < 5:
+        return None
+
+    # Capitalize first letter when we've changed the start of the text
+    if modified and result[0].islower():
+        result = result[0].upper() + result[1:]
+
+    return result
+
+
+def _cleanup_text(text: str) -> str:
+    """Clean up artifacts from removed speech segments."""
+    text = text.strip()
+    text = re.sub(r"^[,;\s]+", "", text)
+    text = re.sub(r"[,;\s]+$", "", text)
+    text = re.sub(r",\s*,", ",", text)
+    text = re.sub(r";\s*,", ";", text)
+    text = re.sub(r"\.\s*\.", ".", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    # Remove orphaned "The sound of" with no subject after it
+    text = re.sub(r"^[Tt]he\s+sound\s+of\s*$", "", text)
+    return text.strip()
 
 
 def _split_duration(target: float, min_val: float, max_val: float) -> list[float]:
@@ -125,12 +250,12 @@ class ElevenLabsStrategy(AudioStrategy):
 
 
 class MMAudioStrategy(AudioStrategy):
-    """MMAudio V2 text-to-audio via fal.ai -- $0.001/sec, max 30s."""
+    """MMAudio V2 text-to-audio via fal.ai -- $0.001/sec, max 10s."""
 
     name = "mmaudio"
     MODEL_ID = "fal-ai/mmaudio-v2/text-to-audio"
-    MAX_DURATION = 30
-    MIN_DURATION = 1
+    MAX_DURATION = 10
+    MIN_DURATION = 5
     COST_PER_SECOND = 0.001
 
     def _target_durations(self, target_s: float) -> list[float]:
@@ -144,6 +269,14 @@ class MMAudioStrategy(AudioStrategy):
         target_duration_s: float,
         seed: int | None = None,
     ) -> list[AudioClipResult]:
+        filtered = filter_speech_from_sound(sound_description)
+        if filtered is None:
+            print(f"  Shot {shot_index}: sound is entirely speech, skipping MMAudio")
+            return []
+        if filtered != sound_description:
+            print(f"  Shot {shot_index}: filtered speech cues from sound description")
+        sound_description = filtered
+
         import fal_client
         import httpx
 
@@ -198,8 +331,8 @@ class RunPodMMAudioStrategy(AudioStrategy):
     """MMAudio V2 text-to-audio via self-hosted ComfyUI on RunPod -- ~$0/marginal."""
 
     name = "runpod-mmaudio"
-    MAX_DURATION = 30
-    MIN_DURATION = 1
+    MAX_DURATION = 10
+    MIN_DURATION = 5
     GENERATION_TIMEOUT = 120  # 2 min per clip (MMAudio is fast)
 
     MMAUDIO_MODELS = [
@@ -260,10 +393,16 @@ class RunPodMMAudioStrategy(AudioStrategy):
             time.sleep(2)
 
             print("  Installing ComfyUI-MMAudio custom nodes...")
+            # Use the same Python that ComfyUI runs with for pip install
+            pip_cmd = (
+                f"if [ -x {COMFYUI_DIR}/.venv/bin/pip ]; then "
+                f"  {COMFYUI_DIR}/.venv/bin/pip install -r ComfyUI-MMAudio/requirements.txt; "
+                f"else pip install -r ComfyUI-MMAudio/requirements.txt; fi"
+            )
             result = self._session.ssh_cmd(
                 f"cd {custom_nodes_dir} && "
                 f"git clone https://github.com/kijai/ComfyUI-MMAudio && "
-                f"pip install -r ComfyUI-MMAudio/requirements.txt && echo OK",
+                f"{pip_cmd} && echo OK",
                 timeout=300,
             )
             if result.returncode != 0 or "OK" not in result.stdout:
@@ -277,6 +416,33 @@ class RunPodMMAudioStrategy(AudioStrategy):
 
         # Restart ComfyUI so it picks up the new custom nodes
         self._session.restart_comfyui()
+
+        # Verify MMAudio nodes actually loaded
+        self._verify_mmaudio_nodes()
+
+    def _verify_mmaudio_nodes(self):
+        """Check that MMAudio custom nodes loaded in ComfyUI."""
+        import httpx
+
+        try:
+            resp = httpx.get(
+                f"{self._session.base_url}/object_info/MMAudioModelLoader",
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                print("  MMAudio nodes: verified")
+                return
+        except Exception:
+            pass
+
+        # Nodes didn't load — dump ComfyUI log for diagnosis
+        print("  Error: MMAudio nodes not found in ComfyUI.")
+        if self._session.ssh_host:
+            result = self._session.ssh_cmd("tail -30 /tmp/comfyui.log", timeout=10)
+            if result.stdout:
+                print(f"  ComfyUI log:\n{result.stdout}")
+        self._session.terminate()
+        sys.exit(1)
 
     def _build_workflow(self, prompt: str, duration: float, seed: int) -> dict:
         """Build ComfyUI API-format workflow for MMAudio text-to-audio."""
@@ -330,6 +496,14 @@ class RunPodMMAudioStrategy(AudioStrategy):
         target_duration_s: float,
         seed: int | None = None,
     ) -> list[AudioClipResult]:
+        filtered = filter_speech_from_sound(sound_description)
+        if filtered is None:
+            print(f"  Shot {shot_index}: sound is entirely speech, skipping MMAudio")
+            return []
+        if filtered != sound_description:
+            print(f"  Shot {shot_index}: filtered speech cues from sound description")
+        sound_description = filtered
+
         self._ensure_pod()
 
         durations = self._target_durations(target_duration_s)

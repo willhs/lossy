@@ -11,10 +11,10 @@ import time
 
 # Default GPU preferences (cheapest first, with VRAM headroom preference)
 GPU_TYPES = [
-    ("NVIDIA RTX A6000", 0.33),          # 48 GB, $0.25-0.33/hr community
-    ("NVIDIA GeForce RTX 4090", 0.34),   # 24 GB, $0.34/hr community
+    ("NVIDIA GeForce RTX 4090", 0.34),   # 24 GB, fastest consumer GPU
+    ("NVIDIA L40S", 0.54),               # 48 GB, Ada Lovelace
+    ("NVIDIA RTX A6000", 0.33),          # 48 GB, Ampere (slower inference)
     ("NVIDIA RTX 4000 Ada Generation", 0.34),
-    ("NVIDIA L40S", 0.54),               # 48 GB
 ]
 
 DOCKER_IMAGE = "runpod/comfyui:latest"
@@ -181,6 +181,9 @@ class RunPodSession:
         start = time.time()
         while time.time() - start < POD_READY_TIMEOUT:
             status = runpod.get_pod(self.pod_id)
+            if status is None:
+                time.sleep(5)
+                continue
             runtime = status.get("runtime")
             if runtime is not None and runtime.get("ports"):
                 break
@@ -383,7 +386,7 @@ class RunPodSession:
                 if result.stderr:
                     print(f"      {result.stderr[:200]}")
 
-    def submit_workflow(self, workflow: dict, timeout: int = 300) -> dict | None:
+    def submit_workflow(self, workflow: dict, timeout: int = 600) -> dict | None:
         """Submit a ComfyUI workflow and wait for completion.
 
         Returns the history entry for the prompt, or None on failure.

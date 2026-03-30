@@ -51,6 +51,7 @@ from strategies_audio import (  # noqa: E402 -- re-export for backwards compat
     MMAudioStrategy,
     RunPodMMAudioStrategy,
     SpeechStrategy,
+    filter_speech_from_sound,
 )
 
 

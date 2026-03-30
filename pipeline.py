@@ -38,8 +38,9 @@ def build_commands(args):
         sys.executable, "decode.py", args.output,
         "--strategy", args.strategy,
     ]
-    # Keep pod alive when audio stage will reuse it
+    # When both video and audio are on RunPod, run audio concurrently on the same pod
     if args.strategy == "runpod-wan" and args.audio_strategy == "runpod-mmaudio":
+        commands["decode"].append("--concurrent-audio")
         commands["decode"].append("--keep-pod")
     if args.start_index is not None:
         commands["decode"] += ["--start-index", str(args.start_index)]
@@ -81,6 +82,9 @@ def run_pipeline(args):
     """Run each stage in sequence, stopping on first failure."""
     skip = set(args.skip) if args.skip else set()
     if not args.audio_strategy:
+        skip.add("audio")
+    # Skip separate audio stage when decode handles it concurrently
+    if args.strategy == "runpod-wan" and args.audio_strategy == "runpod-mmaudio":
         skip.add("audio")
     if not args.speech_voice:
         skip.add("speech")
