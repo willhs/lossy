@@ -266,19 +266,19 @@ class RunPodSession:
 
     # -- SSH helpers --
 
+    def _ssh_opts(self) -> list[str]:
+        """Common SSH options for all remote commands."""
+        return [
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+        ]
+
     def ssh_cmd(self, cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
         """Run a command on the pod via SSH."""
         return subprocess.run(
-            [
-                "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR",
-                "-o", "ServerAliveInterval=30",
-                "-p", str(self.ssh_port),
-                f"root@{self.ssh_host}",
-                cmd,
-            ],
+            ["ssh", *self._ssh_opts(), "-o", "ServerAliveInterval=30",
+             "-p", str(self.ssh_port), f"root@{self.ssh_host}", cmd],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -287,15 +287,8 @@ class RunPodSession:
     def ssh_bg(self, cmd: str):
         """Run a command on the pod via SSH in the background (detached)."""
         p = subprocess.Popen(
-            [
-                "ssh", "-f",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR",
-                "-p", str(self.ssh_port),
-                f"root@{self.ssh_host}",
-                cmd,
-            ],
+            ["ssh", "-f", *self._ssh_opts(),
+             "-p", str(self.ssh_port), f"root@{self.ssh_host}", cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -303,6 +296,18 @@ class RunPodSession:
             p.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             p.kill()
+
+    def scp_to(self, local_paths: list[str], remote_dir: str, timeout: int = 60) -> subprocess.CompletedProcess:
+        """Copy local files to a directory on the pod via scp."""
+        return subprocess.run(
+            ["scp", *self._ssh_opts(),
+             "-P", str(self.ssh_port),
+             *local_paths,
+             f"root@{self.ssh_host}:{remote_dir}/"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
 
     # -- ComfyUI helpers --
 

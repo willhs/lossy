@@ -720,21 +720,15 @@ class RunPodVaceStrategy(RunPodWanStrategy):
         if not self._portraits:
             return
         from runpod_pod import COMFYUI_DIR
-        import base64
-        remote_input_dir = f"{COMFYUI_DIR}/input"
-        for name, local_path in self._portraits.items():
-            remote_path = f"{remote_input_dir}/{name}.png"
-            with open(local_path, "rb") as f:
-                data = base64.b64encode(f.read()).decode()
-            result = self._session.ssh_cmd(
-                f"echo '{data}' | base64 -d > {remote_path} && echo OK",
-                timeout=30,
-            )
-            if "OK" in (result.stdout or ""):
+        remote_dir = f"{COMFYUI_DIR}/input"
+        local_paths = list(self._portraits.values())
+        result = self._session.scp_to(local_paths, remote_dir, timeout=30)
+        if result.returncode == 0:
+            for name in self._portraits:
                 self._uploaded_portraits[name] = f"{name}.png"
-                print(f"  Uploaded portrait: {name}")
-            else:
-                print(f"  Warning: Failed to upload portrait for {name}")
+            print(f"  Uploaded {len(self._portraits)} portraits")
+        else:
+            print(f"  Warning: Failed to upload portraits: {result.stderr.strip()}")
 
     def _build_vace_workflow(self, prompt: str, seed: int, length: int, reference_image: str) -> dict:
         """Build ComfyUI API-format workflow for VACE reference-to-video."""

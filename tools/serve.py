@@ -144,7 +144,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         # Quieter logging — skip noisy asset requests
-        path = args[0].split()[1] if args else ""
+        parts = str(args[0]).split() if args else []
+        path = parts[1] if len(parts) > 1 else ""
         if path.startswith("/output/") and "/keyframes/" in path:
             return
         super().log_message(format, *args)
