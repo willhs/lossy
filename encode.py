@@ -778,7 +778,10 @@ def run_stage3(args):
         sys.exit(1)
 
     with open(prompts_path) as f:
-        prompts = json.load(f)
+        raw = json.load(f)
+
+    # Support both v2 format ({"format": "v2", "shots": [...]}) and v1 (flat array)
+    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
 
     # Collect subjects with shot indices
     subjects_by_shot = []
@@ -895,7 +898,7 @@ def run_stage2(args):
     srt_path = extract_subtitles(video_path, output_dir)
     subtitles = parse_srt(srt_path) if srt_path else []
     dialogue_map = align_subtitles_to_shots(subtitles, scenes)
-    print(f"  {len(dialogue_map)} shots have dialogue")
+    print(f"  {len(dialogue_map)} shots have dialogue ({len(subtitles)} total lines)")
 
     # Step 2: Camera motion detection
     print("Detecting camera motion...")
@@ -909,10 +912,14 @@ def run_stage2(args):
     print("Generating prompts...")
     prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir, args.provider)
 
-    # Save prompt manifest
+    # Save prompt manifest — v2 format stores dialog as a global timeline list
+    # (one entry per subtitle line at its original SRT timestamp) so that speech
+    # generation places each line exactly once, avoiding repetition across shots
+    # that span subtitle boundaries.
     prompts_path = os.path.join(output_dir, "prompts.json")
+    prompts_data = {"format": "v2", "shots": prompts, "dialog": subtitles}
     with open(prompts_path, "w") as f:
-        json.dump(prompts, f, indent=2)
+        json.dump(prompts_data, f, indent=2)
 
     print(f"\nPrompts saved to {prompts_path}")
     print(f"  {len(prompts)} shots described")

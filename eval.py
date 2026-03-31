@@ -788,14 +788,16 @@ def main():
 
     if args.command == "audio":
         output_dir = Path(args.output_dir)
-        prompts = load_json(output_dir / "prompts.json")
+        raw = load_json(output_dir / "prompts.json")
+        prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
         run_audio_clip_eval(output_dir, args.strategy, prompts, args.sample, args.report_dir)
         return
 
     # Video eval
     output_dir = Path(args.output_dir)
     manifest = load_json(output_dir / "manifest.json")
-    prompts = load_json(output_dir / "prompts.json")
+    raw = load_json(output_dir / "prompts.json")
+    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
     reconstructed_path = output_dir / f"reconstructed_{args.strategy}.mp4"
 
     if not reconstructed_path.exists():

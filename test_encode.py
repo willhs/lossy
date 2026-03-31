@@ -476,3 +476,41 @@ class TestStage3:
         args = argparse.Namespace(output_dir=str(tmp_path))
         with pytest.raises(SystemExit):
             run_stage3(args)
+
+# ---------------------------------------------------------------------------
+# run_stage3 — v2 format compat
+# ---------------------------------------------------------------------------
+
+class TestStage3V2Compat:
+    """Stage 3 handles both v1 (flat array) and v2 (object) prompts.json."""
+
+    def test_stage3_reads_v2_format(self, tmp_path, monkeypatch):
+        """stage3 correctly reads subjects from v2-format prompts.json."""
+        prompts_v2 = {
+            "format": "v2",
+            "shots": [
+                {"index": 0, "description": {"subjects": "Luke, a young man with sandy blond hair"}},
+                {"index": 1, "description": {"subjects": "Luke wearing a white tunic"}},
+            ],
+            "dialog": [{"text": "May the Force be with you.", "start_s": 5.1, "end_s": 7.0}],
+        }
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts_v2))
+
+        mock_response = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "Young man, early 20s, sandy blond hair.", "shots": [0, 1]},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(mock_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        run_stage3(args)
+
+        data = json.loads((tmp_path / "characters.json").read_text())
+        assert data["characters"][0]["name"] == "luke"

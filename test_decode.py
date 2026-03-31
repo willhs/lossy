@@ -1264,3 +1264,135 @@ class TestCreateVaceStrategy:
         assert "luke" in strategy._portraits
         assert strategy._character_shot_map[0] == ["luke"]
         assert strategy._character_shot_map[2] == ["luke"]
+
+# ---------------------------------------------------------------------------
+# run_speech — v2 global dialog path
+# ---------------------------------------------------------------------------
+
+import argparse  # noqa: E402 (already imported above, harmless re-import)
+from decode import run_speech  # noqa: E402
+
+
+class TestRunSpeechV2:
+    """Tests for the v2 (global dialog) path in run_speech()."""
+
+    def _make_args(self, output_dir):
+        return argparse.Namespace(
+            output_dir=output_dir,
+            start_index=None,
+            limit=None,
+        )
+
+    def _make_prompts_v2(self, dialog):
+        return {
+            "format": "v2",
+            "shots": [{"index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0}],
+            "dialog": dialog,
+        }
+
+    def test_v2_generates_one_clip_per_line(self, tmp_path):
+        """Each dialog line produces exactly one TTS clip."""
+        dialog = [
+            {"text": "Hello world", "start_s": 1.0, "end_s": 2.5},
+            {"text": "Goodbye", "start_s": 3.0, "end_s": 4.0},
+        ]
+        (tmp_path / "prompts.json").write_text(
+            json.dumps(self._make_prompts_v2(dialog))
+        )
+
+        mock_strategy = MagicMock()
+        mock_strategy.generate.side_effect = [
+            MagicMock(path=str(tmp_path / "speech" / "0000-00.mp3"),
+                      duration_s=1.5, offset_s=1.0, cost=0.001),
+            MagicMock(path=str(tmp_path / "speech" / "0001-00.mp3"),
+                      duration_s=1.0, offset_s=3.0, cost=0.001),
+        ]
+
+        (tmp_path / "speech").mkdir()
+        run_speech(self._make_args(str(tmp_path)), mock_strategy)
+
+        assert mock_strategy.generate.call_count == 2
+        # Verify calls used dialog index as shot_index and 0 as line_index
+        call_args = mock_strategy.generate.call_args_list
+        assert call_args[0][0][2] == 0  # shot_index=0 (dialog index 0)
+        assert call_args[0][0][3] == 0  # line_index=0
+        assert call_args[1][0][2] == 1  # shot_index=1 (dialog index 1)
+
+    def test_v2_writes_v2_progress_format(self, tmp_path):
+        """speech_progress.json is written with format=v2."""
+        dialog = [{"text": "Hi", "start_s": 0.5, "end_s": 1.5}]
+        (tmp_path / "prompts.json").write_text(
+            json.dumps(self._make_prompts_v2(dialog))
+        )
+        (tmp_path / "speech").mkdir()
+
+        mock_strategy = MagicMock()
+        mock_strategy.generate.return_value = MagicMock(
+            path=str(tmp_path / "speech" / "0000-00.mp3"),
+            duration_s=1.0, offset_s=0.5, cost=0.001,
+        )
+
+        run_speech(self._make_args(str(tmp_path)), mock_strategy)
+
+        progress = json.loads((tmp_path / "speech_progress.json").read_text())
+        assert progress["format"] == "v2"
+        assert 0 in progress["completed"]
+        assert "start_s" in progress["clips"]["0"]
+        assert "end_s" in progress["clips"]["0"]
+        assert progress["clips"]["0"]["start_s"] == 0.5
+
+    def test_v2_skips_already_completed(self, tmp_path):
+        """Already-completed dialog lines are not regenerated."""
+        dialog = [
+            {"text": "Line 1", "start_s": 1.0, "end_s": 2.0},
+            {"text": "Line 2", "start_s": 3.0, "end_s": 4.0},
+        ]
+        (tmp_path / "prompts.json").write_text(
+            json.dumps(self._make_prompts_v2(dialog))
+        )
+        # Pre-existing progress marks line 0 as done
+        (tmp_path / "speech_progress.json").write_text(json.dumps({
+            "format": "v2",
+            "completed": [0],
+            "failed": [],
+            "total_cost_estimate": 0.001,
+            "clips": {
+                "0": {"path": "0000-00.mp3", "start_s": 1.0, "end_s": 2.0, "duration_s": 1.0},
+            },
+        }))
+        (tmp_path / "speech").mkdir()
+
+        mock_strategy = MagicMock()
+        mock_strategy.generate.return_value = MagicMock(
+            path=str(tmp_path / "speech" / "0001-00.mp3"),
+            duration_s=1.0, offset_s=3.0, cost=0.001,
+        )
+
+        run_speech(self._make_args(str(tmp_path)), mock_strategy)
+
+        # Only line 1 should be generated (line 0 was already done)
+        assert mock_strategy.generate.call_count == 1
+
+    def test_v1_format_uses_legacy_path(self, tmp_path):
+        """v1 flat-array prompts.json uses per-shot dialog loop."""
+        prompts = [
+            {
+                "index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0,
+                "dialogue": [{"text": "Hello", "start_s": 1.0, "end_s": 2.0}],
+            }
+        ]
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        (tmp_path / "speech").mkdir()
+
+        mock_strategy = MagicMock()
+        mock_strategy.generate.return_value = MagicMock(
+            path=str(tmp_path / "speech" / "0000-00.mp3"),
+            duration_s=1.0, offset_s=1.0, cost=0.001,
+        )
+
+        run_speech(self._make_args(str(tmp_path)), mock_strategy)
+
+        progress = json.loads((tmp_path / "speech_progress.json").read_text())
+        # v1 progress has no "format" key
+        assert "format" not in progress
+        assert 0 in progress["completed"]
