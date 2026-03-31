@@ -438,16 +438,13 @@ def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
                    speech_dir: str, output_dir: str):
     """v2: generate one TTS clip per global dialog line at its SRT timestamp."""
     progress_path = os.path.join(output_dir, "speech_progress.json")
+    progress = {"format": "v2", "completed": [], "failed": [],
+                "total_cost_estimate": 0.0, "clips": {}}
     if os.path.exists(progress_path):
         with open(progress_path) as f:
-            progress = json.load(f)
-        # If existing progress is v1 format, start fresh for v2
-        if progress.get("format") != "v2":
-            progress = {"format": "v2", "completed": [], "failed": [],
-                        "total_cost_estimate": 0.0, "clips": {}}
-    else:
-        progress = {"format": "v2", "completed": [], "failed": [],
-                    "total_cost_estimate": 0.0, "clips": {}}
+            loaded = json.load(f)
+        if loaded.get("format") == "v2":
+            progress = loaded
 
     completed_set = set(progress["completed"])
     generated = 0
@@ -460,24 +457,18 @@ def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
         if i in completed_set:
             continue
 
-        # Clip is named by dialog index; strategy uses shot_index=i, line_index=0
         expected_path = os.path.join(speech_dir, f"{i:04d}-00.mp3")
         if os.path.exists(expected_path):
-            probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "csv=p=0", expected_path],
-                capture_output=True, text=True,
-            )
-            duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0.0
             progress["clips"][str(i)] = {
                 "path": os.path.basename(expected_path),
                 "start_s": line["start_s"],
                 "end_s": line["end_s"],
-                "duration_s": duration,
             }
             progress["completed"].append(i)
             completed_set.add(i)
             generated += 1
+            with open(progress_path, "w") as f:
+                json.dump(progress, f, indent=2)
             continue
 
         result = strategy.generate(line["text"], speech_dir, i, 0, line["start_s"])
@@ -486,7 +477,6 @@ def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
                 "path": os.path.basename(result.path),
                 "start_s": line["start_s"],
                 "end_s": line["end_s"],
-                "duration_s": result.duration_s,
             }
             progress["total_cost_estimate"] += result.cost
             progress["completed"].append(i)
@@ -496,16 +486,12 @@ def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
             errors += 1
             progress["failed"].append(i)
 
-        if generated % 5 == 0:
-            with open(progress_path, "w") as f:
-                json.dump(progress, f, indent=2)
+        with open(progress_path, "w") as f:
+            json.dump(progress, f, indent=2)
 
         if errors > 20:
             print("Too many errors, saving progress and stopping.")
             break
-
-    with open(progress_path, "w") as f:
-        json.dump(progress, f, indent=2)
 
     print(f"\nDone. Generated {generated} speech clips.")
     print(f"  Estimated cost: ${progress['total_cost_estimate']:.2f}")

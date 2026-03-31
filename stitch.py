@@ -174,7 +174,11 @@ def _stitch_speech(output_dir: str, prompts: list[dict],
     is_v2 = speech_progress.get("format") == "v2"
 
     if is_v2:
-        return _stitch_speech_global(output_dir, prompts, speech_dir, speech_progress)
+        prompts_path = os.path.join(output_dir, "prompts.json")
+        with open(prompts_path) as f:
+            raw = json.load(f)
+        global_dialog = raw.get("dialog", []) if isinstance(raw, dict) else []
+        return _stitch_speech_global(prompts, speech_dir, output_dir, speech_progress, global_dialog)
 
     # v1 legacy path
     speech_meta = speech_progress.get("clips", {})
@@ -270,36 +274,31 @@ def _stitch_speech(output_dir: str, prompts: list[dict],
     return speech_track_path
 
 
-def _stitch_speech_global(output_dir: str, prompts: list[dict],
-                          speech_dir: str, speech_progress: dict) -> str | None:
+def _stitch_speech_global(shots: list[dict], speech_dir: str, output_dir: str,
+                          speech_progress: dict, global_dialog: list[dict]) -> str | None:
     """v2: build speech track by placing clips at global SRT timestamps.
 
     All clips are mixed into a single continuous track using FFmpeg adelay.
     Clips outside the stitched window are excluded. Delays are relative to
     the start of the first stitched shot so the track aligns with the video.
     """
-    if not prompts:
+    if not shots:
         return None
 
     clips = speech_progress.get("clips", {})
 
-    # Load global dialog list to get per-entry timestamps
-    prompts_path = os.path.join(output_dir, "prompts.json")
-    with open(prompts_path) as f:
-        raw = json.load(f)
-    global_dialog = raw.get("dialog", []) if isinstance(raw, dict) else []
-
-    window_start = prompts[0]["start_s"]
-    total_duration = sum(p["duration_s"] for p in prompts)
+    window_start = shots[0]["start_s"]
+    total_duration = sum(p["duration_s"] for p in shots)
     window_end = window_start + total_duration
 
-    # Collect clips that fall within the stitched window
+    # Iterate only generated clips (not all dialog lines) for efficiency
     active_clips = []
-    for i, entry in enumerate(global_dialog):
-        if entry["start_s"] >= window_end or entry["end_s"] <= window_start:
+    for idx_str, clip_meta in sorted(clips.items(), key=lambda x: int(x[0])):
+        i = int(idx_str)
+        if i >= len(global_dialog):
             continue
-        clip_meta = clips.get(str(i))
-        if not clip_meta:
+        entry = global_dialog[i]
+        if entry["start_s"] >= window_end or entry["end_s"] <= window_start:
             continue
         clip_path = os.path.join(speech_dir, clip_meta["path"])
         if not os.path.exists(clip_path):
