@@ -143,7 +143,8 @@ def run_decode(args, strategy: GenerationStrategy):
         sys.exit(1)
 
     with open(prompts_path) as f:
-        prompts = json.load(f)
+        raw = json.load(f)
+    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
 
     # Apply start index and limit
     if args.start_index:
@@ -288,7 +289,8 @@ def run_audio(args, strategy: AudioStrategy):
         sys.exit(1)
 
     with open(prompts_path) as f:
-        prompts = json.load(f)
+        raw = json.load(f)
+    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
 
     # Apply start index and limit
     if args.start_index:

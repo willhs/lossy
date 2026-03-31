@@ -612,7 +612,8 @@ def stitch_clips(args):
             sys.exit(1)
 
     with open(prompts_path) as f:
-        prompts_full = json.load(f)
+        raw = json.load(f)
+    prompts_full = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
 
     # Load clip metadata from progress (try per-strategy, fall back to legacy)
     progress_path = os.path.join(output_dir, f"decode_progress_{strategy_name}.json")
