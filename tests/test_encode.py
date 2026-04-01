@@ -398,119 +398,214 @@ class TestAggregateShotAudio:
 # run_stage3
 # ---------------------------------------------------------------------------
 
-class TestStage3:
-    """Tests for encode stage 3 — character registry."""
+def _mock_stage3(tmp_path, monkeypatch, prompts_data, mock_response):
+    """Helper: write prompts.json, mock Gemini, run stage3, return parsed characters.json."""
+    (tmp_path / "prompts.json").write_text(json.dumps(prompts_data))
 
-    def test_stage3_produces_characters_json(self, tmp_path, monkeypatch):
-        """Stage 3 reads prompts.json subjects and writes characters.json."""
-        prompts = [
-            {"index": 0, "description": {"subjects": "Luke, a young man with sandy blond hair"}},
-            {"index": 1, "description": {"subjects": "Han Solo, a roguish man in a vest"}},
-            {"index": 2, "description": {"subjects": "Luke wearing a white tunic"}},
-            {"index": 3, "description": {"subjects": "Han Solo shooting a blaster"}},
-        ]
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = MagicMock(
+        text=json.dumps(mock_response)
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
 
-        mock_response = {
-            "characters": [
-                {
-                    "name": "luke",
-                    "display_name": "Luke Skywalker",
-                    "description": "Young man, early 20s, sandy blond hair...",
-                    "shots": [0, 2],
-                },
-                {
-                    "name": "han_solo",
-                    "display_name": "Han Solo",
-                    "description": "Roguish man, mid 30s, dark hair...",
-                    "shots": [1, 3],
-                },
-            ]
-        }
+    args = argparse.Namespace(output_dir=str(tmp_path))
+    run_stage3(args)
 
+    return json.loads((tmp_path / "characters.json").read_text())
+
+
+# Shared test fixtures
+PROMPTS_V1 = [
+    {"index": 0, "description": {"subjects": "Luke, a young man with sandy blond hair"}},
+    {"index": 1, "description": {"subjects": "Han Solo, a roguish man in a vest"}},
+    {"index": 2, "description": {"subjects": "Luke wearing a white tunic"}},
+    {"index": 3, "description": {"subjects": "Han Solo shooting a blaster"}},
+]
+
+MOCK_CHARACTERS = {
+    "characters": [
+        {
+            "name": "luke",
+            "display_name": "Luke Skywalker",
+            "description": "Young man, early 20s, sandy blond hair, blue eyes, wearing a white tunic and utility belt.",
+            "shots": [0, 2],
+        },
+        {
+            "name": "han_solo",
+            "display_name": "Han Solo",
+            "description": "Roguish man, mid 30s, dark hair, wearing a black vest over white shirt.",
+            "shots": [1, 3],
+        },
+    ]
+}
+
+
+class TestStage3OutputStructure:
+    """SPEC-200: Character registry output structure (REQ-001 to REQ-007)."""
+
+    @pytest.mark.req("SPEC-200/REQ-001")
+    def test_writes_characters_json(self, tmp_path, monkeypatch):
+        """REQ-001: Stage 3 shall write a characters.json file."""
+        _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        assert (tmp_path / "characters.json").exists()
+
+    @pytest.mark.req("SPEC-200/REQ-002")
+    def test_has_characters_array(self, tmp_path, monkeypatch):
+        """REQ-002: characters.json shall contain a "characters" array."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        assert isinstance(data["characters"], list)
+
+    @pytest.mark.req("SPEC-200/REQ-003")
+    def test_name_is_lowercase_underscored(self, tmp_path, monkeypatch):
+        """REQ-003: name shall be lowercase with underscores, no spaces."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        for char in data["characters"]:
+            assert char["name"] == char["name"].lower()
+            assert " " not in char["name"]
+
+    @pytest.mark.req("SPEC-200/REQ-004")
+    def test_has_display_name(self, tmp_path, monkeypatch):
+        """REQ-004: Each character shall have a display_name."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        for char in data["characters"]:
+            assert "display_name" in char
+            assert len(char["display_name"]) > 0
+
+    @pytest.mark.req("SPEC-200/REQ-005")
+    def test_has_description(self, tmp_path, monkeypatch):
+        """REQ-005: Each character shall have a description."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        for char in data["characters"]:
+            assert "description" in char
+            assert len(char["description"]) > 0
+
+    @pytest.mark.req("SPEC-200/REQ-006")
+    def test_shots_is_int_list(self, tmp_path, monkeypatch):
+        """REQ-006: shots shall be a list of integer shot indices."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        for char in data["characters"]:
+            assert isinstance(char["shots"], list)
+            assert all(isinstance(s, int) for s in char["shots"])
+
+    @pytest.mark.req("SPEC-200/REQ-007")
+    def test_shot_indices_match_prompts(self, tmp_path, monkeypatch):
+        """REQ-007: Shot indices shall correspond to indices in prompts.json."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        valid_indices = {e["index"] for e in PROMPTS_V1}
+        for char in data["characters"]:
+            for shot_idx in char["shots"]:
+                assert shot_idx in valid_indices
+
+
+class TestStage3CharacterSelection:
+    """SPEC-200: Character selection rules (REQ-010 to REQ-013)."""
+
+    @pytest.mark.req("SPEC-200/REQ-010")
+    def test_min_two_shots_in_prompt(self, tmp_path, monkeypatch):
+        """REQ-010: Only characters in at least 2 shots shall be included.
+
+        Verified via the system prompt sent to Gemini.
+        """
+        (tmp_path / "prompts.json").write_text(json.dumps(PROMPTS_V1))
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = MagicMock(
-            text=json.dumps(mock_response)
+            text=json.dumps(MOCK_CHARACTERS)
         )
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
 
-        args = argparse.Namespace(output_dir=str(tmp_path))
-        run_stage3(args)
+        run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
 
-        characters_path = tmp_path / "characters.json"
-        assert characters_path.exists()
-        data = json.loads(characters_path.read_text())
-        assert len(data["characters"]) == 2
-        assert data["characters"][0]["name"] == "luke"
-        assert 0 in data["characters"][0]["shots"]
+        call_args = mock_client.models.generate_content.call_args
+        config = call_args.kwargs["config"]
+        assert "at least 2 shots" in config.system_instruction
 
-    def test_stage3_missing_prompts_exits(self, tmp_path):
-        """stage3 exits with error if prompts.json is missing."""
-        args = argparse.Namespace(output_dir=str(tmp_path))
-        with pytest.raises(SystemExit):
-            run_stage3(args)
+    @pytest.mark.req("SPEC-200/REQ-011")
+    def test_max_five_characters_in_prompt(self, tmp_path, monkeypatch):
+        """REQ-011: At most 5 characters in the registry.
 
-    def test_stage3_no_subjects_exits(self, tmp_path, monkeypatch):
-        """stage3 exits if prompts.json has no subjects fields."""
-        prompts = [
-            {"index": 0, "description": {"action": "A door opens."}},
-        ]
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        Verified via the system prompt sent to Gemini.
+        """
+        (tmp_path / "prompts.json").write_text(json.dumps(PROMPTS_V1))
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(MOCK_CHARACTERS)
+        )
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
 
-        args = argparse.Namespace(output_dir=str(tmp_path))
-        with pytest.raises(SystemExit):
-            run_stage3(args)
+        run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
 
-    def test_stage3_missing_api_key_exits(self, tmp_path, monkeypatch):
-        """stage3 exits if GEMINI_API_KEY is not set."""
-        prompts = [
-            {"index": 0, "description": {"subjects": "Luke"}},
-        ]
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
-        # Set to empty string (falsy) so setdefault() won't overwrite it with
-        # the real key from the .env file.
-        monkeypatch.setenv("GEMINI_API_KEY", "")
+        call_args = mock_client.models.generate_content.call_args
+        config = call_args.kwargs["config"]
+        assert "5 most prominent" in config.system_instruction
 
-        args = argparse.Namespace(output_dir=str(tmp_path))
-        with pytest.raises(SystemExit):
-            run_stage3(args)
+    @pytest.mark.req("SPEC-200/REQ-013")
+    def test_all_subjects_sent_to_gemini(self, tmp_path, monkeypatch):
+        """REQ-013: All shot subjects shall be sent to Gemini for merging."""
+        (tmp_path / "prompts.json").write_text(json.dumps(PROMPTS_V1))
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(MOCK_CHARACTERS)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
 
-# ---------------------------------------------------------------------------
-# run_stage3 — v2 format compat
-# ---------------------------------------------------------------------------
+        run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
 
-class TestStage3V2Compat:
-    """Stage 3 handles both v1 (flat array) and v2 (object) prompts.json."""
+        call_args = mock_client.models.generate_content.call_args
+        contents = call_args.kwargs["contents"]
+        user_text = contents[0].parts[0].text
+        # All subject descriptions should appear in the prompt
+        assert "sandy blond hair" in user_text
+        assert "roguish man" in user_text
+        assert "Shot 0" in user_text
+        assert "Shot 3" in user_text
 
-    def test_stage3_reads_v2_format(self, tmp_path, monkeypatch):
-        """stage3 correctly reads subjects from v2-format prompts.json."""
+
+class TestStage3InputHandling:
+    """SPEC-200: Input handling (REQ-020 to REQ-024)."""
+
+    @pytest.mark.req("SPEC-200/REQ-020")
+    def test_reads_v1_format(self, tmp_path, monkeypatch):
+        """REQ-020: Stage 3 shall support v1 (flat array) prompts.json."""
+        data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
+        assert len(data["characters"]) == 2
+
+    @pytest.mark.req("SPEC-200/REQ-021")
+    def test_reads_v2_format(self, tmp_path, monkeypatch):
+        """REQ-021: Stage 3 shall support v2 format prompts.json."""
         prompts_v2 = {
             "format": "v2",
-            "shots": [
-                {"index": 0, "description": {"subjects": "Luke, a young man with sandy blond hair"}},
-                {"index": 1, "description": {"subjects": "Luke wearing a white tunic"}},
-            ],
-            "dialog": [{"text": "May the Force be with you.", "start_s": 5.1, "end_s": 7.0}],
+            "shots": PROMPTS_V1,
+            "dialog": [],
         }
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts_v2))
+        data = _mock_stage3(tmp_path, monkeypatch, prompts_v2, MOCK_CHARACTERS)
+        assert len(data["characters"]) == 2
 
-        mock_response = {
-            "characters": [
-                {"name": "luke", "display_name": "Luke Skywalker",
-                 "description": "Young man, early 20s, sandy blond hair.", "shots": [0, 1]},
-            ]
-        }
-        mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = MagicMock(
-            text=json.dumps(mock_response)
-        )
+    @pytest.mark.req("SPEC-200/REQ-022")
+    def test_missing_prompts_exits(self, tmp_path):
+        """REQ-022: Stage 3 shall exit if prompts.json does not exist."""
+        with pytest.raises(SystemExit):
+            run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
+
+    @pytest.mark.req("SPEC-200/REQ-023")
+    def test_no_subjects_exits(self, tmp_path, monkeypatch):
+        """REQ-023: Stage 3 shall exit if no subjects are found."""
+        prompts = [{"index": 0, "description": {"action": "A door opens."}}]
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
 
-        args = argparse.Namespace(output_dir=str(tmp_path))
-        run_stage3(args)
+        with pytest.raises(SystemExit):
+            run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
 
-        data = json.loads((tmp_path / "characters.json").read_text())
-        assert data["characters"][0]["name"] == "luke"
+    @pytest.mark.req("SPEC-200/REQ-024")
+    def test_missing_api_key_exits(self, tmp_path, monkeypatch):
+        """REQ-024: Stage 3 shall exit if GEMINI_API_KEY is not set."""
+        prompts = [{"index": 0, "description": {"subjects": "Luke"}}]
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        monkeypatch.setenv("GEMINI_API_KEY", "")
+
+        with pytest.raises(SystemExit):
+            run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
