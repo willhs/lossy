@@ -765,6 +765,94 @@ Rules:
 Output ONLY valid JSON."""
 
 
+REFINE_SYSTEM_PROMPT = """You are a film analysis expert. You are given a character registry and a list of unassigned shots (shots not yet linked to any character). For each unassigned shot, determine if any of the registered characters appear in it based on the subject description.
+
+Return a JSON object with an "assignments" array. Each entry has:
+- "shot": the shot index (integer)
+- "characters": list of character names (from the registry) that appear in this shot
+
+Rules:
+- Only assign characters from the provided registry — do not invent new ones.
+- Match based on appearance, role, and context clues (e.g., "a young man in desert robes" is likely the same as a registered character described as a young man with blond hair in desert clothing).
+- If no registered character matches, omit that shot from the output.
+- Be generous with matching — it's better to include a plausible match than to miss one.
+
+Output ONLY valid JSON."""
+
+
+def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot):
+    """Second pass: assign unassigned shots to existing characters."""
+    from google.genai import types
+
+    characters = characters_data.get("characters", [])
+    if not characters:
+        return characters_data
+
+    assigned_shots = set()
+    for char in characters:
+        assigned_shots.update(char.get("shots", []))
+
+    unassigned = []
+    for entry in prompts:
+        idx = entry["index"]
+        subjects = entry.get("description", {}).get("subjects", "")
+        if subjects and idx not in assigned_shots:
+            unassigned.append(f"Shot {idx}: {subjects}")
+
+    if not unassigned:
+        print("  All shots with subjects are assigned.")
+        return characters_data
+
+    registry_text = "\n".join(
+        f"- {c['name']} ({c['display_name']}): {c['description']}"
+        for c in characters
+    )
+    user_text = (
+        f"Character registry:\n{registry_text}\n\n"
+        f"Unassigned shots ({len(unassigned)}):\n" + "\n".join(unassigned)
+    )
+
+    print(f"  Refining: {len(unassigned)} unassigned shots...")
+    response = client.models.generate_content(
+        model="gemini-3.1-flash-lite-preview",
+        contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
+        config=types.GenerateContentConfig(
+            system_instruction=REFINE_SYSTEM_PROMPT,
+            temperature=0.3,
+            response_mime_type="application/json",
+        ),
+    )
+
+    try:
+        refinement = json.loads(response.text.strip())
+    except (json.JSONDecodeError, AttributeError):
+        print("  Warning: refinement response was not valid JSON, skipping.")
+        return characters_data
+
+    # Build name -> character index lookup
+    char_idx = {c["name"]: i for i, c in enumerate(characters)}
+    new_assignments = 0
+
+    for assignment in refinement.get("assignments", []):
+        shot_idx = assignment.get("shot")
+        for char_name in assignment.get("characters", []):
+            if char_name in char_idx:
+                ci = char_idx[char_name]
+                if shot_idx not in characters[ci]["shots"]:
+                    characters[ci]["shots"].append(shot_idx)
+                    new_assignments += 1
+
+    if new_assignments:
+        # Sort shot lists
+        for char in characters:
+            char["shots"].sort()
+        print(f"  Refinement added {new_assignments} shot assignments:")
+        for char in characters:
+            print(f"    {char['display_name']}: {len(char['shots'])} shots")
+
+    return characters_data
+
+
 def run_stage3(args):
     """Stage 3: Build character registry from prompts.json subjects."""
     from google import genai
@@ -835,6 +923,12 @@ def run_stage3(args):
     print(f"Found {len(characters)} characters:")
     for char in characters:
         print(f"  {char['display_name']} ({char['name']}): {len(char['shots'])} shots")
+
+    # Refine: assign unassigned shots to characters via second pass
+    characters_data = _refine_shot_assignments(
+        client, characters_data, prompts, subjects_by_shot
+    )
+    characters = characters_data.get("characters", [])
 
     characters_path = os.path.join(output_dir, "characters.json")
     with open(characters_path, "w") as f:

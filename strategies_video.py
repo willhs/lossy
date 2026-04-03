@@ -690,11 +690,35 @@ class RunPodVaceStrategy(RunPodWanStrategy):
         concurrent_audio: bool = False,
         portraits: dict | None = None,
         character_shot_map: dict | None = None,
+        characters_data: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
         self._portraits = portraits or {}
         self._character_shot_map = character_shot_map or {}
         self._uploaded_portraits: dict = {}  # name -> remote filename
+        self._characters_data = characters_data or {}
+        # Build name -> character lookup for prompt enrichment
+        self._characters_by_name = {
+            c["name"]: c for c in self._characters_data.get("characters", [])
+        }
+
+    def format_prompt(self, entry: dict) -> str:
+        """Enrich prompt with canonical character identity when available."""
+        base = super().format_prompt(entry)
+        shot_idx = entry.get("index")
+        if shot_idx is None:
+            return base
+        char_names = self._character_shot_map.get(shot_idx, [])
+        if not char_names:
+            return base
+        identity_parts = []
+        for name in char_names:
+            char = self._characters_by_name.get(name)
+            if char:
+                identity_parts.append(f"{char['display_name']}: {char['description']}")
+        if not identity_parts:
+            return base
+        return " ".join(identity_parts) + " " + base
 
     def _ensure_pod(self):
         if self._setup_done:

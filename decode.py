@@ -673,6 +673,7 @@ def _create_vace_strategy(args):
 
     portraits = {}
     character_shot_map = {}
+    characters_data = {}
 
     if os.path.exists(characters_path):
         with open(characters_path) as f:
@@ -688,6 +689,7 @@ def _create_vace_strategy(args):
         concurrent_audio=getattr(args, "concurrent_audio", False),
         portraits=portraits,
         character_shot_map=character_shot_map,
+        characters_data=characters_data,
     )
 
 

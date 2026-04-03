@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from encode import (
+    _refine_shot_assignments,
     aggregate_shot_audio,
     align_subtitles_to_shots,
     class_to_bucket,
@@ -609,3 +610,114 @@ class TestStage3InputHandling:
 
         with pytest.raises(SystemExit):
             run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
+
+
+# ---------------------------------------------------------------------------
+# Shot assignment refinement
+# ---------------------------------------------------------------------------
+
+
+class TestRefineShotAssignments:
+    """SPEC-200: Shot assignment refinement (REQ-030 to REQ-032)."""
+
+    def _make_mock_client(self, refinement_response):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(refinement_response)
+        )
+        return mock_client
+
+    @pytest.mark.req("SPEC-200/REQ-030", "SPEC-200/REQ-031")
+    def test_assigns_unmatched_shots(self):
+        """REQ-030/031: Unassigned shots matching a character shall be added."""
+        characters_data = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "Young man, blond hair, desert robes.",
+                 "shots": [0, 2]},
+            ]
+        }
+        prompts = [
+            {"index": 0, "description": {"subjects": "Luke Skywalker"}},
+            {"index": 1, "description": {"subjects": "A young man in desert robes"}},
+            {"index": 2, "description": {"subjects": "Luke in white tunic"}},
+            {"index": 3, "description": {"subjects": "A young man on a ridge"}},
+        ]
+        subjects_by_shot = [
+            "Shot 0: Luke Skywalker",
+            "Shot 1: A young man in desert robes",
+            "Shot 2: Luke in white tunic",
+            "Shot 3: A young man on a ridge",
+        ]
+
+        refinement = {
+            "assignments": [
+                {"shot": 1, "characters": ["luke"]},
+                {"shot": 3, "characters": ["luke"]},
+            ]
+        }
+        client = self._make_mock_client(refinement)
+
+        result = _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot)
+        luke = result["characters"][0]
+        assert 1 in luke["shots"]
+        assert 3 in luke["shots"]
+
+    @pytest.mark.req("SPEC-200/REQ-032")
+    def test_preserves_existing_assignments(self):
+        """REQ-032: Refinement shall not remove existing shot assignments."""
+        characters_data = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "Young man, blond hair.",
+                 "shots": [0, 2, 4]},
+            ]
+        }
+        prompts = [
+            {"index": 1, "description": {"subjects": "A young man"}},
+        ]
+        subjects_by_shot = ["Shot 1: A young man"]
+
+        refinement = {"assignments": [{"shot": 1, "characters": ["luke"]}]}
+        client = self._make_mock_client(refinement)
+
+        result = _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot)
+        luke = result["characters"][0]
+        assert 0 in luke["shots"]
+        assert 2 in luke["shots"]
+        assert 4 in luke["shots"]
+        assert 1 in luke["shots"]
+
+    @pytest.mark.req("SPEC-200/REQ-030")
+    def test_no_unassigned_shots_skips_refinement(self):
+        """REQ-030: If all shots are assigned, no refinement call is made."""
+        characters_data = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke",
+                 "description": "Young man.", "shots": [0, 1]},
+            ]
+        }
+        prompts = [
+            {"index": 0, "description": {"subjects": "Luke"}},
+            {"index": 1, "description": {"subjects": "Luke again"}},
+        ]
+
+        client = MagicMock()
+        _refine_shot_assignments(client, characters_data, prompts, [])
+        client.models.generate_content.assert_not_called()
+
+    def test_invalid_json_response_skips(self):
+        """Gracefully handles bad refinement response."""
+        characters_data = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke",
+                 "description": "Young man.", "shots": [0]},
+            ]
+        }
+        prompts = [{"index": 1, "description": {"subjects": "A man"}}]
+
+        client = MagicMock()
+        client.models.generate_content.return_value = MagicMock(text="not json")
+
+        result = _refine_shot_assignments(client, characters_data, prompts, ["Shot 1: A man"])
+        assert result["characters"][0]["shots"] == [0]  # unchanged
