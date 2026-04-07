@@ -43,6 +43,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     FalSeedanceStrategy,
     FalSeedanceProStrategy,
     RunPodWanStrategy,
+    RunPodWanEnrichedStrategy,
     RunPodVaceStrategy,
 )
 
@@ -617,7 +618,7 @@ def main():
                         help="Process only first N shots (after start-index)")
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
-    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-vace"],
+    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan-enriched", "runpod-vace"],
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
     parser.add_argument("--audio", action="store_true",
@@ -661,10 +662,34 @@ def main():
                 keep_pod=getattr(args, "keep_pod", False),
                 concurrent_audio=getattr(args, "concurrent_audio", False),
             ),
+            "runpod-wan-enriched": lambda: _create_wan_enriched_strategy(args),
             "runpod-vace": lambda: _create_vace_strategy(args),
         }
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
+
+
+def _create_wan_enriched_strategy(args):
+    output_dir = args.output_dir
+    characters_path = os.path.join(output_dir, "characters.json")
+
+    character_shot_map = {}
+    characters_data = {}
+
+    if os.path.exists(characters_path):
+        with open(characters_path) as f:
+            characters_data = json.load(f)
+        character_shot_map = build_character_shot_map(characters_data)
+    else:
+        print("Warning: characters.json not found. Running without prompt enrichment.")
+
+    return RunPodWanEnrichedStrategy(
+        output_dir=output_dir,
+        keep_pod=getattr(args, "keep_pod", False),
+        concurrent_audio=getattr(args, "concurrent_audio", False),
+        character_shot_map=character_shot_map,
+        characters_data=characters_data,
+    )
 
 
 def _create_vace_strategy(args):

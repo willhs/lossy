@@ -658,6 +658,52 @@ class RunPodWanStrategy(GenerationStrategy):
         return results
 
 
+class RunPodWanEnrichedStrategy(RunPodWanStrategy):
+    """RunPod Wan T2V with canonical character identity injected into prompts.
+
+    Same model and pod setup as RunPodWanStrategy. Only difference: format_prompt()
+    prepends canonical character descriptions so the model has stronger identity
+    signals. No reference image conditioning (that's RunPodVaceStrategy).
+
+    Used as a middle condition in continuity A/B/C tests to isolate whether prompt
+    enrichment alone reduces character drift vs. VACE reference conditioning.
+    """
+
+    name = "runpod-wan-enriched"
+
+    def __init__(
+        self,
+        output_dir: str = "",
+        keep_pod: bool = False,
+        concurrent_audio: bool = False,
+        character_shot_map: dict | None = None,
+        characters_data: dict | None = None,
+    ):
+        super().__init__(output_dir, keep_pod, concurrent_audio)
+        self._character_shot_map = character_shot_map or {}
+        self._characters_by_name = {
+            c["name"]: c for c in (characters_data or {}).get("characters", [])
+        }
+
+    def format_prompt(self, entry: dict) -> str:
+        """Prepend canonical character identity to prompt when available."""
+        base = super().format_prompt(entry)
+        shot_idx = entry.get("index")
+        if shot_idx is None:
+            return base
+        char_names = self._character_shot_map.get(shot_idx, [])
+        if not char_names:
+            return base
+        identity_parts = []
+        for name in char_names:
+            char = self._characters_by_name.get(name)
+            if char:
+                identity_parts.append(f"{char['display_name']}: {char['description']}")
+        if not identity_parts:
+            return base
+        return " ".join(identity_parts) + " " + base
+
+
 class RunPodVaceStrategy(RunPodWanStrategy):
     """RunPod self-hosted Wan 2.1 VACE-1.3B -- reference-conditioned video generation."""
 

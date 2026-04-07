@@ -10,7 +10,7 @@ import time
 
 STAGES = ["encode1", "encode2", "encode3", "decode", "audio", "speech", "stitch"]
 
-STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-vace"]
+STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan-enriched", "runpod-vace"]
 
 AUDIO_STRATEGIES = ["elevenlabs", "mmaudio", "runpod-mmaudio"]
 
