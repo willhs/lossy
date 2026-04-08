@@ -43,6 +43,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     FalSeedanceStrategy,
     FalSeedanceProStrategy,
     RunPodWanStrategy,
+    RunPodWan22Strategy,
     RunPodWanEnrichedStrategy,
     RunPodVaceStrategy,
 )
@@ -618,7 +619,7 @@ def main():
                         help="Process only first N shots (after start-index)")
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
-    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan-enriched", "runpod-vace"],
+    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan22", "runpod-wan-enriched", "runpod-vace"],
                         default="replicate-wan",
                         help="Video generation backend (default: replicate-wan)")
     parser.add_argument("--audio", action="store_true",
@@ -658,6 +659,11 @@ def main():
             "fal-seedance": lambda: FalSeedanceStrategy(),
             "fal-seedance-pro": lambda: FalSeedanceProStrategy(),
             "runpod-wan": lambda: RunPodWanStrategy(
+                output_dir=args.output_dir,
+                keep_pod=getattr(args, "keep_pod", False),
+                concurrent_audio=getattr(args, "concurrent_audio", False),
+            ),
+            "runpod-wan22": lambda: RunPodWan22Strategy(
                 output_dir=args.output_dir,
                 keep_pod=getattr(args, "keep_pod", False),
                 concurrent_audio=getattr(args, "concurrent_audio", False),

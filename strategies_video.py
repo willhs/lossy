@@ -704,6 +704,126 @@ class RunPodWanEnrichedStrategy(RunPodWanStrategy):
         return " ".join(identity_parts) + " " + base
 
 
+class RunPodWan22Strategy(RunPodWanStrategy):
+    """RunPod self-hosted Wan 2.2 TI2V-5B fp16 via ComfyUI -- 720P at 24fps, variable duration.
+
+    Unified T2V + I2V single dense model (~10 GB fp16, ~24 GB VRAM). Uses the
+    new wan2.2_vae.safetensors. Fits on RTX 4090 class pods (same tier as 2.1).
+    T2V mode only -- I2V support (start_image conditioning) can be added later.
+    """
+
+    name = "runpod-wan22"
+    FPS = 24
+    MIN_FRAMES = 49   # ~2.04s at 24fps (4*12+1)
+    MAX_FRAMES = 97   # ~4.04s at 24fps (4*24+1); conservative for 24GB VRAM headroom
+
+    WAN_MODELS = [
+        (
+            "vae/wan2.2_vae.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors",
+        ),
+        (
+            "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        ),
+        (
+            "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+            "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+        ),
+    ]
+
+    def _build_workflow(self, prompt: str, seed: int, length: int = 97) -> dict:
+        """Build ComfyUI API-format workflow JSON for Wan 2.2 TI2V-5B T2V."""
+        return {
+            "1": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "wan2.2_ti2v_5B_fp16.safetensors",
+                    "weight_dtype": "default",
+                },
+            },
+            "2": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                    "type": "wan",
+                    "device": "default",
+                },
+            },
+            "3": {
+                "class_type": "VAELoader",
+                "inputs": {
+                    "vae_name": "wan2.2_vae.safetensors",
+                },
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": prompt,
+                    "clip": ["2", 0],
+                },
+            },
+            "5": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": "\u4f4e\u8d28\u91cf, \u6a21\u7cca, \u53d8\u5f62, \u5931\u771f, \u6c34\u5370, \u6587\u5b57, \u5b57\u5e55, \u4f4e\u5206\u8fa8\u7387, \u8fc7\u66dd, \u6b20\u66dd",
+                    "clip": ["2", 0],
+                },
+            },
+            "6": {
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "shift": 8.0,
+                    "model": ["1", 0],
+                },
+            },
+            "7": {
+                "class_type": "Wan22ImageToVideoLatent",
+                "inputs": {
+                    "width": 1280,
+                    "height": 704,
+                    "length": length,
+                    "batch_size": 1,
+                },
+            },
+            "8": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": 20,
+                    "cfg": 5.0,
+                    "sampler_name": "uni_pc",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["6", 0],
+                    "positive": ["4", 0],
+                    "negative": ["5", 0],
+                    "latent_image": ["7", 0],
+                },
+            },
+            "9": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["8", 0],
+                    "vae": ["3", 0],
+                },
+            },
+            "10": {
+                "class_type": "SaveWEBM",
+                "inputs": {
+                    "filename_prefix": "lossy",
+                    "fps": 24,
+                    "lossless": False,
+                    "quality": 80,
+                    "method": "default",
+                    "crf": 20,
+                    "codec": "vp9",
+                    "images": ["9", 0],
+                },
+            },
+        }
+
+
 class RunPodVaceStrategy(RunPodWanStrategy):
     """RunPod self-hosted Wan 2.1 VACE-1.3B -- reference-conditioned video generation."""
 
