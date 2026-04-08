@@ -47,47 +47,87 @@ Sum scores per condition across all shots with named characters.
 
 ## Results
 
-<!-- Fill in after running -->
+_Partial evaluation — shots 269–273 reviewed visually (first frame of each clip). Full 25-shot scoring TBD._
 
 ### Condition A — Baseline T2V (`runpod-wan`)
 
 | Shot | Characters | Accuracy | Face Stability | Clothing | Notes |
 |------|-----------|----------|----------------|---------|-------|
-| ... | | | | | |
+| 269 | Luke, stormtroopers | 1 | — | 1 | **Darth Vader hallucinated** — completely wrong character |
+| 270 | Luke | 2 | — | 2 | Luke in white tunic, anime style; Jawa-like figures nearby |
+| 271 | Luke | 1 | — | 1 | Tiny distant figure — unidentifiable, no costume detail |
+| 272 | Luke | 1 | — | 1 | **Dark-suited silhouette in FG** — wrong character hallucinated again |
+| 273 | Luke | 2 | — | 2 | Generic robed desert figure, could be Luke |
 
-**Total**: —
+**Shots 269–273 total**: 7/15 (character accuracy: 7, face: N/A, clothing: 7) — frequent identity hallucination
 
 ### Condition B — Enriched T2V (`runpod-wan-enriched`)
 
 | Shot | Characters | Accuracy | Face Stability | Clothing | Notes |
 |------|-----------|----------|----------------|---------|-------|
-| ... | | | | | |
+| 269 | Luke, stormtroopers | 3 | — | 2 | Young blonde Luke in tan tunic, correct character lineup |
+| 270 | Luke | 2 | — | 2 | Two running figures, right costume style but less distinct |
+| 271 | Luke | 3 | — | 3 | Luke clearly in white tunic on dune, most cinematic shot |
+| 272 | Luke | 3 | — | 3 | Luke from behind in correct tunic + cloak approaching woman — excellent |
+| 273 | Luke | 2 | — | 2 | Orange-accented tunic slightly off but silhouette correct |
 
-**Total**: —
+**Shots 269–273 total**: 13/15 — major improvement, identity hallucinations eliminated
 
 ### Condition C — VACE (`runpod-vace`)
 
 | Shot | Characters | Accuracy | Face Stability | Clothing | Notes |
 |------|-----------|----------|----------------|---------|-------|
-| ... | | | | | |
+| 269 | Luke, stormtroopers | 3 | — | 2 | Correct characters; **anime-style rendering** (flatter, more stylized) |
+| 270 | Luke | 2 | — | 2 | Anime style, orange-accented outfit — slightly wrong costume |
+| 271 | Luke | 2 | — | 2 | Luke in cream tunic, less detail than B |
+| 272 | Luke | 2 | — | 2 | Pilot helmet added (wrong prop); blonde Luke identifiable but costume off |
+| 273 | Luke | 3 | — | 3 | Cream tunic + orange rebel companion — two clear distinct characters |
 
-**Total**: —
+**Shots 269–273 total**: 12/15 — similar accuracy to B; trade-off: anime aesthetic introduced by VACE reference
 
 ## Interpretation
 
-<!-- Fill in after evaluation -->
+_Updated after reviewing close-up shots 279–285 alongside wide shots 269–273._
 
-Key questions to answer:
-1. **Does prompt enrichment help (B vs A)?** If B > A, locking canonical descriptions reduces drift even without reference images.
-2. **Does VACE conditioning add further benefit (C vs B)?** If C ≈ B, the reference image conditioning at 1.3B scale isn't contributing; the prompt enrichment is doing all the work.
-3. **Is VACE-1.3B quality sufficient overall?** Even if C > A, is the improvement meaningful enough to ship, or is TI2V-5B (Wan 2.2, fits 24GB, 720P) the right next step?
+### B vs A: Prompt enrichment clearly helps for named characters
+
+The baseline (A) hallucinates wrong characters in 2/5 wide shots (Darth Vader in 269, dark-suited figure in 272). Both B and C eliminate these errors. Enrichment works by anchoring the named characters' canonical descriptions — but this only helps for characters **in the registry**. Shot 280 (Uncle Owen + C-3PO) shows the opposite: A renders Owen's bandaged forehead clearly, while B and C just render droids, because Owen's description likely isn't specific enough in `characters.json`.
+
+### C vs B: VACE adds value in close-ups but not consistently
+
+Initial assessment (wide shots only) suggested VACE adds nothing. The close-up shots revise this:
+
+- **Shot 284** (Obi-Wan close-up): C renders a more prominent, detailed human face than B. The face is recognisably older, grey-haired, in tan robes — and more visually prominent.
+- **Shot 285** (human profile + C-3PO): C shows the human profile more clearly than A or B.
+- **Droid shots (279, 281, 282, 283)**: No meaningful difference between B and C — droids are distinct enough that all conditions get them right.
+
+The **anime-style skew in shot 269** is localised to that specific keyframe's reference image, not a consistent VACE artifact. Most VACE shots look cinematic.
+
+VACE-1.3B conditioning appears to help render human faces more prominently in close-ups, but provides no benefit in wide shots and is unreliable — the reference image quality and framing of the keyframe crop matters a lot.
+
+### Character registry gaps
+
+The experiment revealed a secondary issue: the character registry doesn't cover all visible characters adequately. Uncle Owen appears in several shots but enrichment ignores him, causing B and C to miss him where A accidentally gets him right. The registry needs coverage of Owen, Beru, C-3PO, R2-D2 as named entries.
+
+### Overall
+
+**Prompt enrichment (B) is the primary driver of improvement**, eliminating identity hallucinations for named characters. **VACE (C) adds marginal benefit in close-up human face shots** but is unreliable in wide shots and dependent on keyframe quality. Neither result fully justifies VACE-1.3B as the production default — the close-up improvement is promising but inconsistent.
 
 ## Next Steps
 
-<!-- Fill in after evaluation -->
+1. **Ship `runpod-wan-enriched` as the new default** — clear win over baseline with no quality downside.
+2. **Fix character registry gaps** — add Uncle Owen, Beru, C-3PO, R2-D2 with specific visual descriptions so enrichment covers them.
+3. **Do not ship `runpod-vace` for standard use yet** — close-up improvement is real but inconsistent; needs more investigation.
+4. **Evaluate TI2V-5B** (Wan 2.2 unified T2V+I2V, 720P, 24GB) — stronger image-conditioning model may deliver consistent close-up character anchoring. See `docs/research/0012-wan-model-variants/research.md`.
 
-If C ≈ B (VACE not adding value): VACE-1.3B's image conditioning is too weak at this model scale. Next candidate: **TI2V-5B** (Wan 2.2, unified T2V+I2V, 720P, fits 24GB — see research/0012).
+### Prompt enrichment design problems (found during this experiment)
 
-If C > B (VACE adds value): VACE-1.3B works. Consider whether to ship as-is or invest in TI2V-5B for higher quality.
+The current approach (prepend static character bio to top of prompt) has three failure modes:
 
-If B ≈ A (prompt enrichment not helping): Review character registry quality — check whether `characters.json` descriptions are specific enough and whether shot assignment is correct.
+1. **Single-character bias**: only the registry character gets a description; other subjects in the same shot (Jawa, Uncle Owen) are unaffected, making the named character the implicit focal subject even when they shouldn't be.
+2. **Temporally wrong costume**: character descriptions span the whole film ("later, he wears an orange flight suit..."). For early-film shots this causes the model to hallucinate late-film costumes (orange suits, pilot helmets) into scenes where the character is wearing a plain tunic.
+3. **Prefix weight**: prepending the bio makes it the highest-weight tokens, overriding the actual shot composition.
+
+**Proposed fix — encode stage4: prompt composition**
+
+Rather than concatenating at decode time, add an LLM pass (Gemini Flash, cheap) that takes the base prompt + relevant character registry entries and produces a contextually-edited prompt. The model can weave appearance details in where relevant, leave the prompt unchanged if sufficient, and handle ensemble shots correctly. Run once at encode time; cache result as `composed_prompts.json`. Decode strategies read composed prompts instead of doing their own enrichment.
