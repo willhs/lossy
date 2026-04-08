@@ -10,7 +10,7 @@ import time
 
 STAGES = ["encode1", "encode2", "encode3", "decode", "audio", "speech", "stitch"]
 
-STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan-enriched", "runpod-vace"]
+STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan22", "runpod-wan-enriched", "runpod-vace"]
 
 AUDIO_STRATEGIES = ["elevenlabs", "mmaudio", "runpod-mmaudio"]
 
@@ -43,7 +43,7 @@ def build_commands(args):
         "--strategy", args.strategy,
     ]
     # When both video and audio are on RunPod, run audio concurrently on the same pod
-    if args.strategy in ("runpod-wan", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
+    if args.strategy in ("runpod-wan", "runpod-wan22", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
         commands["decode"].append("--concurrent-audio")
         commands["decode"].append("--keep-pod")
     if args.start_index is not None:
@@ -88,7 +88,7 @@ def run_pipeline(args):
     if not args.audio_strategy:
         skip.add("audio")
     # Skip separate audio stage when decode handles it concurrently
-    if args.strategy in ("runpod-wan", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
+    if args.strategy in ("runpod-wan", "runpod-wan22", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
         skip.add("audio")
     if not args.speech_voice:
         skip.add("speech")
@@ -262,8 +262,8 @@ def main():
     parser.add_argument("--output", "-o", default="output",
                         help="Output directory (default: output)")
     parser.add_argument("--strategy", choices=STRATEGIES,
-                        default="replicate-wan",
-                        help="Video generation backend (default: replicate-wan)")
+                        default="runpod-wan22",
+                        help="Video generation backend (default: runpod-wan22)")
     parser.add_argument("--audio-strategy", choices=AUDIO_STRATEGIES,
                         default=None,
                         help="Audio generation backend (default: none, skip audio)")
