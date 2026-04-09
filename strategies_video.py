@@ -784,6 +784,7 @@ class RunPodWan22Strategy(RunPodWanStrategy):
                     "height": 704,
                     "length": length,
                     "batch_size": 1,
+                    "vae": ["3", 0],
                 },
             },
             "8": {
