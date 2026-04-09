@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>lossy — original vs reconstructed</title>
+<title>lossy — compare</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #111; color: #ddd; font-family: monospace; font-size: 13px; }
@@ -15,7 +15,7 @@
     gap: 0;
   }
 
-  /* Dual video area */
+  /* Dual/triple video area */
   .video-area {
     grid-column: 1;
     grid-row: 1;
@@ -59,7 +59,8 @@
     pointer-events: none;
   }
   .pane-label.original { color: #4af; }
-  .pane-label.reconstructed { color: #f84; }
+  .pane-label.recon-a  { color: #f84; }
+  .pane-label.recon-b  { color: #4f8; }
   .divider {
     width: 2px;
     background: #333;
@@ -77,6 +78,7 @@
     align-items: center;
     gap: 12px;
     border-top: 1px solid #333;
+    flex-wrap: wrap;
   }
   .controls button {
     background: #333;
@@ -95,6 +97,30 @@
   .shot-info-bar { color: #fb0; }
   .sync-indicator { color: #888; font-size: 11px; }
   .sync-indicator.warn { color: #f44; }
+
+  .strategy-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .strategy-group label {
+    font-size: 11px;
+    color: #888;
+    white-space: nowrap;
+  }
+  .strategy-group label.recon-a { color: #f84; }
+  .strategy-group label.recon-b { color: #4f8; }
+  .strategy-group select {
+    background: #333;
+    color: #ddd;
+    border: 1px solid #555;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 12px;
+    max-width: 160px;
+  }
+  .strategy-group select:focus { outline: none; border-color: #888; }
 
   /* Timeline */
   .timeline-container {
@@ -324,22 +350,34 @@
       </div>
       <div class="divider"></div>
       <div class="video-pane">
-        <span class="pane-label reconstructed">RECONSTRUCTED</span>
-        <video id="vid-reconstructed" preload="metadata"></video>
+        <span class="pane-label recon-a" id="label-a">A</span>
+        <video id="vid-recon-a" preload="metadata"></video>
+      </div>
+      <div class="divider"></div>
+      <div class="video-pane">
+        <span class="pane-label recon-b" id="label-b">B</span>
+        <video id="vid-recon-b" preload="metadata" muted></video>
       </div>
     </div>
   </div>
 
   <div class="controls">
     <button id="btn-prev" title="Previous shot">&#8592; Prev</button>
-    <button id="btn-play" title="Play/pause both">Play</button>
+    <button id="btn-play" title="Play/pause">Play</button>
     <button id="btn-next" title="Next shot">Next &#8594;</button>
     <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
     <button id="btn-audio" title="Cycle audio source (M)">Audio: generated</button>
     <audio id="speech-audio" preload="auto"></audio>
     <input id="volume-slider" type="range" min="0" max="100" value="70" title="Volume" style="width:60px;vertical-align:middle;accent-color:#fb0;cursor:pointer">
     <span class="spacer"></span>
-    <select id="strategy-select" style="background:#333;color:#ddd;border:1px solid #555;padding:3px 6px;border-radius:3px;font-family:monospace;font-size:12px;display:none"></select>
+    <div class="strategy-group" id="strategy-group-a" style="display:none">
+      <label class="recon-a">A:</label>
+      <select id="strategy-select-a"></select>
+    </div>
+    <div class="strategy-group" id="strategy-group-b" style="display:none">
+      <label class="recon-b">B:</label>
+      <select id="strategy-select-b"></select>
+    </div>
     <label style="font-size:11px;color:#888;cursor:pointer;margin-left:8px" title="Serve videos directly from disk (avoids HTTP buffering issues with large files)"><input type="checkbox" id="use-file-urls" style="vertical-align:middle;accent-color:#fb0;cursor:pointer"> file://</label>
     <span class="sync-indicator" id="sync-info"></span>
     <span class="shot-info-bar" id="shot-info">Loading...</span>
@@ -377,61 +415,91 @@
 </div>
 
 <script>
-const vidOrig = document.getElementById('vid-original');
-const vidRecon = document.getElementById('vid-reconstructed');
-const timeline = document.getElementById('timeline');
-const playhead = document.getElementById('playhead');
-const shotList = document.getElementById('shot-list');
-const shotInfo = document.getElementById('shot-info');
-const shotCount = document.getElementById('shot-count');
-const syncInfo = document.getElementById('sync-info');
-const timeCurrent = document.getElementById('time-current');
-const timeTotal = document.getElementById('time-total');
-const btnPlay = document.getElementById('btn-play');
-const btnPrev = document.getElementById('btn-prev');
-const btnNext = document.getElementById('btn-next');
-const btnSolo = document.getElementById('btn-solo');
-const promptPanel = document.getElementById('prompt-panel');
-const promptText = document.getElementById('prompt-text');
-const setupOverlay = document.getElementById('setup-overlay');
-const setupError = document.getElementById('setup-error');
-const strategySelect = document.getElementById('strategy-select');
+const vidOrig        = document.getElementById('vid-original');
+const vidReconA      = document.getElementById('vid-recon-a');
+const vidReconB      = document.getElementById('vid-recon-b');
+const labelA         = document.getElementById('label-a');
+const labelB         = document.getElementById('label-b');
+const timeline       = document.getElementById('timeline');
+const playhead       = document.getElementById('playhead');
+const shotList       = document.getElementById('shot-list');
+const shotInfo       = document.getElementById('shot-info');
+const shotCount      = document.getElementById('shot-count');
+const syncInfo       = document.getElementById('sync-info');
+const timeCurrent    = document.getElementById('time-current');
+const timeTotal      = document.getElementById('time-total');
+const btnPlay        = document.getElementById('btn-play');
+const btnPrev        = document.getElementById('btn-prev');
+const btnNext        = document.getElementById('btn-next');
+const btnSolo        = document.getElementById('btn-solo');
+const promptPanel    = document.getElementById('prompt-panel');
+const promptText     = document.getElementById('prompt-text');
+const setupOverlay   = document.getElementById('setup-overlay');
+const setupError     = document.getElementById('setup-error');
+const strategySelectA = document.getElementById('strategy-select-a');
+const strategySelectB = document.getElementById('strategy-select-b');
+const strategyGroupA = document.getElementById('strategy-group-a');
+const strategyGroupB = document.getElementById('strategy-group-b');
 
 let scenes = [];
 let prompts = [];
 let activeShot = -1;
 let loopShot = false;
 let viewMode = 'paired';
+let isSeeking = false;
+let lastSyncedShot = -1;
 
 // Audio source: 'generated', 'generated+speech', 'original', 'off'
 let audioSource = 'generated';
 let hasSpeech = false;
-const btnAudio = document.getElementById('btn-audio');
+const btnAudio    = document.getElementById('btn-audio');
 const speechAudio = document.getElementById('speech-audio');
 
+// -- Pane state --
+// Each recon pane tracks its own clip state independently.
+function makePaneState(vid) {
+  return {
+    vid,
+    clipMap: {},
+    decodedShots: new Set(),
+    clipsBasePath: '',
+    currentClipShotIdx: -1,
+    currentSubClipIdx: 0,
+    pendingLoad: null,
+    clipErrorHandler: null,
+  };
+}
+const paneA = makePaneState(vidReconA);
+const paneB = makePaneState(vidReconB);
+
+// -- Audio --
 function setAudioSource(src) {
   audioSource = src;
   if (src === 'generated') {
     vidOrig.muted = true;
-    vidRecon.muted = false;
+    vidReconA.muted = false;
+    vidReconB.muted = true;
     speechAudio.muted = true;
     btnAudio.textContent = 'Audio: generated';
     btnAudio.classList.remove('active');
   } else if (src === 'generated+speech') {
     vidOrig.muted = true;
-    vidRecon.muted = false;
+    vidReconA.muted = false;
+    vidReconB.muted = true;
     speechAudio.muted = false;
     btnAudio.textContent = 'Audio: gen+speech';
     btnAudio.classList.add('active');
   } else if (src === 'original') {
     vidOrig.muted = false;
-    vidRecon.muted = true;
+    vidReconA.muted = true;
+    vidReconB.muted = true;
     speechAudio.muted = true;
     btnAudio.textContent = 'Audio: original';
     btnAudio.classList.add('active');
   } else {
     vidOrig.muted = true;
-    vidRecon.muted = true;
+    vidReconA.muted = true;
+    vidReconB.muted = true;
     speechAudio.muted = true;
     btnAudio.textContent = 'Audio: off';
     btnAudio.classList.remove('active');
@@ -449,22 +517,11 @@ function cycleAudioSource() {
 
 // Volume
 const volumeSlider = document.getElementById('volume-slider');
-vidOrig.volume = vidRecon.volume = speechAudio.volume = 0.7;
+vidOrig.volume = vidReconA.volume = vidReconB.volume = speechAudio.volume = 0.7;
 volumeSlider.addEventListener('input', () => {
   const v = volumeSlider.value / 100;
-  vidOrig.volume = vidRecon.volume = speechAudio.volume = v;
+  vidOrig.volume = vidReconA.volume = vidReconB.volume = speechAudio.volume = v;
 });
-
-// Clip-based playback: each decoded shot maps to individual clip file(s)
-// instead of seeking within one large concatenated video.
-let clipMap = {};        // shot index -> { clips: [{src, duration}], totalDuration }
-let decodedShots = new Set();
-let clipsBasePath = '';  // e.g. "/output/star_wars_iv_v2/adjusted/runpod-wan"
-let currentClipShotIdx = -1;  // which shot's clip is loaded in vidRecon
-let currentSubClipIdx = 0;    // for split shots: which sub-clip is active
-let isSeeking = false;
-let lastSyncedShot = -1;
-let pendingLoad = null;  // debounce: cancel stale clip loads
 
 // -- Formatting --
 function fmt(s) {
@@ -474,7 +531,7 @@ function fmt(s) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
 
-// -- Shot lookup (in original video time) --
+// -- Shot lookup --
 function findShot(time) {
   let lo = 0, hi = scenes.length - 1;
   while (lo <= hi) {
@@ -486,43 +543,40 @@ function findShot(time) {
   return Math.max(0, Math.min(lo, scenes.length - 1));
 }
 
-// -- Build clip map from decode progress --
-function buildClipMap(progress, basePath) {
-  clipMap = {};
-  decodedShots = new Set();
-  clipsBasePath = basePath;
+// -- Build clip map for a pane from decode progress --
+function buildClipMap(pane, progress, basePath) {
+  pane.clipMap = {};
+  pane.decodedShots = new Set();
+  pane.clipsBasePath = basePath;
 
   if (!progress) return;
 
-  // Use clips metadata if available (has per-shot filenames)
   const clipsMeta = progress.clips || {};
   const completed = progress.completed || [];
 
   for (const idx of completed) {
     const idxStr = String(idx);
     if (clipsMeta[idxStr]) {
-      // Has detailed clip info — use filenames from progress
       const clips = clipsMeta[idxStr].map(c => ({
         src: `${basePath}/${c.path}`,
         duration: c.duration_s
       }));
-      clipMap[idx] = {
+      pane.clipMap[idx] = {
         clips,
         totalDuration: clips.reduce((sum, c) => sum + c.duration, 0)
       };
     } else {
-      // Fallback: assume single clip named {NNNN}.mp4
       const dur = scenes[idx] ? scenes[idx].duration_s : 5;
-      clipMap[idx] = {
+      pane.clipMap[idx] = {
         clips: [{ src: `${basePath}/${String(idx).padStart(4, '0')}.mp4`, duration: dur }],
         totalDuration: dur
       };
     }
-    decodedShots.add(idx);
+    pane.decodedShots.add(idx);
   }
 }
 
-// For split shots: find which sub-clip and position within it
+// Sub-clip resolution for split shots
 function resolveSubClip(mapping, offsetInShot) {
   let cumulative = 0;
   for (let i = 0; i < mapping.clips.length; i++) {
@@ -535,16 +589,14 @@ function resolveSubClip(mapping, offsetInShot) {
   return { subIdx: 0, posInClip: 0 };
 }
 
-// -- Clip loading --
-let clipErrorHandler = null;
-
+// -- Clip loading for a pane --
 function safePlay(el) {
   const p = el.play();
-  if (p && p.catch) p.catch(() => {}); // swallow autoplay rejections
+  if (p && p.catch) p.catch(() => {});
 }
 
-function loadClip(shotIdx, subIdx, seekTo) {
-  const mapping = clipMap[shotIdx];
+function loadClip(pane, shotIdx, subIdx, seekTo) {
+  const mapping = pane.clipMap[shotIdx];
   if (!mapping) return;
   const clip = mapping.clips[subIdx];
 
@@ -553,122 +605,123 @@ function loadClip(shotIdx, subIdx, seekTo) {
     src = toFileUrl(src);
   }
 
-  // Already loaded — just seek within it
-  if (currentClipShotIdx === shotIdx && currentSubClipIdx === subIdx && vidRecon.readyState >= 2) {
-    vidRecon.currentTime = Math.max(0, seekTo);
-    if (!vidOrig.paused && vidRecon.paused) safePlay(vidRecon);
+  // Already loaded — just seek
+  if (pane.currentClipShotIdx === shotIdx && pane.currentSubClipIdx === subIdx && pane.vid.readyState >= 2) {
+    pane.vid.currentTime = Math.max(0, seekTo);
+    if (!vidOrig.paused && pane.vid.paused) safePlay(pane.vid);
     return;
   }
 
-  currentClipShotIdx = shotIdx;
-  currentSubClipIdx = subIdx;
+  pane.currentClipShotIdx = shotIdx;
+  pane.currentSubClipIdx = subIdx;
 
-  // Cancel any pending load
-  if (pendingLoad) {
-    vidRecon.removeEventListener('canplay', pendingLoad);
-    pendingLoad = null;
+  if (pane.pendingLoad) {
+    pane.vid.removeEventListener('canplay', pane.pendingLoad);
+    pane.pendingLoad = null;
   }
-  if (clipErrorHandler) {
-    vidRecon.removeEventListener('error', clipErrorHandler);
-    clipErrorHandler = null;
+  if (pane.clipErrorHandler) {
+    pane.vid.removeEventListener('error', pane.clipErrorHandler);
+    pane.clipErrorHandler = null;
   }
 
-  vidRecon.src = src;
+  pane.vid.src = src;
 
-  pendingLoad = function onReady() {
-    vidRecon.removeEventListener('canplay', onReady);
-    vidRecon.removeEventListener('error', clipErrorHandler);
-    pendingLoad = null;
-    clipErrorHandler = null;
-    vidRecon.currentTime = Math.max(0, seekTo);
-    if (!vidOrig.paused) safePlay(vidRecon);
+  pane.pendingLoad = function onReady() {
+    pane.vid.removeEventListener('canplay', onReady);
+    pane.vid.removeEventListener('error', pane.clipErrorHandler);
+    pane.pendingLoad = null;
+    pane.clipErrorHandler = null;
+    pane.vid.currentTime = Math.max(0, seekTo);
+    if (!vidOrig.paused) safePlay(pane.vid);
   };
 
-  clipErrorHandler = function onError() {
-    vidRecon.removeEventListener('canplay', pendingLoad);
-    vidRecon.removeEventListener('error', onError);
-    pendingLoad = null;
-    clipErrorHandler = null;
+  pane.clipErrorHandler = function onError() {
+    pane.vid.removeEventListener('canplay', pane.pendingLoad);
+    pane.vid.removeEventListener('error', onError);
+    pane.pendingLoad = null;
+    pane.clipErrorHandler = null;
     console.warn(`[lossy] failed to load clip: ${src}`);
-    syncInfo.textContent = 'clip error';
-    syncInfo.className = 'sync-indicator warn';
   };
 
-  vidRecon.addEventListener('canplay', pendingLoad);
-  vidRecon.addEventListener('error', clipErrorHandler);
-  vidRecon.load();
+  pane.vid.addEventListener('canplay', pane.pendingLoad);
+  pane.vid.addEventListener('error', pane.clipErrorHandler);
+  pane.vid.load();
 }
 
+// Sub-clip advancement on 'ended'
+function advanceSubClip(pane) {
+  if (pane.currentClipShotIdx < 0) return;
+  const mapping = pane.clipMap[pane.currentClipShotIdx];
+  if (!mapping) return;
+  if (pane.currentSubClipIdx + 1 < mapping.clips.length) {
+    loadClip(pane, pane.currentClipShotIdx, pane.currentSubClipIdx + 1, 0);
+  }
+}
+vidReconA.addEventListener('ended', () => advanceSubClip(paneA));
+vidReconB.addEventListener('ended', () => advanceSubClip(paneB));
+
 // -- Sync engine --
-// Original is the leader. For each decoded shot, the corresponding individual
-// clip file is loaded into vidRecon. For split shots (multiple sub-clips per shot),
-// sub-clip advancement is handled by the 'ended' event — the sync engine only
-// swaps clips on shot boundaries.
-function syncReconToOrig() {
+function syncPaneToOrig(pane) {
   if (isSeeking) return;
   const t = vidOrig.currentTime;
   const idx = findShot(t);
-  const mapping = clipMap[idx];
+  const mapping = pane.clipMap[idx];
 
   if (!mapping) {
-    // Not decoded — pause recon
-    if (!vidRecon.paused) vidRecon.pause();
-    syncInfo.textContent = 'not decoded';
-    syncInfo.className = 'sync-indicator warn';
-    lastSyncedShot = idx;
+    if (!pane.vid.paused) pane.vid.pause();
     return;
   }
 
-  // Shot changed — load first sub-clip of new shot
-  if (idx !== currentClipShotIdx) {
+  if (idx !== pane.currentClipShotIdx) {
     const offsetInShot = t - scenes[idx].start_s;
     const { subIdx, posInClip } = resolveSubClip(mapping, offsetInShot);
-    loadClip(idx, subIdx, posInClip);
-    lastSyncedShot = idx;
-    syncInfo.textContent = '';
-    syncInfo.className = 'sync-indicator';
+    loadClip(pane, idx, subIdx, posInClip);
     return;
   }
 
-  // Same shot — ensure recon is playing.
-  // Sub-clip transitions within the shot are driven by the 'ended' event.
-  if (vidRecon.readyState >= 2) {
-    if (!vidOrig.paused && vidRecon.paused) {
-      if (vidRecon.ended) {
-        // Clip finished — seek back to start so it can play again if needed
-        vidRecon.currentTime = 0;
-      }
-      safePlay(vidRecon);
+  if (pane.vid.readyState >= 2) {
+    if (!vidOrig.paused && pane.vid.paused) {
+      if (pane.vid.ended) pane.vid.currentTime = 0;
+      safePlay(pane.vid);
     }
+  }
+}
 
+function syncReconToOrig() {
+  if (isSeeking) return;
+  const idx = findShot(vidOrig.currentTime);
+  const hasA = !!paneA.clipMap[idx];
+  const hasB = !!paneB.clipMap[idx];
+
+  if (!hasA && !hasB) {
+    syncInfo.textContent = 'not decoded';
+    syncInfo.className = 'sync-indicator warn';
+  } else if (!hasA || !hasB) {
+    syncInfo.textContent = !hasA ? 'A: not decoded' : 'B: not decoded';
+    syncInfo.className = 'sync-indicator warn';
+  } else {
     syncInfo.textContent = '';
     syncInfo.className = 'sync-indicator';
   }
-
   lastSyncedShot = idx;
+
+  syncPaneToOrig(paneA);
+  syncPaneToOrig(paneB);
 }
 
-// Handle split shots: when a sub-clip ends, advance to next sub-clip
-vidRecon.addEventListener('ended', () => {
-  if (currentClipShotIdx < 0) return;
-  const mapping = clipMap[currentClipShotIdx];
-  if (!mapping) return;
-  if (currentSubClipIdx + 1 < mapping.clips.length) {
-    loadClip(currentClipShotIdx, currentSubClipIdx + 1, 0);
-  }
-  // Otherwise sync engine handles shot transition on next timeupdate
-});
-
+// -- Playback controls --
 function seekBoth(origTime, shotIdx) {
   isSeeking = true;
   vidOrig.currentTime = origTime;
   if (hasSpeech) speechAudio.currentTime = origTime;
   const idx = shotIdx !== undefined ? shotIdx : findShot(origTime);
-  const mapping = clipMap[idx];
-  if (mapping) {
-    const offsetInShot = origTime - scenes[idx].start_s;
-    const { subIdx, posInClip } = resolveSubClip(mapping, offsetInShot);
-    loadClip(idx, subIdx, Math.max(0, posInClip));
+  for (const pane of [paneA, paneB]) {
+    const mapping = pane.clipMap[idx];
+    if (mapping) {
+      const offsetInShot = origTime - scenes[idx].start_s;
+      const { subIdx, posInClip } = resolveSubClip(mapping, offsetInShot);
+      loadClip(pane, idx, subIdx, Math.max(0, posInClip));
+    }
   }
   lastSyncedShot = idx;
   setTimeout(() => { isSeeking = false; }, 250);
@@ -676,15 +729,18 @@ function seekBoth(origTime, shotIdx) {
 
 function playBoth() {
   safePlay(vidOrig);
-  const mapping = clipMap[findShot(vidOrig.currentTime)];
-  if (mapping && vidRecon.readyState >= 2) safePlay(vidRecon);
+  const shotIdx = findShot(vidOrig.currentTime);
+  for (const pane of [paneA, paneB]) {
+    if (pane.clipMap[shotIdx] && pane.vid.readyState >= 2) safePlay(pane.vid);
+  }
   if (hasSpeech) safePlay(speechAudio);
   btnPlay.textContent = 'Pause';
 }
 
 function pauseBoth() {
   vidOrig.pause();
-  vidRecon.pause();
+  vidReconA.pause();
+  vidReconB.pause();
   if (hasSpeech) speechAudio.pause();
   btnPlay.textContent = 'Play';
 }
@@ -712,18 +768,20 @@ function setActiveShot(idx) {
   if (tlEl) tlEl.classList.add('active');
 
   const s = scenes[idx];
-  const decoded = decodedShots.has(idx);
-  const tag = decoded ? '' : '  [not decoded]';
+  const decodedA = paneA.decodedShots.has(idx);
+  const decodedB = paneB.decodedShots.has(idx);
+  const tag = (!decodedA && !decodedB) ? '  [not decoded]'
+            : (!decodedA) ? '  [A: not decoded]'
+            : (!decodedB) ? '  [B: not decoded]'
+            : '';
   shotInfo.textContent = `Shot ${idx + 1}/${scenes.length}  |  ${s.start_timecode} \u2192 ${s.end_timecode}  |  ${s.duration_s.toFixed(2)}s${tag}`;
 
-  // Update prompt panel
   if (prompts.length > idx) {
     const p = prompts[idx];
     promptText.textContent = p.formatted_prompt || p.prompt || '(no prompt)';
   } else {
     promptText.textContent = '(no prompt data)';
   }
-
 }
 
 function jumpToShot(idx) {
@@ -743,11 +801,13 @@ function checkShotLoop() {
 
 // -- Build UI --
 function buildTimeline() {
+  timeline.querySelectorAll('.timeline-shot').forEach(el => el.remove());
   const duration = scenes[scenes.length - 1].end_s;
+  const allDecoded = new Set([...paneA.decodedShots, ...paneB.decodedShots]);
   scenes.forEach((s, i) => {
     const el = document.createElement('div');
     el.className = 'timeline-shot';
-    if (!decodedShots.has(i)) el.classList.add('not-decoded');
+    if (!allDecoded.has(i)) el.classList.add('not-decoded');
     el.id = `tl-${i}`;
     el.style.left = `${(s.start_s / duration) * 100}%`;
     el.style.width = `${((s.end_s - s.start_s) / duration) * 100}%`;
@@ -761,10 +821,11 @@ function buildTimeline() {
 
 function buildShotList() {
   shotList.innerHTML = '';
+  const allDecoded = new Set([...paneA.decodedShots, ...paneB.decodedShots]);
   scenes.forEach((s, i) => {
     const el = document.createElement('div');
     el.className = viewMode === 'prompt' ? 'shot-item two-col' : 'shot-item';
-    if (!decodedShots.has(i)) el.classList.add('not-decoded');
+    if (!allDecoded.has(i)) el.classList.add('not-decoded');
     el.id = `shot-${i}`;
 
     if (viewMode === 'paired') {
@@ -792,57 +853,78 @@ function buildShotList() {
   });
 }
 
-let outputBase = ''; // e.g. "/output/star_wars_iv_v2"
-let currentOrigSrc = ''; // HTTP path to original video (preserved for re-init)
+let outputBase = '';
+let currentOrigSrc = '';
 
-// Convert a server-relative path (e.g. "/media/foo.mp4") to a file:// URL
 function toFileUrl(httpPath) {
-  // Strip leading slash, join with project root
   const rel = httpPath.replace(/^\//, '');
   return 'file://' + projectRoot + '/' + rel;
 }
 
-// -- Initialization --
-function init(originalSrc, reconSrc, base) {
+// -- Per-pane initialization (load progress + build clip map) --
+async function initPane(pane, selectEl, labelEl) {
+  const opt = selectEl.selectedOptions[0];
+  if (!opt || !opt.value) {
+    // (off) — clear the pane
+    pane.clipMap = {};
+    pane.decodedShots = new Set();
+    pane.currentClipShotIdx = -1;
+    pane.vid.removeAttribute('src');
+    const id = labelEl.id === 'label-a' ? 'A' : 'B';
+    labelEl.textContent = id;
+    return;
+  }
+
+  const strategyName = opt.dataset.strategyName || null;
+  const paneOutputBase = opt.dataset.outputPath || outputBase;
+  const videoStrategy = strategyName && strategyName.includes('+')
+    ? strategyName.split('+')[0]
+    : strategyName;
+
+  // Update pane label
+  if (labelEl) {
+    const id = labelEl.id === 'label-a' ? 'A' : 'B';
+    labelEl.textContent = strategyName ? `${id}: ${strategyName}` : id;
+  }
+
+  const progressUrls = [];
+  if (strategyName && strategyName !== 'default') {
+    progressUrls.push(`${paneOutputBase}/decode_progress_${strategyName}.json`);
+    if (strategyName.includes('+')) {
+      progressUrls.push(`${paneOutputBase}/decode_progress_${videoStrategy}.json`);
+    }
+  }
+  progressUrls.push(`${paneOutputBase}/decode_progress.json`);
+
+  let progress = null;
+  for (const url of progressUrls) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) { progress = await r.json(); break; }
+    } catch {}
+  }
+
+  const adjBase = `${paneOutputBase}/adjusted/${videoStrategy}`;
+  buildClipMap(pane, progress, adjBase);
+}
+
+// -- Full init (called once per source, re-called on file:// toggle) --
+function init(originalSrc, base) {
   outputBase = base;
   currentOrigSrc = originalSrc;
+
   if (useFileUrls.checked && projectRoot) {
     vidOrig.src = toFileUrl(originalSrc);
   } else {
     vidOrig.src = originalSrc;
   }
-  // Reset clip state — vidRecon.src is set per-clip by loadClip()
-  currentClipShotIdx = -1;
-  currentSubClipIdx = 0;
-  lastSyncedShot = -1;
 
-  // Determine strategy name for per-strategy progress + clips path
-  const strategyOpt = strategySelect.selectedOptions[0];
-  const strategyName = strategyOpt ? strategyOpt.dataset.strategyName : null;
-  // Video strategy name (before +audio suffix) for clips directory
-  const videoStrategy = strategyName && strategyName.includes('+')
-    ? strategyName.split('+')[0]
-    : strategyName;
-
-  // Try per-strategy progress first, fall back to legacy
-  const progressUrls = [];
-  if (strategyName && strategyName !== 'default') {
-    progressUrls.push(`${base}/decode_progress_${strategyName}.json`);
-    if (strategyName.includes('+')) {
-      progressUrls.push(`${base}/decode_progress_${videoStrategy}.json`);
-    }
+  // Reset both panes
+  for (const pane of [paneA, paneB]) {
+    pane.currentClipShotIdx = -1;
+    pane.currentSubClipIdx = 0;
   }
-  progressUrls.push(`${base}/decode_progress.json`);
-
-  const fetchProgress = async () => {
-    for (const url of progressUrls) {
-      try {
-        const r = await fetch(url);
-        if (r.ok) return await r.json();
-      } catch {}
-    }
-    return null;
-  };
+  lastSyncedShot = -1;
 
   // Check for speech track
   fetch(`${base}/speech_track.wav`, {method: 'HEAD'}).then(r => {
@@ -856,60 +938,54 @@ function init(originalSrc, reconSrc, base) {
     }
   }).catch(() => { hasSpeech = false; });
 
-  // Load manifest, prompts, and decode progress
   Promise.all([
     fetch(`${base}/manifest.json`).then(r => r.json()),
     fetch(`${base}/prompts.json`).then(r => r.json()).catch(() => []),
-    fetchProgress()
-  ]).then(([manifest, promptData, progress]) => {
+    initPane(paneA, strategySelectA, labelA),
+    initPane(paneB, strategySelectB, labelB),
+  ]).then(([manifest, promptData]) => {
     scenes = manifest.scenes;
     prompts = promptData;
 
-    // Build clip map — clips live in adjusted/{videoStrategy}/
-    const adjBase = `${base}/adjusted/${videoStrategy}`;
-    buildClipMap(progress, adjBase);
-
-    const decodedCount = decodedShots.size;
+    const decodedCount = new Set([...paneA.decodedShots, ...paneB.decodedShots]).size;
     shotCount.textContent = `${decodedCount}/${scenes.length}`;
 
     buildTimeline();
     buildShotList();
 
-    // Start on the first decoded shot if possible
-    const sorted = [...decodedShots].sort((a, b) => a - b);
+    const sorted = [...new Set([...paneA.decodedShots, ...paneB.decodedShots])].sort((a, b) => a - b);
     const firstDecoded = sorted[0] || 0;
     setActiveShot(firstDecoded);
     seekBoth(scenes[firstDecoded].start_s, firstDecoded);
   });
-
-  // Time updates from original (leader)
-  vidOrig.addEventListener('timeupdate', () => {
-    const t = vidOrig.currentTime;
-    const dur = vidOrig.duration || 1;
-    playhead.style.left = `${(t / dur) * 100}%`;
-    timeCurrent.textContent = fmt(t);
-
-    const idx = findShot(t);
-    setActiveShot(idx);
-
-    syncReconToOrig();
-    checkShotLoop();
-  });
-
-  vidOrig.addEventListener('loadedmetadata', () => {
-    timeTotal.textContent = fmt(vidOrig.duration);
-  });
-
-  vidOrig.addEventListener('play', () => btnPlay.textContent = 'Pause');
-  vidOrig.addEventListener('pause', () => btnPlay.textContent = 'Play');
 }
+
+// Attach vidOrig events once
+vidOrig.addEventListener('timeupdate', () => {
+  const t = vidOrig.currentTime;
+  const dur = vidOrig.duration || 1;
+  playhead.style.left = `${(t / dur) * 100}%`;
+  timeCurrent.textContent = fmt(t);
+
+  const idx = findShot(t);
+  setActiveShot(idx);
+
+  syncReconToOrig();
+  checkShotLoop();
+});
+
+vidOrig.addEventListener('loadedmetadata', () => {
+  timeTotal.textContent = fmt(vidOrig.duration);
+});
+vidOrig.addEventListener('play',  () => btnPlay.textContent = 'Pause');
+vidOrig.addEventListener('pause', () => btnPlay.textContent = 'Play');
 
 // -- Scan API + setup form --
 const selectSource = document.getElementById('input-source');
 const useFileUrls = document.getElementById('use-file-urls');
 let scanData = null;
-let projectRoot = ''; // absolute path from server, for file:// URLs
-let currentStrategies = []; // strategies for current source
+let projectRoot = '';
+let currentStrategies = [];
 
 fetch('/api/scan')
   .then(r => r.json())
@@ -925,21 +1001,20 @@ fetch('/api/scan')
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = src.source_file;
-        opt.dataset.sourceIdx = i;
         selectSource.appendChild(opt);
       });
       selectSource.disabled = false;
       document.getElementById('btn-start').disabled = false;
 
-      // Auto-start from URL params, or fall back to default
       const params = new URLSearchParams(location.search);
       const paramSource = params.get('source') || 'star_wars_iv.mp4';
-      const paramStrategy = params.get('strategy') || 'runpod-wan+runpod-mmaudio';
+      const paramA = params.get('a') || params.get('strategy') || null;
+      const paramB = params.get('b') || null;
       if (data.sources.length === 1) {
-        startFromSource(data.sources[0], paramStrategy);
+        startFromSource(data.sources[0], paramA, paramB);
       } else {
         const match = data.sources.find(s => s.source_file === paramSource);
-        if (match) startFromSource(match, paramStrategy);
+        if (match) startFromSource(match, paramA, paramB);
       }
     }
   })
@@ -947,69 +1022,100 @@ fetch('/api/scan')
     selectSource.innerHTML = '<option value="">Failed to scan — is serve.py running?</option>';
   });
 
-function startFromSource(source, preferStrategy) {
-  currentStrategies = source.strategies;
-  strategySelect.innerHTML = '';
-  if (source.strategies.length > 0) {
-    source.strategies.forEach(s => {
-      const o = document.createElement('option');
-      o.value = s.path;
-      o.textContent = s.label;
-      o.dataset.strategyName = s.name;
-      o.dataset.outputPath = s.output_path;
-      o.dataset.hasSpeech = s.has_speech || false;
-      strategySelect.appendChild(o);
-    });
-    if (preferStrategy) {
-      for (const o of strategySelect.options) {
-        if (o.dataset.strategyName === preferStrategy) {
-          o.selected = true;
-          break;
-        }
+function populateStrategySelect(selectEl, strategies, preferName) {
+  // Add an "(off)" option first
+  selectEl.innerHTML = '<option value="" data-strategy-name="" data-output-path="">(off)</option>';
+  strategies.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.path;
+    o.textContent = s.label;
+    o.dataset.strategyName = s.name;
+    o.dataset.outputPath = s.output_path || outputBase;
+    selectEl.appendChild(o);
+  });
+  if (preferName) {
+    for (const o of selectEl.options) {
+      if (o.dataset.strategyName === preferName) {
+        o.selected = true;
+        return;
       }
     }
-    strategySelect.style.display = '';
+  }
+}
+
+function startFromSource(source, preferA, preferB) {
+  currentStrategies = source.strategies;
+
+  if (source.strategies.length > 0) {
+    // Default A to first strategy, B to second (if available)
+    const defaultA = preferA || source.strategies[0]?.name || null;
+    const defaultB = preferB || source.strategies[1]?.name || null;
+
+    populateStrategySelect(strategySelectA, source.strategies, defaultA);
+    populateStrategySelect(strategySelectB, source.strategies, defaultB);
+
+    strategyGroupA.style.display = '';
+    strategyGroupB.style.display = '';
   } else {
-    strategySelect.style.display = 'none';
+    strategyGroupA.style.display = 'none';
+    strategyGroupB.style.display = 'none';
   }
 
   setupOverlay.classList.add('hidden');
-  const first = source.strategies[0];
-  const reconPath = strategySelect.value || first?.path;
-  const outputPath = strategySelect.selectedOptions[0]?.dataset.outputPath || first?.output_path;
-  if (reconPath) init(source.source_path, reconPath, outputPath);
+
+  const firstStrategy = source.strategies[0];
+  const base = strategySelectA.selectedOptions[0]?.dataset.outputPath
+    || firstStrategy?.output_path
+    || `/output/${source.source_file.replace(/\.[^.]+$/, '')}`;
+
+  init(source.source_path, base);
 }
 
 document.getElementById('btn-start').addEventListener('click', () => {
   const idx = parseInt(selectSource.value);
   if (isNaN(idx) || !scanData) return;
-  startFromSource(scanData.sources[idx], null);
+  startFromSource(scanData.sources[idx], null, null);
 });
 
-// Strategy switch — reload with new strategy's clips and progress
-strategySelect.addEventListener('change', () => {
+// Strategy change handlers — reinit just that pane, rebuild UI
+async function onStrategyChange(pane, selectEl, labelEl) {
   const wasPlaying = !vidOrig.paused;
   if (wasPlaying) pauseBoth();
   const origTime = vidOrig.currentTime;
 
-  // Clear existing timeline
-  timeline.querySelectorAll('.timeline-shot').forEach(el => el.remove());
+  // If this is pane A and a new output base is selected, update outputBase
+  const opt = selectEl.selectedOptions[0];
+  if (pane === paneA && opt?.dataset.outputPath) {
+    outputBase = opt.dataset.outputPath;
+  }
 
-  // Get output path from selected strategy (may differ across output runs)
-  const selectedOpt = strategySelect.selectedOptions[0];
-  const newOutputBase = selectedOpt?.dataset.outputPath || outputBase;
+  pane.currentClipShotIdx = -1;
+  pane.currentSubClipIdx = 0;
 
-  // Re-init with the new strategy (reloads progress + rebuilds timeline)
-  init(currentOrigSrc, strategySelect.value, newOutputBase);
-});
+  await initPane(pane, selectEl, labelEl);
+
+  const decodedCount = new Set([...paneA.decodedShots, ...paneB.decodedShots]).size;
+  shotCount.textContent = `${decodedCount}/${scenes.length}`;
+  if (scenes.length) {
+    buildTimeline();
+    buildShotList();
+    seekBoth(origTime, findShot(origTime));
+    const el = document.getElementById(`shot-${activeShot}`);
+    if (el) el.classList.add('active');
+  }
+
+  if (wasPlaying) playBoth();
+}
+
+strategySelectA.addEventListener('change', () => onStrategyChange(paneA, strategySelectA, labelA));
+strategySelectB.addEventListener('change', () => onStrategyChange(paneB, strategySelectB, labelB));
 
 // -- file:// toggle --
 useFileUrls.addEventListener('change', () => {
-  if (!currentOrigSrc || !outputBase) return;
+  if (!currentOrigSrc) return;
   const wasPlaying = !vidOrig.paused;
   if (wasPlaying) pauseBoth();
-  timeline.querySelectorAll('.timeline-shot').forEach(el => el.remove());
-  init(currentOrigSrc, strategySelect.value, outputBase);
+  init(currentOrigSrc, outputBase);
 });
 
 // -- Timeline click --
@@ -1020,7 +1126,7 @@ timeline.addEventListener('click', (e) => {
   seekBoth(time, findShot(time));
 });
 
-// -- Click video to play/pause --
+// -- Click video area to play/pause --
 document.querySelector('.video-pair').addEventListener('click', togglePlay);
 
 // -- Control buttons --
@@ -1045,7 +1151,6 @@ document.querySelectorAll('.view-tab').forEach(tab => {
     viewMode = tab.dataset.view;
     promptPanel.classList.toggle('visible', viewMode === 'prompt');
     buildShotList();
-    // Restore active highlight
     const el = document.getElementById(`shot-${activeShot}`);
     if (el) el.classList.add('active');
   });
@@ -1053,7 +1158,7 @@ document.querySelectorAll('.view-tab').forEach(tab => {
 
 // -- Keyboard shortcuts --
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   switch (e.key) {
     case ' ':
       e.preventDefault();
