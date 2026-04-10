@@ -513,6 +513,7 @@ function cycleAudioSource() {
   } else if (audioSource === 'generated+speech') setAudioSource('original');
   else if (audioSource === 'original') setAudioSource('off');
   else setAudioSource('generated');
+  saveSettings();
 }
 
 // Volume
@@ -521,6 +522,7 @@ vidOrig.volume = vidReconA.volume = vidReconB.volume = speechAudio.volume = 0.7;
 volumeSlider.addEventListener('input', () => {
   const v = volumeSlider.value / 100;
   vidOrig.volume = vidReconA.volume = vidReconB.volume = speechAudio.volume = v;
+  saveSettings();
 });
 
 // -- Formatting --
@@ -986,6 +988,46 @@ const useFileUrls = document.getElementById('use-file-urls');
 let scanData = null;
 let projectRoot = '';
 let currentStrategies = [];
+let currentSourceFile = '';
+
+const SETTINGS_KEY = 'lossy_comparator_settings';
+
+function saveSettings() {
+  const settings = {
+    strategyA: strategySelectA.selectedOptions[0]?.dataset.strategyName || '',
+    strategyB: strategySelectB.selectedOptions[0]?.dataset.strategyName || '',
+    audioSource,
+    volume: volumeSlider.value,
+    viewMode,
+    useFileUrls: useFileUrls.checked,
+    sourceFile: currentSourceFile,
+  };
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+// Apply persisted non-source settings immediately
+(function applyInitialSettings() {
+  const s = loadSettings();
+  if (s.volume !== undefined) {
+    volumeSlider.value = s.volume;
+    const v = s.volume / 100;
+    vidOrig.volume = vidReconA.volume = vidReconB.volume = speechAudio.volume = v;
+  }
+  if (s.audioSource) setAudioSource(s.audioSource);
+  if (s.viewMode === 'prompt') {
+    viewMode = 'prompt';
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === 'prompt'));
+    promptPanel.classList.add('visible');
+  }
+  if (s.useFileUrls) useFileUrls.checked = true;
+})();
 
 fetch('/api/scan')
   .then(r => r.json())
@@ -1007,9 +1049,10 @@ fetch('/api/scan')
       document.getElementById('btn-start').disabled = false;
 
       const params = new URLSearchParams(location.search);
-      const paramSource = params.get('source') || 'star_wars_iv.mp4';
-      const paramA = params.get('a') || params.get('strategy') || null;
-      const paramB = params.get('b') || null;
+      const saved = loadSettings();
+      const paramSource = params.get('source') || saved.sourceFile || 'star_wars_iv.mp4';
+      const paramA = params.get('a') || params.get('strategy') || saved.strategyA || null;
+      const paramB = params.get('b') || saved.strategyB || null;
       if (data.sources.length === 1) {
         startFromSource(data.sources[0], paramA, paramB);
       } else {
@@ -1044,6 +1087,7 @@ function populateStrategySelect(selectEl, strategies, preferName) {
 }
 
 function startFromSource(source, preferA, preferB) {
+  currentSourceFile = source.source_file;
   currentStrategies = source.strategies;
 
   if (source.strategies.length > 0) {
@@ -1075,6 +1119,7 @@ document.getElementById('btn-start').addEventListener('click', () => {
   const idx = parseInt(selectSource.value);
   if (isNaN(idx) || !scanData) return;
   startFromSource(scanData.sources[idx], null, null);
+  saveSettings();
 });
 
 // Strategy change handlers — reinit just that pane, rebuild UI
@@ -1105,6 +1150,7 @@ async function onStrategyChange(pane, selectEl, labelEl) {
   }
 
   if (wasPlaying) playBoth();
+  saveSettings();
 }
 
 strategySelectA.addEventListener('change', () => onStrategyChange(paneA, strategySelectA, labelA));
@@ -1112,6 +1158,7 @@ strategySelectB.addEventListener('change', () => onStrategyChange(paneB, strateg
 
 // -- file:// toggle --
 useFileUrls.addEventListener('change', () => {
+  saveSettings();
   if (!currentOrigSrc) return;
   const wasPlaying = !vidOrig.paused;
   if (wasPlaying) pauseBoth();
@@ -1150,6 +1197,7 @@ document.querySelectorAll('.view-tab').forEach(tab => {
     tab.classList.add('active');
     viewMode = tab.dataset.view;
     promptPanel.classList.toggle('visible', viewMode === 'prompt');
+    saveSettings();
     buildShotList();
     const el = document.getElementById(`shot-${activeShot}`);
     if (el) el.classList.add('active');
