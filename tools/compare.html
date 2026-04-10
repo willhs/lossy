@@ -904,7 +904,10 @@ async function initPane(pane, selectEl, labelEl) {
     } catch {}
   }
 
-  const adjBase = `${paneOutputBase}/adjusted/${videoStrategy}`;
+  // Use opt.value directly if it's a directory (clips/ or adjusted/), else fall back to adjusted/
+  const adjBase = opt.value.endsWith('.mp4')
+    ? `${paneOutputBase}/adjusted/${videoStrategy}`
+    : opt.value;
   buildClipMap(pane, progress, adjBase);
 }
 

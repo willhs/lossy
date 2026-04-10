@@ -46,33 +46,49 @@ def scan_project():
             has_prompts = os.path.isfile(os.path.join(dirpath, "prompts.json"))
             has_speech = os.path.isfile(os.path.join(dirpath, "speech_track.wav"))
 
-            # Find reconstructed videos
+            # Collect strategies from reconstructed videos and/or decode progress files
+            seen_strategies = set()
+
+            def _add_strategy(strategy_name, recon_path=None):
+                if strategy_name in seen_strategies:
+                    return
+                seen_strategies.add(strategy_name)
+                by_source.setdefault(source_file, {
+                    "source_file": source_file,
+                    "source_path": f"/{source_path}",
+                    "strategies": [],
+                })
+                video_strat = strategy_name.split("+")[0] if "+" in strategy_name else strategy_name
+                adj_dir = os.path.join(dirpath, "adjusted", video_strat)
+                raw_clips_dir = os.path.join(dirpath, "clips", video_strat)
+                if os.path.isdir(adj_dir):
+                    clips_path = f"/output/{name}/adjusted/{video_strat}"
+                elif os.path.isdir(raw_clips_dir):
+                    clips_path = f"/output/{name}/clips/{video_strat}"
+                else:
+                    clips_path = None
+                path = recon_path or clips_path or f"/output/{name}"
+                by_source[source_file]["strategies"].append({
+                    "name": strategy_name,
+                    "label": f"{name} / {strategy_name}",
+                    "path": path,
+                    "clips_path": clips_path,
+                    "output_path": f"/output/{name}",
+                    "has_prompts": has_prompts,
+                    "has_speech": has_speech,
+                })
+
+            # Strategies with stitched reconstructed videos
             for fname in sorted(os.listdir(dirpath)):
                 if fname.startswith("reconstructed") and fname.endswith(".mp4"):
-                    if fname == "reconstructed.mp4":
-                        strategy_name = "unknown"
-                    else:
-                        strategy_name = fname[len("reconstructed_"):-len(".mp4")]
+                    strategy_name = "unknown" if fname == "reconstructed.mp4" else fname[len("reconstructed_"):-len(".mp4")]
+                    _add_strategy(strategy_name, recon_path=f"/output/{name}/{fname}")
 
-                    by_source.setdefault(source_file, {
-                        "source_file": source_file,
-                        "source_path": f"/{source_path}",
-                        "strategies": [],
-                    })
-                    # Determine clips path — video strategy is before '+' in combined names
-                    video_strat = strategy_name.split("+")[0] if "+" in strategy_name else strategy_name
-                    adj_dir = os.path.join(dirpath, "adjusted", video_strat)
-                    clips_path = f"/output/{name}/adjusted/{video_strat}" if os.path.isdir(adj_dir) else None
-
-                    by_source[source_file]["strategies"].append({
-                        "name": strategy_name,
-                        "label": f"{name} / {strategy_name}" if len(by_source.get(source_file, {}).get("strategies", [])) > 0 or True else strategy_name,
-                        "path": f"/output/{name}/{fname}",
-                        "clips_path": clips_path,
-                        "output_path": f"/output/{name}",
-                        "has_prompts": has_prompts,
-                        "has_speech": has_speech,
-                    })
+            # Strategies with only a decode progress file (not yet stitched)
+            for fname in sorted(os.listdir(dirpath)):
+                if fname.startswith("decode_progress_") and fname.endswith(".json"):
+                    strategy_name = fname[len("decode_progress_"):-len(".json")]
+                    _add_strategy(strategy_name)
 
     sources = list(by_source.values())
     return {"sources": sources, "project_root": PROJECT_ROOT}

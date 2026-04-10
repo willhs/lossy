@@ -160,3 +160,40 @@ For quality-sensitive use (faces, character fidelity), prefer `fp8_scaled` over 
 **TI2V-5B (Wan 2.2)** — unified T2V+I2V in one model, 720P, fits on 24 GB. Requires the new 2.2 VAE. The cleanest upgrade path if willing to change the VAE.
 
 **I2V via fal.ai** (`fal-ai/wan-i2v`) — no pod changes, full fp16 quality, pay-per-clip. Keeps concurrent audio on RunPod separate and unaffected.
+
+---
+
+## TI2V-5B Trial: WAN 2.1 vs 2.2 Cost Comparison (2026-04-10)
+
+Implemented `runpod-wan22` strategy and generated shots 82–87 of `star_wars_iv_v2` on an NVIDIA L40S ($0.54/hr) for side-by-side comparison.
+
+### Spec delta
+
+| | WAN 2.1 T2V-1.3B | WAN 2.2 TI2V-5B |
+|---|---|---|
+| Resolution | 848×480 | 1280×704 |
+| FPS | 16 | 24 |
+| MIN/MAX frames | 33/97 | 49/97 |
+| VRAM | ~8 GB | ~24 GB |
+| GPU used | RTX 4090 / L40S | L40S (4090 unavailable) |
+
+### Cost
+
+| | Per clip | Full film (411 shots est.) |
+|---|---|---|
+| WAN 2.1 | ~$0.008 | ~$3.15 |
+| WAN 2.2 | ~$0.055 | ~$22 |
+
+WAN 2.2 is ~7× more expensive per clip. The cost increase comes from: more pixels (2.3× higher res), more frames/s (1.5×), and a heavier model (5B vs 1.3B).
+
+### Quality
+
+WAN 2.2 output was noticeably better — more coherent motion, sharper detail. But the cost-effectiveness ratio favours WAN 2.1 for full-film runs.
+
+### Resolution/FPS tuning
+
+WAN 2.2 resolution and framerate are runtime parameters. Could lower to 848×480 @ 16fps to get the better model at lower cost, at the expense of the 720P/24fps quality advantage.
+
+### Decision
+
+Keep `runpod-wan22` strategy available for targeted use (e.g. hero shots, trailers) but keep `runpod-wan` (WAN 2.1) as the pipeline default.

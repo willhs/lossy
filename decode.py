@@ -620,8 +620,8 @@ def main():
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
     parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan22", "runpod-wan-enriched", "runpod-vace"],
-                        default="runpod-wan22",
-                        help="Video generation backend (default: runpod-wan22)")
+                        default="runpod-wan",
+                        help="Video generation backend (default: runpod-wan)")
     parser.add_argument("--audio", action="store_true",
                         help="Generate audio clips (instead of video)")
     parser.add_argument("--audio-strategy", choices=["elevenlabs", "mmaudio", "runpod-mmaudio"],

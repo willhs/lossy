@@ -262,8 +262,8 @@ def main():
     parser.add_argument("--output", "-o", default="output",
                         help="Output directory (default: output)")
     parser.add_argument("--strategy", choices=STRATEGIES,
-                        default="runpod-wan22",
-                        help="Video generation backend (default: runpod-wan22)")
+                        default="runpod-wan",
+                        help="Video generation backend (default: runpod-wan)")
     parser.add_argument("--audio-strategy", choices=AUDIO_STRATEGIES,
                         default=None,
                         help="Audio generation backend (default: none, skip audio)")
