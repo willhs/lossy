@@ -34,6 +34,7 @@ from clip_types import ClipResult, AudioClipResult, SpeechClipResult  # noqa: E4
 from prompt_format import (  # noqa: E402 -- re-export for backwards compat
     CAMERA_TERMS,
     format_prompt,
+    vary_prompt_for_part,
     _format_prompt_wan,
     _format_prompt_seedance,
 )

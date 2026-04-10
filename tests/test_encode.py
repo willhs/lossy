@@ -18,6 +18,7 @@ from encode import (
     class_to_bucket,
     classify_motion,
     frames_for_duration,
+    generate_temporal_segments,
     parse_srt,
     run_stage3,
 )
@@ -1081,3 +1082,102 @@ class TestRunStage3WithTmdb:
 
         data = json.loads((tmp_path / "characters.json").read_text())
         assert data["characters"][0]["name"] == "luke"
+
+
+# ---------------------------------------------------------------------------
+# generate_temporal_segments
+# ---------------------------------------------------------------------------
+
+class TestGenerateTemporalSegments:
+    """Tests for per-segment description generation for long shots (SPEC-300, REQ-001 to REQ-008)."""
+
+    def _make_scene(self, duration_s=19.2):
+        return {"duration_s": duration_s, "start_s": 0.0, "end_s": duration_s}
+
+    def _make_mock_client(self, responses):
+        """Create a mock Gemini client that returns responses in order."""
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            MagicMock(text=json.dumps(r)) for r in responses
+        ]
+        return client
+
+    @pytest.mark.req("SPEC-300/REQ-002")
+    def test_returns_two_segment_descriptions(self, tmp_path):
+        """REQ-002: Returns exactly 2 description dicts for a shot with >= 2 keyframes."""
+        from unittest.mock import patch
+        # Create fake keyframe images
+        for name in ["0001-01.jpg", "0001-02.jpg", "0001-03.jpg", "0001-04.jpg"]:
+            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)  # minimal JPEG header
+
+        seg_desc_1 = {"action": "First half action.", "shot_type": "wide"}
+        seg_desc_2 = {"action": "Second half action.", "shot_type": "medium"}
+        client = self._make_mock_client([seg_desc_1, seg_desc_2])
+
+        frame_files = ["0001-01.jpg", "0001-02.jpg", "0001-03.jpg", "0001-04.jpg"]
+        result = generate_temporal_segments(
+            self._make_scene(), {"action": "Whole shot."}, frame_files, str(tmp_path), client
+        )
+
+        assert len(result) == 2
+        assert result[0]["action"] == "First half action."
+        assert result[1]["action"] == "Second half action."
+
+    @pytest.mark.req("SPEC-300/REQ-006")
+    def test_returns_empty_for_single_keyframe(self, tmp_path):
+        """REQ-006: Returns [] when only 1 keyframe — can't split into two halves."""
+        (tmp_path / "0001-01.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        from unittest.mock import MagicMock
+        client = MagicMock()
+
+        result = generate_temporal_segments(
+            self._make_scene(), {"action": "Test."}, ["0001-01.jpg"], str(tmp_path), client
+        )
+        assert result == []
+        client.models.generate_content.assert_not_called()
+
+    @pytest.mark.req("SPEC-300/REQ-006")
+    def test_returns_empty_for_no_keyframes(self, tmp_path):
+        """REQ-006: Returns [] when frame_files is empty."""
+        from unittest.mock import MagicMock
+        client = MagicMock()
+
+        result = generate_temporal_segments(
+            self._make_scene(), {"action": "Test."}, [], str(tmp_path), client
+        )
+        assert result == []
+        client.models.generate_content.assert_not_called()
+
+    @pytest.mark.req("SPEC-300/REQ-007")
+    def test_returns_empty_on_gemini_failure(self, tmp_path):
+        """REQ-007: Returns [] when a Gemini call raises — no partial segments stored."""
+        from unittest.mock import MagicMock
+        for name in ["0001-01.jpg", "0001-02.jpg"]:
+            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        client = MagicMock()
+        client.models.generate_content.side_effect = Exception("API error")
+
+        result = generate_temporal_segments(
+            self._make_scene(), {"action": "Test."}, ["0001-01.jpg", "0001-02.jpg"],
+            str(tmp_path), client,
+        )
+        assert result == []
+
+    @pytest.mark.req("SPEC-300/REQ-003", "SPEC-300/REQ-004")
+    def test_frames_split_at_midpoint(self, tmp_path):
+        """REQ-003/REQ-004: Two Gemini calls made — one per half of keyframes."""
+        from unittest.mock import MagicMock, call
+        frames = [f"0001-0{i}.jpg" for i in range(1, 5)]
+        for name in frames:
+            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+
+        seg_desc = {"action": "Desc."}
+        client = self._make_mock_client([seg_desc, seg_desc])
+
+        generate_temporal_segments(
+            self._make_scene(), {"action": "Whole."}, frames, str(tmp_path), client
+        )
+
+        # Should have been called exactly twice (once per half)
+        assert client.models.generate_content.call_count == 2
