@@ -13,7 +13,7 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 
 ## Key Files
 
-- `encode.py` -- encoder CLI (stage1: shots+keyframes, stage2: prompts via Gemini, stage3: character registry via Gemini)
+- `encode.py` -- encoder CLI (stage1: shots+keyframes, stage2: prompts via Gemini, stage3: character registry via Gemini; supports `--tmdb-id` for TMDB-seeded supervised discovery)
 - `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols
 - `prompt_format.py` -- prompt formatting functions (CAMERA_TERMS, format_prompt, model-specific variants)
 - `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod WAN T2V, RunPod VACE)
@@ -42,6 +42,15 @@ python pipeline.py media/film.mp4 -o output/film --strategy fal-seedance --skip 
 # Encode
 python encode.py stage1 media/film.mp4 -o output/film
 python encode.py stage2 output/film
+
+# Stage 3: character registry (unsupervised — no TMDB)
+python encode.py stage3 output/film
+
+# Stage 3: TMDB-seeded (recommended for movies)
+# Requires TMDB_API_KEY in .env. Get a free key at themoviedb.org/settings/api.
+# Find the TMDB ID on themoviedb.org (e.g. Star Wars IV = 11)
+python encode.py stage3 output/film --tmdb-id 11
+python encode.py stage3 output/film --tmdb-id 60059 --tmdb-type tv  # TV series
 
 # Decode (generate clips)
 python decode.py output/film --strategy fal-seedance

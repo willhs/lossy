@@ -66,6 +66,17 @@ When you need finer control, run stages directly:
 .venv/bin/python encode.py stage2 output/<name>
 ```
 
+**Stage 3: character registry (always run before decode with runpod-vace strategy):**
+```bash
+# With TMDB seeding (recommended — finds more characters, especially unnamed ones)
+# Requires TMDB_API_KEY in .env. Find the TMDB ID at themoviedb.org.
+.venv/bin/python encode.py stage3 output/<name> --tmdb-id <id>               # movie
+.venv/bin/python encode.py stage3 output/<name> --tmdb-id <id> --tmdb-type tv  # TV series
+
+# Without TMDB (fallback — unsupervised, may miss generic-looking characters)
+.venv/bin/python encode.py stage3 output/<name>
+```
+
 **Decode (video generation):**
 ```bash
 .venv/bin/python decode.py output/<name> --strategy runpod-wan
@@ -117,6 +128,7 @@ For long batches, run in background and check completion:
 output/<name>/
   manifest.json          # Shot boundaries (encode1)
   prompts.json           # AI-generated descriptions (encode2)
+  characters.json        # Character registry with descriptions + shot assignments (encode3)
   clips/<strategy>/      # Generated video clips (decode)
   audio/<audio-strategy>/ # Generated audio clips (audio)
   speech/                # TTS clips (speech, if enabled)
