@@ -784,6 +784,7 @@ function setActiveShot(idx) {
   } else {
     promptText.textContent = '(no prompt data)';
   }
+  saveSettings();
 }
 
 function jumpToShot(idx) {
@@ -957,8 +958,12 @@ function init(originalSrc, base) {
 
     const sorted = [...new Set([...paneA.decodedShots, ...paneB.decodedShots])].sort((a, b) => a - b);
     const firstDecoded = sorted[0] || 0;
-    setActiveShot(firstDecoded);
-    seekBoth(scenes[firstDecoded].start_s, firstDecoded);
+    const saved = loadSettings();
+    const startShot = (saved.sourceFile === currentSourceFile && saved.shotIdx >= 0 && saved.shotIdx < scenes.length)
+      ? saved.shotIdx
+      : firstDecoded;
+    setActiveShot(startShot);
+    seekBoth(scenes[startShot].start_s, startShot);
   });
 }
 
@@ -1001,6 +1006,7 @@ function saveSettings() {
     viewMode,
     useFileUrls: useFileUrls.checked,
     sourceFile: currentSourceFile,
+    shotIdx: activeShot,
   };
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
 }
