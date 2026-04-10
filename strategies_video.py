@@ -11,7 +11,7 @@ import threading
 import time
 
 from clip_types import AudioClipResult, ClipResult
-from prompt_format import _format_prompt_wan, _format_prompt_seedance, format_prompt
+from prompt_format import _format_prompt_wan, _format_prompt_seedance, format_prompt, vary_prompt_for_part
 
 
 class GenerationStrategy:
@@ -158,9 +158,18 @@ class FalSeedanceStrategy(GenerationStrategy):
 
             clip_path = os.path.join(clips_dir, clip_name)
 
+            # Per-part prompt: use encoded temporal segments if available, else generic cues
+            temporal_segs = (entry or {}).get("temporal_segments") if len(durations) > 1 else None
+            if temporal_segs:
+                seg_idx = round(part_idx * (len(temporal_segs) - 1) / max(len(durations) - 1, 1))
+                part_entry = dict(entry, description=temporal_segs[seg_idx])
+                part_prompt = self.format_prompt(part_entry)
+            else:
+                part_prompt = vary_prompt_for_part(prompt, part_idx, len(durations))
+
             try:
                 arguments = {
-                    "prompt": prompt,
+                    "prompt": part_prompt,
                     "aspect_ratio": "16:9",
                     "resolution": "480p",
                     "duration": str(duration),
@@ -634,8 +643,17 @@ class RunPodWanStrategy(GenerationStrategy):
             else:
                 clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp4"
 
+            # Per-part prompt: use encoded temporal segments if available, else generic cues
+            temporal_segs = (entry or {}).get("temporal_segments") if len(frame_counts) > 1 else None
+            if temporal_segs:
+                seg_idx = round(part_idx * (len(temporal_segs) - 1) / max(len(frame_counts) - 1, 1))
+                part_entry = dict(entry, description=temporal_segs[seg_idx])
+                part_prompt = self.format_prompt(part_entry)
+            else:
+                part_prompt = vary_prompt_for_part(prompt, part_idx, len(frame_counts))
+
             clip_result = self._generate_one_clip(
-                prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
+                part_prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
             )
             if clip_result is None:
                 return []  # Fail the whole shot if any part fails

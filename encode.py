@@ -535,6 +535,83 @@ Return a JSON object with these fields:
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
 
+SEGMENT_THRESHOLD_S = 8.0  # shots longer than this get temporal_segments generated
+
+SEGMENT_SYSTEM_PROMPT = """You are a film analysis expert. Given frames from a specific temporal portion of a longer film shot, describe what happens in THESE frames for use as a video generation prompt.
+
+The full shot description is provided as context. Your task: describe this specific portion as if it were its own shot, using the same JSON schema. Focus on what specifically happens or changes in these frames.
+
+Return a JSON object with these fields: shot_type, camera_movement, subjects, action, lighting, color_palette, mood, setting, sound.
+
+Output ONLY valid JSON, no markdown."""
+
+
+def generate_temporal_segments(
+    scene: dict,
+    main_description: dict,
+    frame_files: list[str],
+    keyframes_dir: str,
+    client,
+) -> list[dict]:
+    """Generate first-half and second-half descriptions for a long shot.
+
+    Each segment is described using its keyframes plus the whole-shot description
+    as context, so Gemini can focus on temporal specifics while staying coherent.
+
+    Returns a list of 2 description dicts (same JSON schema as main description),
+    or [] on failure or too few keyframes.
+    """
+    from google.genai import types
+
+    n = len(frame_files)
+    if n < 2:
+        return []
+
+    mid = n // 2
+    halves = [frame_files[:mid], frame_files[mid:]]
+    segment_labels = ["first half", "second half"]
+
+    descriptions = []
+    for label, files in zip(segment_labels, halves):
+        parts = []
+        for fname in files:
+            fpath = os.path.join(keyframes_dir, fname)
+            if os.path.exists(fpath):
+                with open(fpath, "rb") as f:
+                    data = f.read()
+                parts.append(types.Part.from_bytes(data=data, mime_type="image/jpeg"))
+
+        if not parts:
+            return []
+
+        context = (
+            f"Full shot duration: {scene['duration_s']:.1f}s. "
+            f"You are describing the {label} ({len(files)} of {n} keyframes).\n"
+            f"Full shot description for context: {json.dumps(main_description)}\n"
+            f"Describe what specifically happens in these {len(parts)} frames."
+        )
+        user_content = parts + [types.Part.from_text(text=context)]
+
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite-preview",
+                contents=[types.Content(role="user", parts=user_content)],
+                config=types.GenerateContentConfig(
+                    system_instruction=SEGMENT_SYSTEM_PROMPT,
+                    temperature=0.3,
+                    response_mime_type="application/json",
+                ),
+            )
+            text = response.text
+            if not text:
+                return []
+            descriptions.append(json.loads(text.strip()))
+        except Exception as e:
+            print(f"  Segment description failed ({label}): {e}")
+            return []
+
+    return descriptions if len(descriptions) == 2 else []
+
 
 def generate_prompts(
     scenes: list[dict],
@@ -671,6 +748,13 @@ def generate_prompts(
                 "dialogue": dialogue if dialogue else None,
                 "description": description,
             }
+
+            # Generate temporal segments for long shots so decode can vary prompts per split part
+            if scene["duration_s"] >= SEGMENT_THRESHOLD_S:
+                segs = generate_temporal_segments(scene, description, frame_files, keyframes_dir, client)
+                if segs:
+                    prompt_entry["temporal_segments"] = segs
+
             prompts.append(prompt_entry)
 
             new_count = len(prompts) - len(existing)
@@ -721,6 +805,10 @@ def generate_prompts(
                         "dialogue": dialogue if dialogue else None,
                         "description": description,
                     }
+                    if scene["duration_s"] >= SEGMENT_THRESHOLD_S:
+                        segs = generate_temporal_segments(scene, description, frame_files, keyframes_dir, client)
+                        if segs:
+                            prompt_entry["temporal_segments"] = segs
                     prompts.append(prompt_entry)
                 except Exception as e2:
                     errors += 1

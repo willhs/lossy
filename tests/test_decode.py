@@ -24,6 +24,7 @@ from decode import (
     _format_prompt_wan,
     filter_speech_from_sound,
     format_prompt,
+    vary_prompt_for_part,
 )
 
 
@@ -968,6 +969,72 @@ class TestStructuralIntegrity:
         assert result is not None
         assert ",," not in result
         assert ";," not in result
+
+
+# ---------------------------------------------------------------------------
+# vary_prompt_for_part
+# ---------------------------------------------------------------------------
+
+class TestVaryPromptForPart:
+    """Tests for the temporal progression cue fallback (SPEC-300, REQ-020 to REQ-024)."""
+
+    @pytest.mark.req("SPEC-300/REQ-024")
+    def test_single_part_unchanged(self):
+        """REQ-024: Single-part shot prompt returned unchanged."""
+        assert vary_prompt_for_part("A ship flies.", 0, 1) == "A ship flies."
+
+    @pytest.mark.req("SPEC-300/REQ-024")
+    def test_zero_total_unchanged(self):
+        """REQ-024: Zero total_parts returns prompt unchanged."""
+        assert vary_prompt_for_part("A ship flies.", 0, 0) == "A ship flies."
+
+    @pytest.mark.req("SPEC-300/REQ-020")
+    def test_first_of_two(self):
+        """REQ-020: First part gets 'Beginning of the action.' appended."""
+        result = vary_prompt_for_part("A ship flies.", 0, 2)
+        assert result == "A ship flies. Beginning of the action."
+
+    @pytest.mark.req("SPEC-300/REQ-021")
+    def test_last_of_two(self):
+        """REQ-021: Last part gets 'The action concludes.' appended."""
+        result = vary_prompt_for_part("A ship flies.", 1, 2)
+        assert result == "A ship flies. The action concludes."
+
+    @pytest.mark.req("SPEC-300/REQ-020")
+    def test_first_of_three(self):
+        """REQ-020: First part of 3 gets beginning cue."""
+        result = vary_prompt_for_part("A door opens.", 0, 3)
+        assert result == "A door opens. Beginning of the action."
+
+    @pytest.mark.req("SPEC-300/REQ-022")
+    def test_middle_of_three(self):
+        """REQ-022: Middle part gets 'The action continues.' appended."""
+        result = vary_prompt_for_part("A door opens.", 1, 3)
+        assert result == "A door opens. The action continues."
+
+    @pytest.mark.req("SPEC-300/REQ-021")
+    def test_last_of_three(self):
+        """REQ-021: Last part of 3 gets conclusion cue."""
+        result = vary_prompt_for_part("A door opens.", 2, 3)
+        assert result == "A door opens. The action concludes."
+
+    @pytest.mark.req("SPEC-300/REQ-022")
+    def test_middle_of_four(self):
+        """REQ-022: Middle parts (index 1) of 4-part split get continues cue."""
+        result = vary_prompt_for_part("Running.", 1, 4)
+        assert result == "Running. The action continues."
+
+    @pytest.mark.req("SPEC-300/REQ-022")
+    def test_second_middle_of_four(self):
+        """REQ-022: Middle parts (index 2) of 4-part split get continues cue."""
+        result = vary_prompt_for_part("Running.", 2, 4)
+        assert result == "Running. The action continues."
+
+    @pytest.mark.req("SPEC-300/REQ-023")
+    def test_cue_appended_with_space(self):
+        """REQ-023: Cue is separated from base prompt by a single space."""
+        result = vary_prompt_for_part("base", 0, 2)
+        assert result.startswith("base ")
 
 
 # ---------------------------------------------------------------------------

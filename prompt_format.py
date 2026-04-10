@@ -133,6 +133,23 @@ def _format_prompt_wan(entry: dict) -> str:
     return " ".join(parts)
 
 
+def vary_prompt_for_part(prompt: str, part_index: int, total_parts: int) -> str:
+    """Fallback: append a generic temporal progression cue for split-shot prompts.
+
+    Used when temporal_segments are not available in the encoded entry.
+    Returns prompt unchanged if total_parts <= 1.
+    """
+    if total_parts <= 1:
+        return prompt
+    if part_index == 0:
+        cue = "Beginning of the action."
+    elif part_index == total_parts - 1:
+        cue = "The action concludes."
+    else:
+        cue = "The action continues."
+    return f"{prompt} {cue}"
+
+
 def _format_prompt_seedance(entry: dict) -> str:
     """Seedance-optimized prompt: ~30-60 words, single action, intensity adverbs."""
     desc = entry["description"]
