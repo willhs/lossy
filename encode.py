@@ -748,6 +748,201 @@ def generate_prompts(
 # Stage 3: Character registry
 # ---------------------------------------------------------------------------
 
+
+def _normalize_character_name(name):
+    """Strip TMDB annotations like '(voice)', '(uncredited)', and ' / alternate'."""
+    name = re.sub(r'\s*\([^)]*\)', '', name).strip()
+    return name.split(' / ')[0].strip()
+
+
+def _to_name_key(display_name):
+    """Convert a character display name to a lowercase_underscore identifier."""
+    normalized = _normalize_character_name(display_name)
+    return re.sub(r'[^a-z0-9]+', '_', normalized.lower()).strip('_')
+
+
+def fetch_tmdb_cast(tmdb_id, api_key, media_type="movie"):
+    """Fetch top 30 cast members from TMDB API.
+
+    Returns list of dicts: {display_name, actor, name_key}.
+    Raises urllib.error.URLError or ValueError on failure.
+    """
+    import urllib.request
+    url = (
+        f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/credits"
+        f"?api_key={api_key}&language=en-US"
+    )
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        data = json.loads(resp.read())
+    cast = data.get("cast", [])[:30]
+    result = []
+    for c in cast:
+        raw = c.get("character", "")
+        if not raw:
+            continue
+        display = _normalize_character_name(raw)
+        if display:
+            result.append({
+                "display_name": display,
+                "actor": c.get("name", ""),
+                "name_key": _to_name_key(display),
+            })
+    return result
+
+
+def _text_match_cast(cast_entries, subjects_by_shot):
+    """Word-boundary match cast character names against shot subject strings.
+
+    Returns:
+        pre_assignments: dict mapping shot_idx -> list of matching cast_entry dicts
+        unmatched: list of shot strings where no cast member was found
+    """
+    patterns = [
+        (entry, re.compile(r'\b' + re.escape(entry['display_name']) + r'\b', re.IGNORECASE))
+        for entry in cast_entries
+    ]
+    pre_assignments = {}
+    unmatched = []
+    for shot_text in subjects_by_shot:
+        m = re.match(r'Shot (\d+):', shot_text)
+        if not m:
+            unmatched.append(shot_text)
+            continue
+        shot_idx = int(m.group(1))
+        matched = [entry for entry, pat in patterns if pat.search(shot_text)]
+        if matched:
+            pre_assignments[shot_idx] = matched
+        else:
+            unmatched.append(shot_text)
+    return pre_assignments, unmatched
+
+
+def _make_supervised_system_prompt(cast_entries):
+    """Build a Gemini system prompt that includes the TMDB cast list."""
+    cast_lines = "\n".join(
+        f"- {e['display_name']} (played by {e['actor']})"
+        for e in cast_entries
+    )
+    return (
+        "You are a film analysis expert. This film has the following confirmed cast:\n\n"
+        f"{cast_lines}\n\n"
+        "Given subject descriptions from shots where cast members weren't explicitly named, "
+        "identify which cast member appears in each shot.\n\n"
+        "Return a JSON object with a \"characters\" array. Each entry has:\n"
+        "- \"name\": lowercase identifier matching the cast list (e.g., \"luke_skywalker\") — underscores, no spaces\n"
+        "- \"display_name\": character's name as listed in credits\n"
+        "- \"description\": canonical appearance description (~50-80 words): age, gender, skin tone, hair, eyes, costume\n"
+        "- \"shots\": list of shot indices (integers) where this character appears\n\n"
+        "Rules:\n"
+        "- Only match subjects to the provided cast list — do not invent unlisted characters\n"
+        "- Merge all descriptions of the same character across shots\n"
+        "- Include characters found in even 1 shot (pre-text-matched shots will supplement the count)\n"
+        "- Limit to the 15 most prominent cast members found\n\n"
+        "Output ONLY valid JSON."
+    )
+
+
+def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
+    """TMDB-seeded two-step character discovery: text match then supervised Gemini."""
+    from google.genai import types
+
+    BATCH_SIZE = 200
+
+    # Step 1: text match
+    pre_assignments, unmatched = _text_match_cast(cast_entries, subjects_by_shot)
+    print(f"  Text-matched: {len(pre_assignments)} shots")
+    print(f"  Sending to Gemini: {len(unmatched)} unmatched shots")
+
+    # Step 2: supervised Gemini in batches on unmatched shots
+    system_prompt = _make_supervised_system_prompt(cast_entries)
+    all_chars = {}  # name_key -> character dict
+
+    for batch_start in range(0, len(unmatched), BATCH_SIZE):
+        batch = unmatched[batch_start:batch_start + BATCH_SIZE]
+        user_text = (
+            f"Subject descriptions from {len(batch)} shots:\n\n" + "\n".join(batch)
+        )
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite-preview",
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.3,
+                response_mime_type="application/json",
+            ),
+        )
+        try:
+            batch_data = json.loads(response.text.strip())
+        except (json.JSONDecodeError, AttributeError):
+            batch_num = batch_start // BATCH_SIZE + 1
+            print(f"  Warning: batch {batch_num} response not valid JSON, skipping")
+            continue
+
+        for char in batch_data.get("characters", []):
+            key = char.get("name", "")
+            if not key:
+                continue
+            if key not in all_chars:
+                all_chars[key] = {**char, "shots": list(char.get("shots", []))}
+            else:
+                existing = all_chars[key]
+                existing["shots"] = sorted(set(existing["shots"]) | set(char.get("shots", [])))
+                if len(char.get("description", "")) > len(existing.get("description", "")):
+                    existing["description"] = char["description"]
+
+    # Step 3: merge pre-assigned shots into character list
+    chars_list = list(all_chars.values())
+    for shot_idx, cast_matches in pre_assignments.items():
+        for entry in cast_matches:
+            key = entry["name_key"]
+            found = next((c for c in chars_list if c["name"] == key), None)
+            if found:
+                if shot_idx not in found["shots"]:
+                    found["shots"].append(shot_idx)
+                    found["shots"].sort()
+            else:
+                # Character seen only via text match — add stub, fill description below
+                chars_list.append({
+                    "name": key,
+                    "display_name": entry["display_name"],
+                    "description": "",
+                    "shots": [shot_idx],
+                })
+
+    # Step 4: filter to characters appearing in >= 2 shots
+    chars_list = [c for c in chars_list if len(c["shots"]) >= 2]
+
+    # Step 5: generate descriptions for text-match-only stubs
+    stubs = [c for c in chars_list if not c.get("description")]
+    if stubs:
+        subjects_map = {
+            e["index"]: e.get("description", {}).get("subjects", "")
+            for e in prompts
+        }
+        for stub in stubs:
+            shot_subjects = [
+                f"Shot {s}: {subjects_map[s]}"
+                for s in stub["shots"]
+                if subjects_map.get(s)
+            ]
+            if not shot_subjects:
+                continue
+            desc_prompt = (
+                f"Character: {stub['display_name']}\n"
+                f"Appears in these shots:\n" + "\n".join(shot_subjects[:20]) + "\n\n"
+                "Write a canonical appearance description (~50-80 words): "
+                "age, gender, skin tone, hair, eyes, costume."
+            )
+            resp = client.models.generate_content(
+                model="gemini-3.1-flash-lite-preview",
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text=desc_prompt)])],
+                config=types.GenerateContentConfig(temperature=0.3),
+            )
+            stub["description"] = resp.text.strip()
+
+    return {"characters": chars_list}
+
+
 STAGE3_SYSTEM_PROMPT = """You are a film analysis expert. Given a list of subject descriptions from every shot of a film, identify the distinct named characters and create a canonical appearance description for each.
 
 Return a JSON object with a "characters" array. Each character entry has:
@@ -882,7 +1077,7 @@ def run_stage3(args):
         print("No subjects found in prompts.json")
         sys.exit(1)
 
-    # Load .env for API key
+    # Load .env for API keys
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(env_path):
         with open(env_path) as ef:
@@ -899,24 +1094,45 @@ def run_stage3(args):
 
     client = genai.Client(api_key=api_key)
 
-    user_text = (
-        f"Film has {len(prompts)} shots. "
-        f"Subject descriptions from each shot:\n\n"
-        + "\n".join(subjects_by_shot)
-    )
+    # --- TMDB supervised path ---
+    tmdb_id = getattr(args, 'tmdb_id', None)
+    characters_data = None
+    if tmdb_id:
+        tmdb_api_key = os.environ.get("TMDB_API_KEY")
+        if not tmdb_api_key:
+            print("Warning: --tmdb-id set but TMDB_API_KEY not found; using unsupervised mode")
+        else:
+            try:
+                media_type = getattr(args, 'tmdb_type', 'movie') or 'movie'
+                cast_entries = fetch_tmdb_cast(tmdb_id, tmdb_api_key, media_type)
+                print(f"TMDB: fetched {len(cast_entries)} cast members")
+                print(f"Analyzing {len(subjects_by_shot)} shots (supervised)...")
+                characters_data = _run_supervised_stage3(
+                    client, cast_entries, subjects_by_shot, prompts
+                )
+            except Exception as e:
+                print(f"Warning: TMDB fetch failed ({e}); falling back to unsupervised mode")
 
-    print(f"Analyzing subjects across {len(prompts)} shots...")
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite-preview",
-        contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
-        config=types.GenerateContentConfig(
-            system_instruction=STAGE3_SYSTEM_PROMPT,
-            temperature=0.3,
-            response_mime_type="application/json",
-        ),
-    )
+    # --- Unsupervised path (fallback or no --tmdb-id) ---
+    if characters_data is None:
+        user_text = (
+            f"Film has {len(prompts)} shots. "
+            f"Subject descriptions from each shot:\n\n"
+            + "\n".join(subjects_by_shot)
+        )
 
-    characters_data = json.loads(response.text.strip())
+        print(f"Analyzing subjects across {len(prompts)} shots...")
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite-preview",
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
+            config=types.GenerateContentConfig(
+                system_instruction=STAGE3_SYSTEM_PROMPT,
+                temperature=0.3,
+                response_mime_type="application/json",
+            ),
+        )
+
+        characters_data = json.loads(response.text.strip())
 
     # Validate structure
     characters = characters_data.get("characters", [])
@@ -1041,6 +1257,16 @@ def main():
     # Stage 3
     s3 = subparsers.add_parser("stage3", help="Build character registry from prompts")
     s3.add_argument("output_dir", help="Output directory from stage 2")
+    s3.add_argument(
+        "--tmdb-id",
+        help="TMDB movie/TV ID for cast seeding (e.g. 11 for Star Wars IV)",
+    )
+    s3.add_argument(
+        "--tmdb-type",
+        choices=["movie", "tv"],
+        default="movie",
+        help="TMDB media type (default: movie)",
+    )
     s3.set_defaults(func=run_stage3)
 
     args = parser.parse_args()

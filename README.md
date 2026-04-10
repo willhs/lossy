@@ -97,6 +97,8 @@ pip install scenedetect[opencv] google-genai replicate fal-client httpx runpod t
 
 Environment variables (in `.env`):
 - `GOOGLE_API_KEY` -- Gemini API key (encode stage 2)
+- `GEMINI_API_KEY` -- Gemini API key (encode stage 3; same value as GOOGLE_API_KEY)
+- `TMDB_API_KEY` -- TMDB API key (encode stage 3 with `--tmdb-id`; free at themoviedb.org/settings/api)
 - `REPLICATE_API_TOKEN` -- Replicate API token (replicate-wan strategy)
 - `FAL_KEY` -- fal.ai API key (fal-seedance strategies)
 - `RUNPOD_API_KEY` -- RunPod API key (runpod-wan strategy)

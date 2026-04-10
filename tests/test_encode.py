@@ -8,7 +8,11 @@ import numpy as np
 import pytest
 
 from encode import (
+    _normalize_character_name,
     _refine_shot_assignments,
+    _run_supervised_stage3,
+    _text_match_cast,
+    _to_name_key,
     aggregate_shot_audio,
     align_subtitles_to_shots,
     class_to_bucket,
@@ -721,3 +725,359 @@ class TestRefineShotAssignments:
 
         result = _refine_shot_assignments(client, characters_data, prompts, ["Shot 1: A man"])
         assert result["characters"][0]["shots"] == [0]  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# TMDB helper functions
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeCharacterName:
+    def test_strips_voice(self):
+        assert _normalize_character_name("Darth Vader (voice)") == "Darth Vader"
+
+    def test_strips_uncredited(self):
+        assert _normalize_character_name("Jabba the Hutt (uncredited)") == "Jabba the Hutt"
+
+    def test_strips_archive_footage(self):
+        assert _normalize_character_name("Obi-Wan Kenobi (archive footage)") == "Obi-Wan Kenobi"
+
+    def test_takes_first_alt_name(self):
+        assert _normalize_character_name("Han Solo / Narrator") == "Han Solo"
+
+    def test_no_annotation(self):
+        assert _normalize_character_name("Luke Skywalker") == "Luke Skywalker"
+
+    def test_empty_string(self):
+        assert _normalize_character_name("") == ""
+
+    def test_strips_and_splits(self):
+        assert _normalize_character_name("Yoda (voice) / The Jedi Master") == "Yoda"
+
+
+class TestToNameKey:
+    def test_basic(self):
+        assert _to_name_key("Luke Skywalker") == "luke_skywalker"
+
+    def test_special_chars(self):
+        assert _to_name_key("Obi-Wan Kenobi") == "obi_wan_kenobi"
+
+    def test_single_word(self):
+        assert _to_name_key("Chewbacca") == "chewbacca"
+
+    def test_with_annotation(self):
+        # _to_name_key normalizes first
+        assert _to_name_key("R2-D2 (voice)") == "r2_d2"
+
+    def test_numbers_preserved(self):
+        assert _to_name_key("C-3PO") == "c_3po"
+
+
+class TestTextMatchCast:
+    CAST = [
+        {"display_name": "Luke Skywalker", "actor": "Mark Hamill", "name_key": "luke_skywalker"},
+        {"display_name": "Han Solo", "actor": "Harrison Ford", "name_key": "han_solo"},
+        {"display_name": "Jawas", "actor": "", "name_key": "jawas"},
+    ]
+
+    def test_exact_match(self):
+        subjects = ["Shot 0: Luke Skywalker in a desert"]
+        pre, unmatched = _text_match_cast(self.CAST, subjects)
+        assert 0 in pre
+        assert pre[0][0]["name_key"] == "luke_skywalker"
+        assert unmatched == []
+
+    def test_no_match(self):
+        subjects = ["Shot 5: A small hooded creature"]
+        pre, unmatched = _text_match_cast(self.CAST, subjects)
+        assert pre == {}
+        assert len(unmatched) == 1
+
+    def test_word_boundary_no_partial(self):
+        """'Han' should not match in 'Hangar'."""
+        subjects = ["Shot 2: Wide shot of the Hangar bay"]
+        pre, unmatched = _text_match_cast(self.CAST, subjects)
+        assert pre == {}
+        assert len(unmatched) == 1
+
+    def test_case_insensitive(self):
+        subjects = ["Shot 1: han solo shoots first"]
+        pre, unmatched = _text_match_cast(self.CAST, subjects)
+        assert 1 in pre
+        assert pre[1][0]["name_key"] == "han_solo"
+
+    def test_multiple_matches_in_one_shot(self):
+        subjects = ["Shot 3: Luke Skywalker and Han Solo face off"]
+        pre, unmatched = _text_match_cast(self.CAST, subjects)
+        assert 3 in pre
+        assert len(pre[3]) == 2
+        keys = {e["name_key"] for e in pre[3]}
+        assert keys == {"luke_skywalker", "han_solo"}
+
+    def test_mixed_matched_and_unmatched(self):
+        subjects = [
+            "Shot 0: Luke Skywalker looking at twin suns",
+            "Shot 1: A young man stares into the distance",
+        ]
+        pre, unmatched = _text_match_cast(self.CAST, subjects)
+        assert 0 in pre
+        assert len(unmatched) == 1
+        assert "Shot 1" in unmatched[0]
+
+
+# ---------------------------------------------------------------------------
+# Supervised stage 3
+# ---------------------------------------------------------------------------
+
+
+def _make_supervised_mock_client(gemini_response):
+    """Build a mock Gemini client that returns the given response for all calls."""
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = MagicMock(
+        text=json.dumps(gemini_response)
+    )
+    return mock_client
+
+
+CAST_ENTRIES = [
+    {"display_name": "Luke Skywalker", "actor": "Mark Hamill", "name_key": "luke_skywalker"},
+    {"display_name": "Jawas", "actor": "", "name_key": "jawas"},
+]
+
+PROMPTS_WITH_SUBJECTS = [
+    {"index": 0, "description": {"subjects": "Luke Skywalker, young man in white tunic"}},
+    {"index": 1, "description": {"subjects": "Small hooded creatures scavenging droids"}},
+    {"index": 2, "description": {"subjects": "Luke Skywalker at moisture vaporator"}},
+    {"index": 3, "description": {"subjects": "Small hooded figures in desert canyon"}},
+]
+
+
+class TestRunSupervisedStage3:
+    def test_gemini_results_merged_with_text_match(self):
+        """Shots 0 and 2 are text-matched (Luke); shots 1 and 3 go to Gemini (Jawas)."""
+        gemini_response = {
+            "characters": [
+                {
+                    "name": "jawas",
+                    "display_name": "Jawas",
+                    "description": "Small hooded creatures in brown robes with glowing eyes.",
+                    "shots": [1, 3],
+                }
+            ]
+        }
+        client = _make_supervised_mock_client(gemini_response)
+        subjects = [
+            "Shot 0: Luke Skywalker, young man in white tunic",
+            "Shot 1: Small hooded creatures scavenging droids",
+            "Shot 2: Luke Skywalker at moisture vaporator",
+            "Shot 3: Small hooded figures in desert canyon",
+        ]
+        result = _run_supervised_stage3(client, CAST_ENTRIES, subjects, PROMPTS_WITH_SUBJECTS)
+        chars = {c["name"]: c for c in result["characters"]}
+
+        # Jawas found by Gemini
+        assert "jawas" in chars
+        assert sorted(chars["jawas"]["shots"]) == [1, 3]
+
+        # Luke found by text match and merged in
+        assert "luke_skywalker" in chars
+        assert sorted(chars["luke_skywalker"]["shots"]) == [0, 2]
+
+    def test_min_two_shots_filter(self):
+        """Characters with only 1 shot after merge should be excluded."""
+        gemini_response = {
+            "characters": [
+                {
+                    "name": "jawas",
+                    "display_name": "Jawas",
+                    "description": "Small creatures.",
+                    "shots": [1],  # only 1 shot from Gemini; no text-match supplement
+                }
+            ]
+        }
+        client = _make_supervised_mock_client(gemini_response)
+        subjects = ["Shot 1: Small hooded creatures"]
+        prompts = [{"index": 1, "description": {"subjects": "Small hooded creatures"}}]
+        result = _run_supervised_stage3(client, CAST_ENTRIES, subjects, prompts)
+        names = [c["name"] for c in result["characters"]]
+        assert "jawas" not in names
+
+    def test_stub_description_filled(self):
+        """Text-match-only characters (no Gemini match) get descriptions generated."""
+        # All shots are text-matched (0 unmatched), so no batch call occurs.
+        # The only Gemini call is the description-generation call for Luke.
+        desc_response = "Young man in his early twenties with sandy blond hair."
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(text=desc_response)
+        subjects = [
+            "Shot 0: Luke Skywalker in white tunic",
+            "Shot 2: Luke Skywalker at vaporator",
+        ]
+        prompts = [
+            {"index": 0, "description": {"subjects": "Luke Skywalker in white tunic"}},
+            {"index": 2, "description": {"subjects": "Luke Skywalker at vaporator"}},
+        ]
+        result = _run_supervised_stage3(mock_client, CAST_ENTRIES, subjects, prompts)
+        chars = {c["name"]: c for c in result["characters"]}
+        assert "luke_skywalker" in chars
+        assert chars["luke_skywalker"]["description"] == desc_response
+
+    def test_batches_large_unmatched_set(self):
+        """More than 200 unmatched shots triggers multiple Gemini batch calls."""
+        # 250 unmatched shots (none text-matched)
+        subjects = [f"Shot {i}: Generic subject" for i in range(250)]
+        prompts = [{"index": i, "description": {"subjects": "Generic subject"}} for i in range(250)]
+
+        mock_client = MagicMock()
+        # First batch: 200 shots → 1 char; second batch: 50 shots → same char
+        batch1 = {"characters": [{"name": "jawas", "display_name": "Jawas",
+                                   "description": "Small creatures.", "shots": list(range(200))}]}
+        batch2 = {"characters": [{"name": "jawas", "display_name": "Jawas",
+                                   "description": "Small hooded creatures.", "shots": list(range(200, 250))}]}
+        mock_client.models.generate_content.side_effect = [
+            MagicMock(text=json.dumps(batch1)),
+            MagicMock(text=json.dumps(batch2)),
+        ]
+
+        result = _run_supervised_stage3(mock_client, CAST_ENTRIES, subjects, prompts)
+        assert mock_client.models.generate_content.call_count == 2
+        chars = {c["name"]: c for c in result["characters"]}
+        assert "jawas" in chars
+        assert len(chars["jawas"]["shots"]) == 250
+
+    def test_invalid_batch_json_skipped(self):
+        """A batch returning invalid JSON is skipped without crashing."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(text="not json")
+        subjects = ["Shot 1: Generic subject", "Shot 2: Generic subject"]
+        prompts = [{"index": 1, "description": {"subjects": "s"}},
+                   {"index": 2, "description": {"subjects": "s"}}]
+        result = _run_supervised_stage3(mock_client, CAST_ENTRIES, subjects, prompts)
+        # No crash; empty registry (no chars met 2-shot threshold)
+        assert result == {"characters": []}
+
+
+# ---------------------------------------------------------------------------
+# run_stage3 with --tmdb-id
+# ---------------------------------------------------------------------------
+
+
+class TestRunStage3WithTmdb:
+    def _write_prompts(self, tmp_path, prompts_data=None):
+        if prompts_data is None:
+            prompts_data = PROMPTS_WITH_SUBJECTS
+        (tmp_path / "prompts.json").write_text(json.dumps(prompts_data))
+
+    def test_supervised_path_invoked_when_tmdb_id_set(self, tmp_path, monkeypatch):
+        """When --tmdb-id and TMDB_API_KEY are set, the supervised path is used."""
+        self._write_prompts(tmp_path)
+
+        gemini_response = {
+            "characters": [
+                {"name": "jawas", "display_name": "Jawas",
+                 "description": "Small creatures.", "shots": [1, 3]},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(gemini_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+        monkeypatch.setenv("TMDB_API_KEY", "test-tmdb")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        tmdb_cast = [
+            {"display_name": "Luke Skywalker", "actor": "Mark Hamill", "name_key": "luke_skywalker"},
+            {"display_name": "Jawas", "actor": "", "name_key": "jawas"},
+        ]
+        monkeypatch.setattr("encode.fetch_tmdb_cast", lambda *a, **kw: tmdb_cast)
+
+        args = argparse.Namespace(
+            output_dir=str(tmp_path), tmdb_id="11", tmdb_type="movie"
+        )
+        run_stage3(args)
+
+        data = json.loads((tmp_path / "characters.json").read_text())
+        names = {c["name"] for c in data["characters"]}
+        # Luke text-matched; Jawas from Gemini
+        assert "luke_skywalker" in names or "jawas" in names
+
+    def test_missing_tmdb_api_key_falls_back(self, tmp_path, monkeypatch, capsys):
+        """When TMDB_API_KEY is absent, falls back to unsupervised mode."""
+        self._write_prompts(tmp_path)
+
+        unsupervised_response = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "Young man.", "shots": [0, 2]},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(unsupervised_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+        monkeypatch.delenv("TMDB_API_KEY", raising=False)
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        args = argparse.Namespace(
+            output_dir=str(tmp_path), tmdb_id="11", tmdb_type="movie"
+        )
+        run_stage3(args)
+
+        captured = capsys.readouterr()
+        assert "Warning" in captured.out
+        assert "unsupervised" in captured.out.lower()
+
+    def test_tmdb_fetch_failure_falls_back(self, tmp_path, monkeypatch, capsys):
+        """When TMDB fetch raises an exception, falls back to unsupervised mode."""
+        self._write_prompts(tmp_path)
+
+        unsupervised_response = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "Young man.", "shots": [0, 2]},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(unsupervised_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+        monkeypatch.setenv("TMDB_API_KEY", "bad-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+        monkeypatch.setattr("encode.fetch_tmdb_cast", lambda *a, **kw: (_ for _ in ()).throw(
+            Exception("HTTP 401")
+        ))
+
+        args = argparse.Namespace(
+            output_dir=str(tmp_path), tmdb_id="11", tmdb_type="movie"
+        )
+        run_stage3(args)
+
+        captured = capsys.readouterr()
+        assert "Warning" in captured.out
+        assert "falling back" in captured.out.lower()
+
+    def test_no_tmdb_id_uses_unsupervised(self, tmp_path, monkeypatch):
+        """Without --tmdb-id, the original unsupervised path runs unchanged."""
+        self._write_prompts(tmp_path)
+
+        unsupervised_response = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "Young man.", "shots": [0, 2]},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(unsupervised_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        args = argparse.Namespace(output_dir=str(tmp_path), tmdb_id=None, tmdb_type="movie")
+        run_stage3(args)
+
+        data = json.loads((tmp_path / "characters.json").read_text())
+        assert data["characters"][0]["name"] == "luke"
