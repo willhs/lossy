@@ -22,11 +22,11 @@ There are two mechanisms:
 <!-- REQ-001 to REQ-009 -->
 **REQ-001**: For any shot with `duration_s >= 8.0`, the encoder shall attempt to generate `temporal_segments` alongside the main shot description.
 
-**REQ-002**: `temporal_segments` shall be a list of exactly 2 description dicts, each in the same JSON schema as the main shot `description`.
+**REQ-002**: `temporal_segments` shall be a list of `n_segments` description dicts, each in the same JSON schema as the main shot `description`, where `n_segments = max(2, ceil(duration_s / 12.0))`, capped at the number of available keyframes.
 
-**REQ-003**: The first segment shall be generated using only the keyframes from the first half of the shot (frames 0..⌊N/2⌋-1).
+**REQ-003**: Keyframes shall be divided into `n_segments` groups as evenly as possible using the slice `frame_files[i*N//n_segments : (i+1)*N//n_segments]` for each segment index `i`, where `N` is the total keyframe count.
 
-**REQ-004**: The second segment shall be generated using only the keyframes from the second half of the shot (frames ⌊N/2⌋..N-1).
+**REQ-004**: Each segment shall be described from its own keyframe group so that each covers a distinct temporal window of the shot.
 
 **REQ-005**: The whole-shot description shall be provided as context when generating each segment, so the segment description stays coherent with the full shot.
 

@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -535,7 +536,8 @@ Return a JSON object with these fields:
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
 
-SEGMENT_THRESHOLD_S = 8.0  # shots longer than this get temporal_segments generated
+SEGMENT_THRESHOLD_S = 8.0   # shots longer than this get temporal_segments generated
+SEGMENT_DURATION_S = 12.0  # one segment per this many seconds of shot duration
 
 SEGMENT_SYSTEM_PROMPT = """You are a film analysis expert. Given frames from a specific temporal portion of a longer film shot, describe what happens in THESE frames for use as a video generation prompt.
 
@@ -552,13 +554,16 @@ def generate_temporal_segments(
     frame_files: list[str],
     keyframes_dir: str,
     client,
+    n_segments: int | None = None,
 ) -> list[dict]:
-    """Generate first-half and second-half descriptions for a long shot.
+    """Generate N segment descriptions for a long shot by dividing keyframes evenly.
 
     Each segment is described using its keyframes plus the whole-shot description
     as context, so Gemini can focus on temporal specifics while staying coherent.
 
-    Returns a list of 2 description dicts (same JSON schema as main description),
+    n_segments defaults to ceil(duration_s / SEGMENT_DURATION_S), capped at keyframe count.
+
+    Returns a list of n_segments description dicts (same JSON schema as main description),
     or [] on failure or too few keyframes.
     """
     from google.genai import types
@@ -567,12 +572,15 @@ def generate_temporal_segments(
     if n < 2:
         return []
 
-    mid = n // 2
-    halves = [frame_files[:mid], frame_files[mid:]]
-    segment_labels = ["first half", "second half"]
+    if n_segments is None:
+        n_segments = max(2, math.ceil(scene["duration_s"] / SEGMENT_DURATION_S))
+    n_segments = min(n_segments, n)
+
+    # Split frames into n_segments groups as evenly as possible
+    groups = [frame_files[i * n // n_segments : (i + 1) * n // n_segments] for i in range(n_segments)]
 
     descriptions = []
-    for label, files in zip(segment_labels, halves):
+    for seg_idx, files in enumerate(groups):
         parts = []
         for fname in files:
             fpath = os.path.join(keyframes_dir, fname)
@@ -584,9 +592,10 @@ def generate_temporal_segments(
         if not parts:
             return []
 
+        label = f"segment {seg_idx + 1} of {n_segments}"
         context = (
             f"Full shot duration: {scene['duration_s']:.1f}s. "
-            f"You are describing the {label} ({len(files)} of {n} keyframes).\n"
+            f"You are describing {label} ({len(files)} of {n} keyframes).\n"
             f"Full shot description for context: {json.dumps(main_description)}\n"
             f"Describe what specifically happens in these {len(parts)} frames."
         )
@@ -610,7 +619,7 @@ def generate_temporal_segments(
             print(f"  Segment description failed ({label}): {e}")
             return []
 
-    return descriptions if len(descriptions) == 2 else []
+    return descriptions if len(descriptions) == n_segments else []
 
 
 def generate_prompts(
