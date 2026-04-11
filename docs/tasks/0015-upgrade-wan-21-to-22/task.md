@@ -3,7 +3,7 @@ id: task-0015
 type: spec
 purpose: "Evaluate upgrading RunPod WAN strategy from Wan 2.1 T2V-1.3B to Wan 2.2 TI2V-5B for better quality at acceptable cost/VRAM."
 tags: ["decode", "strategy", "runpod", "wan2.2", "upgrade"]
-related: ["research/0012-wan-model-variants/research.md", "design/adr/005-runpod-self-hosted-wan-strategy.md"]
+related: ["research/0012-wan-model-variants/research.md", "design/adr/008-runpod-self-hosted-wan-strategy.md"]
 created: 2026-04-08
 updated: 2026-04-08
 ---

@@ -28,7 +28,7 @@ Stage 3 reads all `description.subjects` fields from `prompts.json`, sends them 
 
 <!-- REQ-010 to REQ-019 -->
 **REQ-010**: Only characters appearing in at least 2 shots shall be included.
-**REQ-011**: The registry shall contain at most 5 characters.
+**REQ-011**: The registry shall favor the most prominent characters by shot count. The unsupervised path instructs Gemini to return ~5 characters; the TMDB-seeded path has no fixed cap and typically returns 10-20 characters drawn from the TMDB cast list.
 **REQ-012**: Characters shall be the most prominent by shot count.
 **REQ-013**: Different descriptions of the same character across shots shall be merged into one entry.
 
