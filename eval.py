@@ -12,6 +12,7 @@ from pathlib import Path
 import google.genai as genai
 from google.genai import types as genai_types
 
+import manifest
 from encode import (
     SYSTEM_PROMPT,
     aggregate_shot_audio,
@@ -788,16 +789,14 @@ def main():
 
     if args.command == "audio":
         output_dir = Path(args.output_dir)
-        raw = load_json(output_dir / "prompts.json")
-        prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
+        prompts, _ = manifest.load_prompts(str(output_dir))
         run_audio_clip_eval(output_dir, args.strategy, prompts, args.sample, args.report_dir)
         return
 
     # Video eval
     output_dir = Path(args.output_dir)
-    manifest = load_json(output_dir / "manifest.json")
-    raw = load_json(output_dir / "prompts.json")
-    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
+    shot_manifest = load_json(output_dir / "manifest.json")
+    prompts, _ = manifest.load_prompts(str(output_dir))
     reconstructed_path = output_dir / f"reconstructed_{args.strategy}.mp4"
 
     if not reconstructed_path.exists():
@@ -813,8 +812,8 @@ def main():
 
     # Scope scenes to only those that have prompts (manifest may cover more)
     prompt_indices = {p["index"] for p in prompts}
-    scenes = [s for s in manifest["scenes"] if s["index"] in prompt_indices]
-    print(f"Evaluating {len(scenes)} shots (of {len(manifest['scenes'])} in manifest)")
+    scenes = [s for s in shot_manifest["scenes"] if s["index"] in prompt_indices]
+    print(f"Evaluating {len(scenes)} shots (of {len(shot_manifest['scenes'])} in manifest)")
 
     # Phase 1: Extract keyframes
     print("Extracting keyframes from reconstructed video...")

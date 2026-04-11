@@ -29,6 +29,7 @@ def load_env():
 
 
 from clip_types import ClipResult, AudioClipResult, SpeechClipResult  # noqa: E402
+import manifest  # noqa: E402
 
 
 from prompt_format import (  # noqa: E402 -- re-export for backwards compat
@@ -139,15 +140,12 @@ def build_character_shot_map(characters_data: dict) -> dict:
 def run_decode(args, strategy: GenerationStrategy):
     """Main decode loop: read prompts, generate clips, track progress."""
     output_dir = args.output_dir
-    prompts_path = os.path.join(output_dir, "prompts.json")
 
-    if not os.path.exists(prompts_path):
-        print(f"Error: {prompts_path} not found. Run encoder first.")
+    try:
+        prompts, _ = manifest.load_prompts(output_dir)
+    except FileNotFoundError:
+        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
-
-    with open(prompts_path) as f:
-        raw = json.load(f)
-    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
 
     # Apply start index and limit
     if args.start_index:
@@ -158,11 +156,11 @@ def run_decode(args, strategy: GenerationStrategy):
         prompts = prompts[:args.limit]
         print(f"Processing {len(prompts)} shots")
 
-    clips_dir = os.path.join(output_dir, "clips", strategy.name)
+    clips_dir = manifest.clips_dir(output_dir, strategy.name)
     os.makedirs(clips_dir, exist_ok=True)
 
     # Track progress for resume (per-strategy)
-    progress_path = os.path.join(output_dir, f"decode_progress_{strategy.name}.json")
+    progress_path = manifest.decode_progress_path(output_dir, strategy.name)
     if os.path.exists(progress_path):
         with open(progress_path) as f:
             progress = json.load(f)
@@ -187,9 +185,7 @@ def run_decode(args, strategy: GenerationStrategy):
             continue
 
         # Skip if already generated (check for primary clip file or split parts)
-        primary_clip = os.path.join(clips_dir, f"{idx:04d}.mp4")
-        part_clip = os.path.join(clips_dir, f"{idx:04d}-01.mp4")
-        if os.path.exists(primary_clip) or os.path.exists(part_clip):
+        if manifest.clip_exists_for_shot(clips_dir, idx):
             completed_set.add(idx)
             if idx not in progress["completed"]:
                 progress["completed"].append(idx)
@@ -285,15 +281,12 @@ def run_decode(args, strategy: GenerationStrategy):
 def run_audio(args, strategy: AudioStrategy):
     """Audio generation loop: read prompts, generate audio clips, track progress."""
     output_dir = args.output_dir
-    prompts_path = os.path.join(output_dir, "prompts.json")
 
-    if not os.path.exists(prompts_path):
-        print(f"Error: {prompts_path} not found. Run encoder first.")
+    try:
+        prompts, _ = manifest.load_prompts(output_dir)
+    except FileNotFoundError:
+        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
-
-    with open(prompts_path) as f:
-        raw = json.load(f)
-    prompts = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
 
     # Apply start index and limit
     if args.start_index:
@@ -304,11 +297,11 @@ def run_audio(args, strategy: AudioStrategy):
         prompts = prompts[:args.limit]
         print(f"Processing {len(prompts)} shots")
 
-    audio_dir = os.path.join(output_dir, "audio", strategy.name)
+    audio_dir = manifest.audio_dir(output_dir, strategy.name)
     os.makedirs(audio_dir, exist_ok=True)
 
     # Progress tracking (per audio strategy)
-    progress_path = os.path.join(output_dir, f"audio_progress_{strategy.name}.json")
+    progress_path = manifest.audio_progress_path(output_dir, strategy.name)
     if os.path.exists(progress_path):
         with open(progress_path) as f:
             progress = json.load(f)
@@ -343,9 +336,7 @@ def run_audio(args, strategy: AudioStrategy):
 
         # Skip if already generated
         ext = ".mp3" if isinstance(strategy, ElevenLabsStrategy) else ".flac"
-        primary_clip = os.path.join(audio_dir, f"{idx:04d}{ext}")
-        part_clip = os.path.join(audio_dir, f"{idx:04d}-01{ext}")
-        if os.path.exists(primary_clip) or os.path.exists(part_clip):
+        if manifest.clip_exists_for_shot(audio_dir, idx, ext=ext):
             completed_set.add(idx)
             if idx not in progress["completed"]:
                 progress["completed"].append(idx)
@@ -409,38 +400,24 @@ def run_audio(args, strategy: AudioStrategy):
 
 
 def run_speech(args, strategy: SpeechStrategy):
-    """Speech generation loop: read prompts, generate TTS clips, track progress.
+    """Speech generation loop: one TTS clip per global dialog line.
 
-    Supports two prompts.json formats:
-    - v2 ({"format": "v2", "shots": [...], "dialog": [...]}): generates one TTS
-      clip per global dialog line, avoiding repetition across shot boundaries.
-    - v1 (flat array): legacy per-shot dialog generation (backward compat).
+    Reads prompts.json v2 (``dialog`` is a flat subtitle timeline) and
+    generates TTS for each line at its original SRT timestamp, so lines
+    that span shot boundaries are spoken exactly once.
     """
     output_dir = args.output_dir
-    prompts_path = os.path.join(output_dir, "prompts.json")
 
-    if not os.path.exists(prompts_path):
-        print(f"Error: {prompts_path} not found. Run encoder first.")
+    try:
+        _, dialog = manifest.load_prompts(output_dir)
+    except FileNotFoundError:
+        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
 
-    with open(prompts_path) as f:
-        raw = json.load(f)
-
-    speech_dir = os.path.join(output_dir, "speech")
+    speech_dir = manifest.speech_dir(output_dir)
     os.makedirs(speech_dir, exist_ok=True)
 
-    is_v2 = isinstance(raw, dict) and raw.get("format") == "v2"
-
-    if is_v2:
-        _run_speech_v2(args, strategy, raw["dialog"], speech_dir, output_dir)
-    else:
-        _run_speech_v1(args, strategy, raw, speech_dir, output_dir)
-
-
-def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
-                   speech_dir: str, output_dir: str):
-    """v2: generate one TTS clip per global dialog line at its SRT timestamp."""
-    progress_path = os.path.join(output_dir, "speech_progress.json")
+    progress_path = manifest.speech_progress_path(output_dir)
     progress = {"format": "v2", "completed": [], "failed": [],
                 "total_cost_estimate": 0.0, "clips": {}}
     if os.path.exists(progress_path):
@@ -460,7 +437,7 @@ def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
         if i in completed_set:
             continue
 
-        expected_path = os.path.join(speech_dir, f"{i:04d}-00.mp3")
+        expected_path = manifest.speech_clip_path(speech_dir, i)
         if os.path.exists(expected_path):
             progress["clips"][str(i)] = {
                 "path": os.path.basename(expected_path),
@@ -497,109 +474,6 @@ def _run_speech_v2(args, strategy: SpeechStrategy, dialog: list[dict],
             break
 
     print(f"\nDone. Generated {generated} speech clips.")
-    print(f"  Estimated cost: ${progress['total_cost_estimate']:.2f}")
-
-
-def _run_speech_v1(args, strategy: SpeechStrategy, prompts: list[dict],
-                   speech_dir: str, output_dir: str):
-    """v1: legacy per-shot dialog generation (backward compat)."""
-    if args.start_index:
-        prompts = [p for p in prompts if p["index"] >= args.start_index]
-    if args.limit:
-        prompts = prompts[:args.limit]
-
-    progress_path = os.path.join(output_dir, "speech_progress.json")
-    if os.path.exists(progress_path):
-        with open(progress_path) as f:
-            progress = json.load(f)
-    else:
-        progress = {"completed": [], "skipped": [], "failed": [],
-                     "total_cost_estimate": 0.0, "clips": {}}
-
-    completed_set = set(progress["completed"])
-    skipped_set = set(progress.get("skipped", []))
-    generated = 0
-    skipped = 0
-    errors = 0
-
-    # Count total dialogue lines
-    total_lines = sum(
-        len(e.get("dialogue") or [])
-        for e in prompts
-        if isinstance(e.get("dialogue"), list)
-           and e.get("dialogue")
-           and isinstance(e["dialogue"][0], dict)
-    )
-
-    print(f"Generating speech for {len(prompts)} shots ({total_lines} lines) "
-          f"via ElevenLabs TTS ({len(completed_set)} shots done)...")
-
-    for entry in prompts:
-        idx = entry["index"]
-        if idx in completed_set or idx in skipped_set:
-            continue
-
-        dialogue = entry.get("dialogue")
-        if not dialogue or not isinstance(dialogue, list):
-            skipped += 1
-            progress["skipped"].append(idx)
-            skipped_set.add(idx)
-            continue
-
-        # Handle both enriched (dict) and legacy (str) formats
-        if not isinstance(dialogue[0], dict):
-            print(f"  Shot {idx}: dialogue not enriched (plain strings), skipping")
-            skipped += 1
-            progress["skipped"].append(idx)
-            skipped_set.add(idx)
-            continue
-
-        shot_clips = []
-        shot_ok = True
-        for line_idx, line in enumerate(dialogue):
-            clip_path = os.path.join(speech_dir, f"{idx:04d}-{line_idx:02d}.mp3")
-            if os.path.exists(clip_path):
-                shot_clips.append({
-                    "path": os.path.basename(clip_path),
-                    "offset_s": line["start_s"],
-                })
-                continue
-
-            result = strategy.generate(
-                line["text"], speech_dir, idx, line_idx, line["start_s"]
-            )
-            if result:
-                shot_clips.append({
-                    "path": os.path.basename(result.path),
-                    "duration_s": result.duration_s,
-                    "offset_s": result.offset_s,
-                })
-                progress["total_cost_estimate"] += result.cost
-            else:
-                errors += 1
-                shot_ok = False
-                break
-
-        if shot_ok and shot_clips:
-            generated += 1
-            progress["completed"].append(idx)
-            completed_set.add(idx)
-            progress["clips"][str(idx)] = shot_clips
-        elif not shot_ok:
-            progress["failed"].append(idx)
-
-        if generated % 5 == 0:
-            with open(progress_path, "w") as f:
-                json.dump(progress, f, indent=2)
-
-        if errors > 20:
-            print("Too many errors, saving progress and stopping.")
-            break
-
-    with open(progress_path, "w") as f:
-        json.dump(progress, f, indent=2)
-
-    print(f"\nDone. Generated speech for {generated} shots, skipped {skipped}.")
     print(f"  Estimated cost: ${progress['total_cost_estimate']:.2f}")
 
 

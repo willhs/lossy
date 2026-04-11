@@ -10,6 +10,8 @@ import os
 import subprocess
 import sys
 
+import manifest
+
 
 def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                   start_index: int | None) -> str | None:
@@ -19,12 +21,12 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
     Audio clips are duration-adjusted to match original shot durations using
     FFmpeg's atrim/apad filters.
     """
-    audio_dir = os.path.join(output_dir, "audio", audio_strategy)
+    audio_dir = manifest.audio_dir(output_dir, audio_strategy)
     if not os.path.exists(audio_dir):
         return None
 
     # Load audio progress for clip metadata
-    progress_path = os.path.join(output_dir, f"audio_progress_{audio_strategy}.json")
+    progress_path = manifest.audio_progress_path(output_dir, audio_strategy)
     audio_meta = {}
     if os.path.exists(progress_path):
         with open(progress_path) as f:
@@ -49,9 +51,9 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             # Try to find clips on disk by convention
             clips = []
             for ext in (".mp3", ".flac"):
-                path = os.path.join(audio_dir, f"{idx:04d}{ext}")
-                if os.path.exists(path):
-                    clips = [{"path": f"{idx:04d}{ext}", "duration_s": target_duration}]
+                filename = manifest.audio_clip_filename(idx, None, ext)
+                if os.path.exists(os.path.join(audio_dir, filename)):
+                    clips = [{"path": filename, "duration_s": target_duration}]
                     break
 
         if not clips:
@@ -152,126 +154,29 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
 
 def _stitch_speech(output_dir: str, prompts: list[dict],
                    start_index: int | None) -> str | None:
-    """Build time-aligned speech track from per-line TTS clips.
+    """Build a time-aligned speech track from per-line TTS clips.
 
-    v2 (global timeline): each clip is placed at its global SRT timestamp
-    using FFmpeg adelay. All clips are mixed into a single track matching
-    the duration of the stitched shots — no per-shot intermediate files.
-
-    v1 (legacy): clips are placed at per-shot relative offsets, then shot
-    audio chunks are concatenated. Used when prompts.json is a flat array.
+    Each clip is placed at its global SRT timestamp using FFmpeg adelay and
+    mixed into a single track matching the duration of the stitched shots.
+    Clips outside the stitched window are excluded.
     """
-    speech_dir = os.path.join(output_dir, "speech")
+    speech_dir = manifest.speech_dir(output_dir)
     if not os.path.exists(speech_dir):
         return None
 
-    progress_path = os.path.join(output_dir, "speech_progress.json")
+    progress_path = manifest.speech_progress_path(output_dir)
     if not os.path.exists(progress_path):
         return None
     with open(progress_path) as f:
         speech_progress = json.load(f)
 
-    is_v2 = speech_progress.get("format") == "v2"
-
-    if is_v2:
-        prompts_path = os.path.join(output_dir, "prompts.json")
-        with open(prompts_path) as f:
-            raw = json.load(f)
-        global_dialog = raw.get("dialog", []) if isinstance(raw, dict) else []
-        return _stitch_speech_global(prompts, speech_dir, output_dir, speech_progress, global_dialog)
-
-    # v1 legacy path
-    speech_meta = speech_progress.get("clips", {})
-
-    if start_index is not None:
-        prompts = [p for p in prompts if p["index"] >= start_index]
-
-    adjusted_dir = os.path.join(output_dir, "speech_adjusted")
-    os.makedirs(adjusted_dir, exist_ok=True)
-
-    speech_entries = []
-    for entry in prompts:
-        idx = entry["index"]
-        idx_str = str(idx)
-        target_duration = entry["duration_s"]
-        adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
-
-        clips = speech_meta.get(idx_str, [])
-        if not clips:
-            # Silence for this shot
-            if not os.path.exists(adjusted_path):
-                subprocess.run(
-                    ["ffmpeg", "-y", "-f", "lavfi", "-i",
-                     f"anullsrc=r=44100:cl=stereo",
-                     "-t", str(target_duration), adjusted_path],
-                    capture_output=True,
-                )
-            speech_entries.append(adjusted_path)
-            continue
-
-        if not os.path.exists(adjusted_path):
-            if len(clips) == 1:
-                # Single line: adelay + pad/trim
-                clip = clips[0]
-                clip_path = os.path.join(speech_dir, clip["path"])
-                delay_ms = int(clip["offset_s"] * 1000)
-                subprocess.run(
-                    ["ffmpeg", "-y", "-i", clip_path,
-                     "-af", (f"adelay={delay_ms}|{delay_ms},"
-                             f"apad=whole_dur={target_duration},"
-                             f"atrim=0:{target_duration}"),
-                     "-ar", "44100", "-ac", "2",
-                     "-t", str(target_duration),
-                     adjusted_path],
-                    capture_output=True,
-                )
-            else:
-                # Multiple lines: adelay each, amix together, pad/trim
-                inputs = []
-                filters = []
-                for i, clip in enumerate(clips):
-                    clip_path = os.path.join(speech_dir, clip["path"])
-                    inputs.extend(["-i", clip_path])
-                    delay_ms = int(clip["offset_s"] * 1000)
-                    filters.append(f"[{i}]adelay={delay_ms}|{delay_ms}[d{i}]")
-
-                mix_inputs = "".join(f"[d{i}]" for i in range(len(clips)))
-                filters.append(
-                    f"{mix_inputs}amix=inputs={len(clips)}:duration=longest,"
-                    f"apad=whole_dur={target_duration},"
-                    f"atrim=0:{target_duration}[out]"
-                )
-                filter_complex = ";".join(filters)
-
-                subprocess.run(
-                    ["ffmpeg", "-y"] + inputs +
-                    ["-filter_complex", filter_complex,
-                     "-map", "[out]",
-                     "-ar", "44100", "-ac", "2",
-                     "-t", str(target_duration),
-                     adjusted_path],
-                    capture_output=True,
-                )
-
-        speech_entries.append(adjusted_path)
-
-    if not speech_entries:
+    try:
+        _, global_dialog = manifest.load_prompts(output_dir)
+    except (FileNotFoundError, ValueError):
         return None
 
-    concat_file = os.path.join(output_dir, "speech_concat.txt")
-    with open(concat_file, "w") as f:
-        for path in speech_entries:
-            f.write(f"file '{os.path.abspath(path)}'\n")
-
-    speech_track_path = os.path.join(output_dir, "speech_track.wav")
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-         "-i", concat_file, "-c", "copy", speech_track_path],
-        capture_output=True,
-    )
-
-    print(f"  Speech track: {speech_track_path}")
-    return speech_track_path
+    return _stitch_speech_global(prompts, speech_dir, output_dir,
+                                 speech_progress, global_dialog)
 
 
 def _stitch_speech_global(shots: list[dict], speech_dir: str, output_dir: str,
@@ -354,21 +259,18 @@ def _stitch_speech_global(shots: list[dict], speech_dir: str, output_dir: str,
 
 
 def _probe_duration(clip_path: str) -> float:
-    """Get video duration via ffprobe. Fallback for clips without metadata."""
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "csv=p=0",
-                clip_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        return float(result.stdout.strip())
-    except (ValueError, subprocess.SubprocessError):
-        return 81 / 16  # Last resort fallback
+    """Get video duration via ffprobe. Raises if ffprobe cannot parse the file."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            clip_path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return float(result.stdout.strip())
 
 
 def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
@@ -397,14 +299,14 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
 
         if idx_str in clips_meta:
             for clip_info in clips_meta[idx_str]:
-                clip_path = os.path.join(clips_dir, clip_info["path"])
-                if os.path.exists(clip_path):
-                    clip_entries.append((clip_path, entry["duration_s"], clip_info["duration_s"]))
+                clip_path_ = os.path.join(clips_dir, clip_info["path"])
+                if os.path.exists(clip_path_):
+                    clip_entries.append((clip_path_, entry["duration_s"], clip_info["duration_s"]))
         else:
-            clip_path = os.path.join(clips_dir, f"{idx:04d}.mp4")
-            if os.path.exists(clip_path):
-                clip_duration = _probe_duration(clip_path)
-                clip_entries.append((clip_path, entry["duration_s"], clip_duration))
+            clip_path_ = manifest.clip_path(clips_dir, idx)
+            if os.path.exists(clip_path_):
+                clip_duration = _probe_duration(clip_path_)
+                clip_entries.append((clip_path_, entry["duration_s"], clip_duration))
 
     if not clip_entries:
         print(f"  No clips found for {label}.")
@@ -599,8 +501,7 @@ def stitch_clips(args):
     """
     output_dir = args.output_dir
     strategy_name = args.strategy
-    clips_dir = os.path.join(output_dir, "clips", strategy_name)
-    prompts_path = os.path.join(output_dir, "prompts.json")
+    clips_dir = manifest.clips_dir(output_dir, strategy_name)
 
     if not os.path.exists(clips_dir):
         clips_dir_flat = os.path.join(output_dir, "clips")
@@ -610,12 +511,14 @@ def stitch_clips(args):
             print(f"Error: {clips_dir} not found. Run decode first.")
             sys.exit(1)
 
-    with open(prompts_path) as f:
-        raw = json.load(f)
-    prompts_full = raw["shots"] if isinstance(raw, dict) and raw.get("format") == "v2" else raw
+    try:
+        prompts_full, _ = manifest.load_prompts(output_dir)
+    except FileNotFoundError:
+        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
+        sys.exit(1)
 
     # Load clip metadata from progress (try per-strategy, fall back to legacy)
-    progress_path = os.path.join(output_dir, f"decode_progress_{strategy_name}.json")
+    progress_path = manifest.decode_progress_path(output_dir, strategy_name)
     if not os.path.exists(progress_path):
         progress_path = os.path.join(output_dir, "decode_progress.json")
     clips_meta = {}
