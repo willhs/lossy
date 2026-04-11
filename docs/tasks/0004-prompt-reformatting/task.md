@@ -3,7 +3,7 @@ id: task-0004
 type: spec
 purpose: "Improve video generation quality by reformatting structured Gemini descriptions into model-efficient prompts with cinematography vocabulary, front-loaded content, and negative prompts."
 tags: ["decoder", "prompts", "video-generation", "quality"]
-related: ["docs/research/0003-prompt-to-video/research.md", "docs/research/0002-shot-to-prompt/research.md", "docs/design/adr/004-replicate-wan22-for-video-generation.md", "docs/design/adr/005-runpod-self-hosted-wan-strategy.md", "docs/research/experiments/0001-first-e2e-decode-test.md"]
+related: ["docs/research/0003-prompt-to-video/research.md", "docs/research/0002-shot-to-prompt/research.md", "docs/design/adr/004-replicate-wan22-for-video-generation.md", "docs/design/adr/008-runpod-self-hosted-wan-strategy.md", "docs/research/experiments/0001-first-e2e-decode-test.md"]
 created: 2026-03-17
 updated: 2026-03-17
 ---
@@ -69,7 +69,7 @@ Not shortening — distilling. The same structured fields (shot_type, camera_mov
 - [Prompt-to-video research](../../research/0003-prompt-to-video/research.md) — open question #3 is this task
 - [Shot-to-prompt research](../../research/0002-shot-to-prompt/research.md) — how Gemini descriptions are generated
 - [ADR-004: Replicate Wan 2.2](../../design/adr/004-replicate-wan22-for-video-generation.md)
-- [ADR-005: RunPod self-hosted Wan](../../design/adr/005-runpod-self-hosted-wan-strategy.md)
+- [ADR-008: RunPod self-hosted Wan](../../design/adr/008-runpod-self-hosted-wan-strategy.md)
 - [Experiment 0001: First E2E decode test](../../research/experiments/0001-first-e2e-decode-test.md) — baseline results to compare against
 
 ## Success Criteria

@@ -5,7 +5,7 @@ purpose: "Record the decision to generate per-segment descriptions for long shot
 scope: ["design", "encoder", "decoder"]
 non_goals: []
 tags: ["adr", "encoder", "decoder", "video-generation", "prompt-engineering"]
-related: ["design/adr/005-runpod-self-hosted-wan-strategy.md", "research/0003-prompt-to-video/research.md"]
+related: ["design/adr/008-runpod-self-hosted-wan-strategy.md", "research/0003-prompt-to-video/research.md"]
 ---
 
 # Context

@@ -1,5 +1,5 @@
 ---
-id: adr-005-runpod-self-hosted-wan
+id: adr-008-runpod-self-hosted-wan
 type: decision
 purpose: "Record the decision to add a self-hosted RunPod strategy using ComfyUI with Wan 2.1 1.3B for cheaper decoding."
 scope: ["design", "decoder"]

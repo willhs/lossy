@@ -1535,26 +1535,3 @@ class TestRunSpeechV2:
         # Only line 1 should be generated (line 0 was already done)
         assert mock_strategy.generate.call_count == 1
 
-    def test_v1_format_uses_legacy_path(self, tmp_path):
-        """v1 flat-array prompts.json uses per-shot dialog loop."""
-        prompts = [
-            {
-                "index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0,
-                "dialogue": [{"text": "Hello", "start_s": 1.0, "end_s": 2.0}],
-            }
-        ]
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
-        (tmp_path / "speech").mkdir()
-
-        mock_strategy = MagicMock()
-        mock_strategy.generate.return_value = MagicMock(
-            path=str(tmp_path / "speech" / "0000-00.mp3"),
-            duration_s=1.0, offset_s=1.0, cost=0.001,
-        )
-
-        run_speech(self._make_args(str(tmp_path)), mock_strategy)
-
-        progress = json.loads((tmp_path / "speech_progress.json").read_text())
-        # v1 progress has no "format" key
-        assert "format" not in progress
-        assert 0 in progress["completed"]
