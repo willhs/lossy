@@ -1104,25 +1104,38 @@ class TestGenerateTemporalSegments:
         return client
 
     @pytest.mark.req("SPEC-300/REQ-002")
-    def test_returns_two_segment_descriptions(self, tmp_path):
-        """REQ-002: Returns exactly 2 description dicts for a shot with >= 2 keyframes."""
-        from unittest.mock import patch
-        # Create fake keyframe images
+    def test_returns_n_segment_descriptions(self, tmp_path):
+        """REQ-002: Returns exactly n_segments description dicts for a shot with >= 2 keyframes."""
         for name in ["0001-01.jpg", "0001-02.jpg", "0001-03.jpg", "0001-04.jpg"]:
-            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)  # minimal JPEG header
+            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
 
-        seg_desc_1 = {"action": "First half action.", "shot_type": "wide"}
-        seg_desc_2 = {"action": "Second half action.", "shot_type": "medium"}
-        client = self._make_mock_client([seg_desc_1, seg_desc_2])
+        descs = [{"action": f"Segment {i} action.", "shot_type": "wide"} for i in range(3)]
+        client = self._make_mock_client(descs)
 
         frame_files = ["0001-01.jpg", "0001-02.jpg", "0001-03.jpg", "0001-04.jpg"]
         result = generate_temporal_segments(
-            self._make_scene(), {"action": "Whole shot."}, frame_files, str(tmp_path), client
+            self._make_scene(), {"action": "Whole shot."}, frame_files, str(tmp_path), client,
+            n_segments=3,
+        )
+
+        assert len(result) == 3
+        assert result[0]["action"] == "Segment 0 action."
+        assert result[2]["action"] == "Segment 2 action."
+
+    @pytest.mark.req("SPEC-300/REQ-002")
+    def test_defaults_to_two_segments(self, tmp_path):
+        """REQ-002: Default n_segments=2 returns exactly 2 descriptions."""
+        for name in ["0001-01.jpg", "0001-02.jpg"]:
+            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+
+        descs = [{"action": "First."}, {"action": "Second."}]
+        client = self._make_mock_client(descs)
+
+        result = generate_temporal_segments(
+            self._make_scene(), {"action": "Whole."}, ["0001-01.jpg", "0001-02.jpg"], str(tmp_path), client
         )
 
         assert len(result) == 2
-        assert result[0]["action"] == "First half action."
-        assert result[1]["action"] == "Second half action."
 
     @pytest.mark.req("SPEC-300/REQ-006")
     def test_returns_empty_for_single_keyframe(self, tmp_path):
@@ -1165,19 +1178,36 @@ class TestGenerateTemporalSegments:
         assert result == []
 
     @pytest.mark.req("SPEC-300/REQ-003", "SPEC-300/REQ-004")
-    def test_frames_split_at_midpoint(self, tmp_path):
-        """REQ-003/REQ-004: Two Gemini calls made — one per half of keyframes."""
-        from unittest.mock import MagicMock, call
-        frames = [f"0001-0{i}.jpg" for i in range(1, 5)]
+    def test_frames_split_into_n_groups(self, tmp_path):
+        """REQ-003/REQ-004: One Gemini call made per segment, frames divided evenly."""
+        frames = [f"0001-0{i}.jpg" for i in range(1, 9)]  # 8 frames
         for name in frames:
             (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
 
         seg_desc = {"action": "Desc."}
-        client = self._make_mock_client([seg_desc, seg_desc])
+        client = self._make_mock_client([seg_desc] * 5)
 
         generate_temporal_segments(
-            self._make_scene(), {"action": "Whole."}, frames, str(tmp_path), client
+            self._make_scene(), {"action": "Whole."}, frames, str(tmp_path), client,
+            n_segments=5,
         )
 
-        # Should have been called exactly twice (once per half)
-        assert client.models.generate_content.call_count == 2
+        assert client.models.generate_content.call_count == 5
+
+    @pytest.mark.req("SPEC-300/REQ-002")
+    def test_n_segments_capped_at_keyframe_count(self, tmp_path):
+        """REQ-002: n_segments capped at available keyframes — 3 frames with n_segments=5 gives 3."""
+        frames = ["0001-01.jpg", "0001-02.jpg", "0001-03.jpg"]
+        for name in frames:
+            (tmp_path / name).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+
+        descs = [{"action": f"Seg {i}."} for i in range(3)]
+        client = self._make_mock_client(descs)
+
+        result = generate_temporal_segments(
+            self._make_scene(), {"action": "Whole."}, frames, str(tmp_path), client,
+            n_segments=5,
+        )
+
+        assert len(result) == 3
+        assert client.models.generate_content.call_count == 3

@@ -38,8 +38,8 @@ A **fallback** applies when `temporal_segments` is absent (e.g., prompts generat
 - Adds 2 Gemini Flash Lite calls per long shot (~$0.001-0.003 each) — negligible extra encode cost
 
 **Bad:**
-- Encode stage 2 now makes more API calls for long shots (2 extra per long shot)
-- `temporal_segments` are always 2 halves regardless of how many decode parts result; very long shots split into 3+ parts still get good variation, but the two outer halves share segment descriptions for mid parts
+- Encode stage 2 now makes more API calls for long shots (`n_segments` extra per long shot, where `n_segments = max(2, ceil(duration_s / 12))`)
+- For very long shots with many keyframes (e.g. 8 frames across 5 segments), some segments may receive only 1 keyframe — less visual context for Gemini than a 2-half split would give each half
 
 **Operational:**
 - Existing encoded projects can be re-encoded from stage 2 to get `temporal_segments` (resume skips already-processed shots)
@@ -49,5 +49,5 @@ A **fallback** applies when `temporal_segments` is absent (e.g., prompts generat
 
 - **Generic temporal cues only** (original task spec): Append "Beginning of the action.", "The action continues.", "The action concludes." without looking at actual footage. Simpler, but signals rather than encodes temporal content — less effective for shots with real visual change.
 - **Segment descriptions during decode**: Run vision analysis in the decode loop instead of encode. Rejected: violates the stateless CLI stage principle (ADR-002); decode should be generation-only and avoid vision API calls.
-- **More than 2 segments**: Generate 3 thirds for very long shots. Deferred — 2 halves cover the main use case (2-part splits) and mapping works for more parts.
+- **Fixed 2 segments**: Originally deferred to always splitting into halves. Superseded — `n_segments = ceil(duration_s / 12)` now generates one segment per expected decode part, giving 1:1 prompt-to-clip coverage for any shot length.
 - **Re-extracting keyframes per segment**: Extract new keyframes at finer time intervals for each segment during encode stage 1. More accurate but requires changes to stage 1 and significantly more disk space. Deferred.
