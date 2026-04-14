@@ -50,6 +50,13 @@ def speech_progress_path(output_dir: str) -> str:
     return os.path.join(output_dir, "speech_progress.json")
 
 
+def reconstructed_path(output_dir: str, strategy: str, audio_strategy: str | None = None) -> str:
+    """Final stitched video path, prefixed with the film name for VLC distinguishability."""
+    film = os.path.basename(os.path.normpath(output_dir))
+    suffix = f"+{audio_strategy}" if audio_strategy else ""
+    return os.path.join(output_dir, f"{film}_reconstructed_{strategy}{suffix}.mp4")
+
+
 # ---------------------------------------------------------------------------
 # Directories
 # ---------------------------------------------------------------------------

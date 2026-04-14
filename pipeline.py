@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+import manifest
+
 STAGES = ["encode1", "encode2", "encode3", "decode", "audio", "speech", "stitch"]
 
 STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan22", "runpod-wan-enriched", "runpod-vace"]
@@ -250,7 +252,7 @@ def print_summary(timings, args):
     # Print output paths
     print(f"\nOutput directory: {args.output}")
     print(f"Strategy: {args.strategy}")
-    reconstructed = f"{args.output}/reconstructed_{args.strategy.replace('-', '_')}.mp4"
+    reconstructed = manifest.reconstructed_path(args.output, args.strategy)
     print(f"Reconstructed video: {reconstructed}")
 
 

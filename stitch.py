@@ -539,11 +539,7 @@ def stitch_clips(args):
             speech_voice = "auto"
 
     # Build output filename
-    if audio_strategy:
-        output_name = f"reconstructed_{strategy_name}+{audio_strategy}.mp4"
-    else:
-        output_name = f"reconstructed_{strategy_name}.mp4"
-    output_path = os.path.join(output_dir, output_name)
+    output_path = manifest.reconstructed_path(output_dir, strategy_name, audio_strategy)
 
     # Stitch the full (or --start-index filtered) video
     result = _stitch_range(

@@ -79,9 +79,11 @@ def scan_project():
                 })
 
             # Strategies with stitched reconstructed videos
+            # Filename format: {film}_reconstructed_{strategy}[+audio].mp4
+            marker = "_reconstructed_"
             for fname in sorted(os.listdir(dirpath)):
-                if fname.startswith("reconstructed") and fname.endswith(".mp4"):
-                    strategy_name = "unknown" if fname == "reconstructed.mp4" else fname[len("reconstructed_"):-len(".mp4")]
+                if marker in fname and fname.endswith(".mp4"):
+                    strategy_name = fname[fname.index(marker) + len(marker):-len(".mp4")]
                     _add_strategy(strategy_name, recon_path=f"/output/{name}/{fname}")
 
             # Strategies with only a decode progress file (not yet stitched)

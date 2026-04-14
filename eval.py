@@ -797,7 +797,7 @@ def main():
     output_dir = Path(args.output_dir)
     shot_manifest = load_json(output_dir / "manifest.json")
     prompts, _ = manifest.load_prompts(str(output_dir))
-    reconstructed_path = output_dir / f"reconstructed_{args.strategy}.mp4"
+    reconstructed_path = Path(manifest.reconstructed_path(str(output_dir), args.strategy))
 
     if not reconstructed_path.exists():
         print(f"Error: reconstructed video not found: {reconstructed_path}")
