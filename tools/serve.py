@@ -7,7 +7,14 @@ import socketserver
 import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+try:
+    PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+except ValueError:
+    PORT = 8000
+SELECTIONS_PATH = os.path.join(PROJECT_ROOT, "docs", "blog", "selections.json")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import blog_selections  # noqa: E402
 
 
 def scan_project():
@@ -100,7 +107,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PROJECT_ROOT, **kwargs)
 
+    def _send_json(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        return json.loads(raw.decode() or "{}")
+
     def do_GET(self):
+        if self.path == "/api/blog_selections":
+            try:
+                data = blog_selections.load_selections(SELECTIONS_PATH)
+            except ValueError as e:
+                self._send_json(500, {"error": str(e)})
+                return
+            self._send_json(200, data)
+            return
+
         if self.path == "/api/scan":
             data = scan_project()
             body = json.dumps(data).encode()
@@ -117,6 +146,46 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         return super().do_GET()
+
+    def do_POST(self):
+        if self.path == "/api/blog_selections":
+            try:
+                entry = self._read_json_body()
+                blog_selections.validate_entry(entry)
+            except (ValueError, json.JSONDecodeError) as e:
+                self._send_json(400, {"error": str(e)})
+                return
+            data = blog_selections.load_selections(SELECTIONS_PATH)
+            blog_selections.upsert_entry(data, entry)
+            blog_selections.save_selections(SELECTIONS_PATH, data)
+            self._send_json(200, data)
+            return
+        self.send_error(404)
+
+    def do_DELETE(self):
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/blog_selections":
+            q = parse_qs(parsed.query)
+            film = (q.get("film") or [None])[0]
+            shot_idx_raw = (q.get("shot_idx") or [None])[0]
+            if not film or shot_idx_raw is None:
+                self._send_json(400, {"error": "film and shot_idx query params required"})
+                return
+            try:
+                shot_idx = int(shot_idx_raw)
+            except ValueError:
+                self._send_json(400, {"error": "shot_idx must be an int"})
+                return
+            data = blog_selections.load_selections(SELECTIONS_PATH)
+            removed = blog_selections.delete_entry(data, film, shot_idx)
+            if not removed:
+                self._send_json(404, {"error": "no matching entry"})
+                return
+            blog_selections.save_selections(SELECTIONS_PATH, data)
+            self._send_json(200, data)
+            return
+        self.send_error(404)
 
     def handle_range_request(self):
         path = self.translate_path(self.path)

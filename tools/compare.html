@@ -321,6 +321,12 @@
   .setup-box .error { color: #f44; font-size: 12px; margin-top: 8px; display: none; }
   .setup-box .hint { color: #666; font-size: 11px; margin-top: 4px; }
   .setup-box .no-recon { color: #f84; font-size: 11px; }
+  .shot-item.favorited { box-shadow: inset 3px 0 0 #fd4; }
+  .shot-item .fav-mark { color: #fd4; font-size: 11px; margin-left: 4px; }
+  .timeline-shot.favorited {
+    background: linear-gradient(to bottom, rgba(253,212,68,0.35) 0%, rgba(253,212,68,0.15) 100%);
+    border-right-color: rgba(253,212,68,0.9);
+  }
 </style>
 </head>
 <body>
@@ -353,8 +359,8 @@
         <span class="pane-label recon-a" id="label-a">A</span>
         <video id="vid-recon-a" preload="metadata"></video>
       </div>
-      <div class="divider"></div>
-      <div class="video-pane">
+      <div class="divider" id="divider-b"></div>
+      <div class="video-pane" id="pane-b">
         <span class="pane-label recon-b" id="label-b">B</span>
         <video id="vid-recon-b" preload="metadata" muted></video>
       </div>
@@ -367,6 +373,7 @@
     <button id="btn-next" title="Next shot">Next &#8594;</button>
     <button id="btn-solo" title="Toggle single-shot loop">Loop shot</button>
     <button id="btn-audio" title="Cycle audio source (M)">Audio: generated</button>
+    <button id="btn-favorite" title="Favorite this shot for blog export (F)">&#9733; Favorite</button>
     <audio id="speech-audio" preload="auto"></audio>
     <input id="volume-slider" type="range" min="0" max="100" value="70" title="Volume" style="width:60px;vertical-align:middle;accent-color:#fb0;cursor:pointer">
     <span class="spacer"></span>
@@ -414,6 +421,33 @@
   </div>
 </div>
 
+<div class="setup-overlay hidden" id="fav-overlay">
+  <div class="setup-box">
+    <h2>Favorite shot</h2>
+    <p id="fav-meta"></p>
+    <div class="field">
+      <label>Label (free-form)</label>
+      <input id="fav-label" type="text" placeholder="e.g. Vader reveal becomes cartoon">
+    </div>
+    <div class="field">
+      <label>Tag (optional)</label>
+      <select id="fav-tag">
+        <option value="">(no tag)</option>
+        <option value="best_preserve">best_preserve</option>
+        <option value="worst_fail">worst_fail</option>
+        <option value="funny_halluc">funny_halluc</option>
+        <option value="edge_dialogue">edge_dialogue</option>
+        <option value="edge_action">edge_action</option>
+        <option value="edge_establish">edge_establish</option>
+      </select>
+    </div>
+    <button id="fav-save">Save</button>
+    <button id="fav-cancel" style="background:#333;color:#ddd;margin-left:8px">Cancel</button>
+    <button id="fav-delete" style="background:#833;color:#fdd;margin-left:8px">Remove</button>
+    <div class="error" id="fav-error"></div>
+  </div>
+</div>
+
 <script>
 const vidOrig        = document.getElementById('vid-original');
 const vidReconA      = document.getElementById('vid-recon-a');
@@ -443,6 +477,44 @@ const strategyGroupB = document.getElementById('strategy-group-b');
 
 let scenes = [];
 let prompts = [];
+
+// Map of "<film>|<shot_idx>" -> entry, for current film only
+let favorites = {};
+const favOverlay   = document.getElementById('fav-overlay');
+const favLabel     = document.getElementById('fav-label');
+const favTag       = document.getElementById('fav-tag');
+const favMeta      = document.getElementById('fav-meta');
+const favError     = document.getElementById('fav-error');
+const btnFavorite  = document.getElementById('btn-favorite');
+
+function favKey(film, idx) { return `${film}|${idx}`; }
+function currentFilmKey() {
+  return currentSourceFile.replace(/\.[^.]+$/, '');
+}
+
+async function reloadFavorites() {
+  try {
+    const r = await fetch('/api/blog_selections');
+    const doc = await r.json();
+    favorites = {};
+    const film = currentFilmKey();
+    for (const e of (doc.entries || [])) {
+      if (e.film === film) favorites[favKey(e.film, e.shot_idx)] = e;
+    }
+    applyFavoriteMarkers();
+  } catch (e) { console.warn('[lossy] failed to load favorites', e); }
+}
+
+function applyFavoriteMarkers() {
+  document.querySelectorAll('.shot-item').forEach(el => el.classList.remove('favorited'));
+  document.querySelectorAll('.timeline-shot').forEach(el => el.classList.remove('favorited'));
+  for (const idx of Object.keys(favorites).map(k => parseInt(k.split('|')[1]))) {
+    const item = document.getElementById(`shot-${idx}`);
+    if (item) item.classList.add('favorited');
+    const tl = document.getElementById(`tl-${idx}`);
+    if (tl) tl.classList.add('favorited');
+  }
+}
 let activeShot = -1;
 let loopShot = false;
 let viewMode = 'paired';
@@ -820,6 +892,7 @@ function buildTimeline() {
     });
     timeline.appendChild(el);
   });
+  applyFavoriteMarkers();
 }
 
 function buildShotList() {
@@ -854,6 +927,7 @@ function buildShotList() {
     el.addEventListener('click', () => jumpToShot(i));
     shotList.appendChild(el);
   });
+  applyFavoriteMarkers();
 }
 
 let outputBase = '';
@@ -967,6 +1041,7 @@ function init(originalSrc, base) {
       : firstDecoded;
     setActiveShot(startShot);
     seekBoth(scenes[startShot].start_s, startShot);
+    reloadFavorites();
   });
 }
 
@@ -1115,6 +1190,7 @@ function startFromSource(source, preferA, preferB) {
   }
 
   setupOverlay.classList.add('hidden');
+  updateBPaneVisibility();
 
   const firstStrategy = source.strategies[0];
   const base = strategySelectA.selectedOptions[0]?.dataset.outputPath
@@ -1162,8 +1238,20 @@ async function onStrategyChange(pane, selectEl, labelEl) {
   saveSettings();
 }
 
+const paneBEl    = document.getElementById('pane-b');
+const dividerBEl = document.getElementById('divider-b');
+
+function updateBPaneVisibility() {
+  const hasB = !!strategySelectB.value;
+  paneBEl.style.display    = hasB ? '' : 'none';
+  dividerBEl.style.display = hasB ? '' : 'none';
+}
+
 strategySelectA.addEventListener('change', () => onStrategyChange(paneA, strategySelectA, labelA));
-strategySelectB.addEventListener('change', () => onStrategyChange(paneB, strategySelectB, labelB));
+strategySelectB.addEventListener('change', () => {
+  onStrategyChange(paneB, strategySelectB, labelB);
+  updateBPaneVisibility();
+});
 
 // -- file:// toggle --
 useFileUrls.addEventListener('change', () => {
@@ -1213,6 +1301,71 @@ document.querySelectorAll('.view-tab').forEach(tab => {
   });
 });
 
+// -- Favorite modal --
+function openFavoriteModal() {
+  if (activeShot < 0) return;
+  const film = currentFilmKey();
+  const existing = favorites[favKey(film, activeShot)];
+  favLabel.value = existing?.label || '';
+  favTag.value   = existing?.tag   || '';
+  favError.style.display = 'none';
+  favMeta.textContent = `${film} — shot ${activeShot} (A=${strategySelectA.selectedOptions[0]?.dataset.strategyName}, B=${strategySelectB.selectedOptions[0]?.dataset.strategyName})`;
+  document.getElementById('fav-delete').style.display = existing ? '' : 'none';
+  favOverlay.classList.remove('hidden');
+}
+
+async function saveFavorite() {
+  const film = currentFilmKey();
+  const entry = {
+    film,
+    shot_idx: activeShot,
+    strategy_a: strategySelectA.selectedOptions[0]?.dataset.strategyName || '',
+    strategy_b: strategySelectB.selectedOptions[0]?.dataset.strategyName || '',
+    label: favLabel.value.trim(),
+    tag: favTag.value || undefined,
+    formats: ["mp4", "gif", "png", "prompt"],
+    added_at: new Date().toISOString(),
+  };
+  if (!entry.strategy_a && !entry.strategy_b) {
+    favError.textContent = 'At least one strategy (A or B) must be selected';
+    favError.style.display = 'block';
+    return;
+  }
+  if (!entry.tag) delete entry.tag;
+  const r = await fetch('/api/blog_selections', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(entry),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    favError.textContent = body.error || `HTTP ${r.status}`;
+    favError.style.display = 'block';
+    return;
+  }
+  favOverlay.classList.add('hidden');
+  await reloadFavorites();
+}
+
+async function deleteFavorite() {
+  const film = currentFilmKey();
+  const r = await fetch(`/api/blog_selections?film=${encodeURIComponent(film)}&shot_idx=${activeShot}`, {
+    method: 'DELETE',
+  });
+  if (!r.ok && r.status !== 404) {
+    favError.textContent = `HTTP ${r.status}`;
+    favError.style.display = 'block';
+    return;
+  }
+  favOverlay.classList.add('hidden');
+  await reloadFavorites();
+}
+
+btnFavorite.addEventListener('click', openFavoriteModal);
+document.getElementById('fav-save').addEventListener('click', saveFavorite);
+document.getElementById('fav-delete').addEventListener('click', deleteFavorite);
+document.getElementById('fav-cancel').addEventListener('click', () => favOverlay.classList.add('hidden'));
+
 // -- Keyboard shortcuts --
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
@@ -1247,8 +1400,14 @@ document.addEventListener('keydown', (e) => {
     case 'M':
       cycleAudioSource();
       break;
+    case 'f':
+    case 'F':
+      e.preventDefault();
+      openFavoriteModal();
+      break;
   }
 });
 </script>
+
 </body>
 </html>

@@ -1,0 +1,93 @@
+{
+  "entries": [
+    {
+      "film": "star_wars_iv",
+      "shot_idx": 37,
+      "strategy_a": "runpod-wan",
+      "strategy_b": "runpod-vace",
+      "label": "sailing",
+      "tag": "funny_halluc",
+      "formats": [
+        "mp4",
+        "gif",
+        "png",
+        "prompt"
+      ],
+      "added_at": "2026-04-18T09:49:56.795Z"
+    },
+    {
+      "film": "star_wars_iv",
+      "shot_idx": 96,
+      "strategy_a": "runpod-wan",
+      "strategy_b": "",
+      "label": "leia",
+      "formats": [
+        "mp4",
+        "gif",
+        "png",
+        "prompt"
+      ],
+      "added_at": "2026-04-18T09:54:13.748Z"
+    },
+    {
+      "film": "star_wars_iv",
+      "shot_idx": 102,
+      "strategy_a": "runpod-wan",
+      "strategy_b": "",
+      "label": "vader-choke",
+      "tag": "best_preserve",
+      "formats": [
+        "mp4",
+        "gif",
+        "png",
+        "prompt"
+      ],
+      "added_at": "2026-04-18T09:54:35.628Z"
+    },
+    {
+      "film": "star_wars_iv",
+      "shot_idx": 136,
+      "strategy_a": "runpod-wan",
+      "strategy_b": "",
+      "label": "capsule_launch",
+      "tag": "best_preserve",
+      "formats": [
+        "mp4",
+        "gif",
+        "png",
+        "prompt"
+      ],
+      "added_at": "2026-04-18T09:55:39.648Z"
+    },
+    {
+      "film": "star_wars_iv",
+      "shot_idx": 330,
+      "strategy_a": "runpod-wan",
+      "strategy_b": "",
+      "label": "leia_hologram",
+      "tag": "best_preserve",
+      "formats": [
+        "mp4",
+        "gif",
+        "png",
+        "prompt"
+      ],
+      "added_at": "2026-04-18T09:56:50.837Z"
+    },
+    {
+      "film": "star_wars_iv",
+      "shot_idx": 403,
+      "strategy_a": "runpod-wan",
+      "strategy_b": "",
+      "label": "luke_gazes_at_suns",
+      "tag": "best_preserve",
+      "formats": [
+        "mp4",
+        "gif",
+        "png",
+        "prompt"
+      ],
+      "added_at": "2026-04-18T09:57:49.042Z"
+    }
+  ]
+}
