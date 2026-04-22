@@ -4,10 +4,9 @@ type: spec
 purpose: "Generate per-shot audio from sound descriptions during decode and mix into the reconstructed film."
 tags: ["audio", "decode", "fal"]
 related:
-  - "docs/design/adr/002-stateless-cli-pipeline.md"
-  - "docs/design/adr/005-yamnet-audio-classification.md"
-  - "docs/tasks/0002-audio-encoding/task.md"
-  - "docs/design/architecture.md"
+  - "../../design/adr/002-stateless-cli-pipeline.md"
+  - "../../design/adr/005-yamnet-audio-classification.md"
+  - "../0002-audio-encoding/task.md"
 created: 2026-03-21
 updated: 2026-03-21
 ---
@@ -61,9 +60,9 @@ fal.ai (already used for Seedance video generation) offers several text-to-audio
 
 ## References
 
-- [ADR-002: Stateless CLI Pipeline](docs/design/adr/002-stateless-cli-pipeline.md) -- stage pattern to follow
-- [ADR-005: YAMNet Audio Classification](docs/design/adr/005-yamnet-audio-classification.md) -- how sound descriptions are produced
-- [Task 0002: Audio Encoding](docs/tasks/0002-audio-encoding/task.md) -- the encoding side that feeds this task
+- [ADR-002: Stateless CLI Pipeline](../../design/adr/002-stateless-cli-pipeline.md) -- stage pattern to follow
+- [ADR-005: YAMNet Audio Classification](../../design/adr/005-yamnet-audio-classification.md) -- how sound descriptions are produced
+- [Task 0002: Audio Encoding](../0002-audio-encoding/task.md) -- the encoding side that feeds this task
 
 ## Success Criteria
 

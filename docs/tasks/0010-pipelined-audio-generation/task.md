@@ -4,9 +4,9 @@ type: spec
 purpose: "Pipeline audio generation alongside video in the decode loop so audio for shot N-1 runs concurrently with video for shot N, nearly eliminating audio wall time."
 tags: ["decode", "runpod", "concurrency", "audio", "video", "performance"]
 related:
-  - "docs/research/0004-concurrent-runpod-generation/research.md"
-  - "docs/tasks/0009-concurrent-runpod-generation/task.md"
-  - "docs/design/adr/002-stateless-cli-pipeline.md"
+  - "../../research/0004-concurrent-runpod-generation/research.md"
+  - "../0009-concurrent-runpod-generation/task.md"
+  - "../../design/adr/002-stateless-cli-pipeline.md"
 created: 2026-03-25
 updated: 2026-03-25
 ---
@@ -62,10 +62,9 @@ Currently video and audio are separate CLI invocations bridged by `--keep-pod`. 
 
 ## References
 
-- [Research: Concurrent RunPod Generation](docs/research/0004-concurrent-runpod-generation/research.md)
-- [Task 0009: Concurrent Generation Investigation](docs/tasks/0009-concurrent-runpod-generation/task.md)
-- [ADR-002: Stateless CLI Pipeline](docs/design/adr/002-stateless-cli-pipeline.md)
-- [Standalone MMAudio runner](tools/mmaudio_standalone.py)
+- [Research: Concurrent RunPod Generation](../../research/0004-concurrent-runpod-generation/research.md)
+- [Task 0009: Concurrent Generation Investigation](../0009-concurrent-runpod-generation/task.md)
+- [ADR-002: Stateless CLI Pipeline](../../design/adr/002-stateless-cli-pipeline.md)
 
 ## Success Criteria
 

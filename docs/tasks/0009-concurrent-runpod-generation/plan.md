@@ -278,8 +278,8 @@ Regardless of Phase 1/2 outcomes, research alternative approaches and GPU option
 ## References
 
 - Task: `docs/tasks/0009-concurrent-runpod-generation/task.md`
-- [ADR-002: Stateless CLI Pipeline](docs/design/adr/002-stateless-cli-pipeline.md)
-- [Task 0001: RunPod Wan Strategy](docs/tasks/0001-runpod-wan-strategy/task.md)
-- [Task 0007: RunPod MMAudio Strategy](docs/tasks/0007-runpod-mmaudio-strategy/task.md)
+- [ADR-002: Stateless CLI Pipeline](../../design/adr/002-stateless-cli-pipeline.md)
+- [Task 0001: RunPod Wan Strategy](../0001-runpod-wan-strategy/task.md)
+- [Task 0007: RunPod MMAudio Strategy](../0007-runpod-mmaudio-strategy/task.md)
 - [hkchengrex/MMAudio](https://github.com/hkchengrex/MMAudio)
 - [RunPod GPU pricing](https://www.runpod.io/pricing)

@@ -3,7 +3,7 @@ id: task-0014
 type: spec
 purpose: "Test character continuity by adding an encode stage 3 that resolves characters into a registry, generating canonical character portraits, and using them as VACE reference images during video generation."
 tags: ["character-continuity", "encode", "vace", "decode", "experiment"]
-related: ["research/0011-character-continuity/research.md", "research/0012-wan-model-variants/research.md"]
+related: ["research/0011-character-continuity/research.md"]
 created: 2026-03-31
 updated: 2026-03-31
 ---
@@ -51,8 +51,7 @@ The key unknown is whether VACE-1.3B produces acceptable quality compared to the
 
 ## References
 
-- [Character continuity research](../research/0011-character-continuity/research.md) — root cause analysis and option assessment
-- [Wan model variants](../research/0012-wan-model-variants/research.md) — VACE architecture, VRAM requirements, weight sources
+- [Character continuity research](../../research/0011-character-continuity/research.md) — root cause analysis and option assessment
 
 ## Success Criteria
 

@@ -4,9 +4,9 @@ type: spec
 purpose: "Self-hosted MMAudio on RunPod to eliminate fal.ai audio costs by reusing the existing ComfyUI pod."
 tags: ["audio", "runpod", "mmaudio", "decode", "cost"]
 related:
-  - "docs/design/adr/002-stateless-cli-pipeline.md"
-  - "docs/tasks/0001-runpod-wan-strategy/task.md"
-  - "docs/tasks/0005-audio-generation/task.md"
+  - "../../design/adr/002-stateless-cli-pipeline.md"
+  - "../0001-runpod-wan-strategy/task.md"
+  - "../0005-audio-generation/task.md"
 created: 2026-03-21
 updated: 2026-03-21
 ---
@@ -61,9 +61,9 @@ The key challenge is pod lifecycle: today `RunPodWanStrategy` creates a pod and 
 
 ## References
 
-- [ADR-002: Stateless CLI Pipeline](docs/design/adr/002-stateless-cli-pipeline.md)
-- [Task 0001: RunPod Wan Strategy](docs/tasks/0001-runpod-wan-strategy/task.md)
-- [Task 0005: Audio Generation](docs/tasks/0005-audio-generation/task.md)
+- [ADR-002: Stateless CLI Pipeline](../../design/adr/002-stateless-cli-pipeline.md)
+- [Task 0001: RunPod Wan Strategy](../0001-runpod-wan-strategy/task.md)
+- [Task 0005: Audio Generation](../0005-audio-generation/task.md)
 - [kijai/ComfyUI-MMAudio](https://github.com/kijai/ComfyUI-MMAudio) -- ComfyUI custom nodes
 - [hkchengrex/MMAudio](https://github.com/hkchengrex/MMAudio) -- official repo
 

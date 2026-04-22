@@ -4,9 +4,9 @@ type: spec
 purpose: "Generate a voice/dialogue track from subtitle data and mix it with the SFX/ambient audio track."
 tags: ["speech", "dialogue", "decode", "fal", "elevenlabs"]
 related:
-  - "docs/design/adr/002-stateless-cli-pipeline.md"
-  - "docs/tasks/0005-audio-generation/task.md"
-  - "docs/tasks/0002-audio-encoding/task.md"
+  - "../../design/adr/002-stateless-cli-pipeline.md"
+  - "../0005-audio-generation/task.md"
+  - "../0002-audio-encoding/task.md"
 created: 2026-03-21
 updated: 2026-03-21
 ---
@@ -72,9 +72,9 @@ fal.ai offers ElevenLabs TTS Turbo v2.5 at ~$0.05/1k chars, which provides fast,
 
 ## References
 
-- [ADR-002: Stateless CLI Pipeline](docs/design/adr/002-stateless-cli-pipeline.md) -- stage pattern to follow
-- [Task 0005: Audio Generation](docs/tasks/0005-audio-generation/task.md) -- SFX audio pipeline this builds on
-- [Task 0002: Audio Encoding](docs/tasks/0002-audio-encoding/task.md) -- subtitle extraction in encoder
+- [ADR-002: Stateless CLI Pipeline](../../design/adr/002-stateless-cli-pipeline.md) -- stage pattern to follow
+- [Task 0005: Audio Generation](../0005-audio-generation/task.md) -- SFX audio pipeline this builds on
+- [Task 0002: Audio Encoding](../0002-audio-encoding/task.md) -- subtitle extraction in encoder
 
 ## Success Criteria
 

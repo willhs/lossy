@@ -4,9 +4,9 @@ type: spec
 purpose: "Pipeline video and audio generation on a shared RunPod pod to nearly eliminate audio generation wall time."
 tags: ["runpod", "concurrency", "audio", "video", "decode", "performance"]
 related:
-  - "docs/design/adr/002-stateless-cli-pipeline.md"
-  - "docs/tasks/0001-runpod-wan-strategy/task.md"
-  - "docs/tasks/0007-runpod-mmaudio-strategy/task.md"
+  - "../../design/adr/002-stateless-cli-pipeline.md"
+  - "../0001-runpod-wan-strategy/task.md"
+  - "../0007-runpod-mmaudio-strategy/task.md"
 ---
 
 # Concurrent Video + Audio Generation on Shared RunPod Pod
@@ -96,8 +96,8 @@ Compare wall time of pipelined vs sequential for a representative film. Target: 
 
 ## References
 
-- [ADR-002: Stateless CLI Pipeline](docs/design/adr/002-stateless-cli-pipeline.md)
-- [Task 0001: RunPod Wan Strategy](docs/tasks/0001-runpod-wan-strategy/task.md)
-- [Task 0007: RunPod MMAudio Strategy](docs/tasks/0007-runpod-mmaudio-strategy/task.md)
+- [ADR-002: Stateless CLI Pipeline](../../design/adr/002-stateless-cli-pipeline.md)
+- [Task 0001: RunPod Wan Strategy](../0001-runpod-wan-strategy/task.md)
+- [Task 0007: RunPod MMAudio Strategy](../0007-runpod-mmaudio-strategy/task.md)
 - [hkchengrex/MMAudio](https://github.com/hkchengrex/MMAudio) -- official repo
 - [kijai/ComfyUI-MMAudio](https://github.com/kijai/ComfyUI-MMAudio) -- ComfyUI custom nodes
