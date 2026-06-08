@@ -750,6 +750,37 @@ class RunPodWan22Strategy(RunPodWanStrategy):
         ),
     ]
 
+    def __init__(
+        self,
+        output_dir: str = "",
+        keep_pod: bool = False,
+        concurrent_audio: bool = False,
+        character_shot_map: dict | None = None,
+        characters_data: dict | None = None,
+    ):
+        super().__init__(output_dir, keep_pod, concurrent_audio)
+        self._character_shot_map = character_shot_map or {}
+        self._characters_by_name = {
+            c["name"]: c for c in (characters_data or {}).get("characters", [])
+        }
+
+    def format_prompt(self, entry: dict) -> str:
+        base = super().format_prompt(entry)
+        shot_idx = entry.get("index")
+        if shot_idx is None:
+            return base
+        char_names = self._character_shot_map.get(shot_idx, [])
+        if not char_names:
+            return base
+        identity_parts = []
+        for name in char_names:
+            char = self._characters_by_name.get(name)
+            if char:
+                identity_parts.append(f"{char['display_name']}: {char['description']}")
+        if not identity_parts:
+            return base
+        return " ".join(identity_parts) + " " + base
+
     def _build_workflow(self, prompt: str, seed: int, length: int = 97) -> dict:
         """Build ComfyUI API-format workflow JSON for Wan 2.2 TI2V-5B T2V."""
         return {
