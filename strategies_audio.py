@@ -563,6 +563,251 @@ class RunPodMMAudioStrategy(AudioStrategy):
         return results
 
 
+class ReplicateMusicGenStrategy(AudioStrategy):
+    """MusicGen via Replicate API — generates music for music-bucket shots only.
+
+    Reads shot.description.music (set by encode stage) as the prompt.
+    Cost: ~$0.002/sec at stereo-large. Max 30s per clip.
+    """
+
+    name = "musicgen"
+    uses_music_field = True
+    MODEL = "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eeab43"
+    MAX_DURATION = 30
+    MIN_DURATION = 2
+    COST_PER_SECOND = 0.002
+
+    def generate(
+        self,
+        sound_description: str,
+        audio_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+    ) -> list[AudioClipResult]:
+        import replicate
+        import httpx
+
+        duration = int(min(max(target_duration_s, self.MIN_DURATION), self.MAX_DURATION))
+        effective_seed = seed if seed is not None else shot_index
+
+        clip_path = os.path.join(audio_dir, f"{shot_index:04d}.wav")
+
+        try:
+            output = replicate.run(
+                self.MODEL,
+                input={
+                    "prompt": sound_description,
+                    "model_version": "stereo-large",
+                    "duration": duration,
+                    "output_format": "wav",
+                    "seed": effective_seed,
+                },
+            )
+            resp = httpx.get(str(output), follow_redirects=True)
+            resp.raise_for_status()
+            with open(clip_path, "wb") as f:
+                f.write(resp.content)
+            return [AudioClipResult(
+                path=clip_path,
+                actual_duration_s=duration,
+                cost=duration * self.COST_PER_SECOND,
+            )]
+        except Exception as e:
+            print(f"  Error generating music for shot {shot_index}: {e}")
+            return []
+
+
+class RunPodMusicGenStrategy(AudioStrategy):
+    """MusicGen via self-hosted ComfyUI on RunPod — ~$0/marginal.
+
+    Installs ComfyUI-MusicGen custom nodes on first run.
+    Reads shot.description.music as the generation prompt.
+    """
+
+    name = "runpod-musicgen"
+    uses_music_field = True
+    MAX_DURATION = 30
+    MIN_DURATION = 2
+    GENERATION_TIMEOUT = 180  # 3 min per clip
+
+    MUSICGEN_MODELS = [
+        (
+            "musicgen/musicgen_large.safetensors",
+            "https://huggingface.co/facebookresearch/musicgen-large/resolve/main/musicgen_large.safetensors",
+        ),
+    ]
+
+    def __init__(self, output_dir: str = ""):
+        from runpod_pod import RunPodSession
+        self._session = RunPodSession(output_dir)
+        self._setup_done = False
+
+    def _target_durations(self, target_s: float) -> list[float]:
+        return _split_duration(target_s, self.MIN_DURATION, self.MAX_DURATION)
+
+    def _ensure_pod(self):
+        if self._setup_done:
+            return
+        self._session.ensure_pod()
+        self._install_musicgen()
+        self._setup_done = True
+
+    def _install_musicgen(self):
+        """Install ComfyUI-MusicGen custom nodes and download models."""
+        from runpod_pod import COMFYUI_DIR
+
+        if not self._session.ssh_host:
+            print("  Warning: No SSH access. Assuming MusicGen is pre-installed.")
+            self._session.wait_for_comfyui()
+            return
+
+        custom_nodes_dir = f"{COMFYUI_DIR}/custom_nodes"
+
+        check = self._session.ssh_cmd(
+            f'[ -d {custom_nodes_dir}/ComfyUI-MusicGen ] && echo exists || echo missing'
+        )
+        if check.returncode == 0 and "exists" in check.stdout:
+            print("  ComfyUI-MusicGen: already installed")
+        else:
+            self._session.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+            time.sleep(2)
+
+            print("  Installing ComfyUI-MusicGen custom nodes...")
+            pip_cmd = (
+                f"if [ -x {COMFYUI_DIR}/.venv/bin/pip ]; then "
+                f"  {COMFYUI_DIR}/.venv/bin/pip install -r ComfyUI-MusicGen/requirements.txt; "
+                f"else pip install -r ComfyUI-MusicGen/requirements.txt; fi"
+            )
+            result = self._session.ssh_cmd(
+                f"cd {custom_nodes_dir} && "
+                f"git clone https://github.com/GentlemanHu/ComfyUI-MusicGen && "
+                f"{pip_cmd} && echo OK",
+                timeout=300,
+            )
+            if result.returncode != 0 or "OK" not in result.stdout:
+                print(f"  Error installing MusicGen nodes: {result.stderr[:300]}")
+                self._session.terminate()
+                sys.exit(1)
+            print("  ComfyUI-MusicGen: installed")
+
+        self._session.download_models(self.MUSICGEN_MODELS)
+        self._session.restart_comfyui()
+        self._verify_musicgen_nodes()
+
+    def _verify_musicgen_nodes(self):
+        """Check that MusicGen custom nodes loaded in ComfyUI."""
+        import httpx
+
+        try:
+            resp = httpx.get(
+                f"{self._session.base_url}/object_info/MusicGenNode",
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                print("  MusicGen nodes: verified")
+                return
+        except Exception:
+            pass
+
+        print("  Error: MusicGen nodes not found in ComfyUI.")
+        if self._session.ssh_host:
+            result = self._session.ssh_cmd("tail -30 /tmp/comfyui.log", timeout=10)
+            if result.stdout:
+                print(f"  ComfyUI log:\n{result.stdout}")
+        self._session.terminate()
+        sys.exit(1)
+
+    def _build_workflow(self, prompt: str, duration: float, seed: int) -> dict:
+        """Build ComfyUI API-format workflow for MusicGen text-to-audio."""
+        return {
+            "1": {
+                "class_type": "MusicGenNode",
+                "inputs": {
+                    "model": "musicgen_large",
+                    "text": prompt,
+                    "duration": duration,
+                    "seed": seed,
+                    "top_k": 250,
+                    "top_p": 0.0,
+                    "temperature": 1.0,
+                    "cfg_coef": 3.0,
+                },
+            },
+            "2": {
+                "class_type": "SaveAudio",
+                "inputs": {
+                    "filename_prefix": "lossy_music",
+                    "audio": ["1", 0],
+                },
+            },
+        }
+
+    def generate(
+        self,
+        sound_description: str,
+        audio_dir: str,
+        shot_index: int,
+        target_duration_s: float,
+        seed: int | None = None,
+    ) -> list[AudioClipResult]:
+        self._ensure_pod()
+
+        durations = self._target_durations(target_duration_s)
+        results = []
+
+        for part_idx, duration in enumerate(durations):
+            if len(durations) == 1:
+                clip_name = f"{shot_index:04d}.wav"
+            else:
+                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.wav"
+
+            clip_path = os.path.join(audio_dir, clip_name)
+            effective_seed = (seed if seed is not None else shot_index) + part_idx
+
+            try:
+                workflow = self._build_workflow(sound_description, duration, effective_seed)
+                history = self._session.submit_workflow(workflow, timeout=self.GENERATION_TIMEOUT)
+                if not history:
+                    print(f"  Failed to generate music for shot {shot_index}")
+                    return []
+
+                outputs = history.get("outputs", {})
+                output_file = None
+                for node_id, node_output in outputs.items():
+                    if "audio" in node_output:
+                        for item in node_output["audio"]:
+                            output_file = item
+                            break
+                        if output_file:
+                            break
+
+                if not output_file:
+                    print(f"  No audio output found for shot {shot_index}")
+                    return []
+
+                data = self._session.download_output(output_file)
+                if not data:
+                    return []
+
+                with open(clip_path, "wb") as f:
+                    f.write(data)
+
+                results.append(AudioClipResult(
+                    path=clip_path,
+                    actual_duration_s=duration,
+                    cost=0.0,
+                ))
+
+                self._session.free_vram()
+
+            except Exception as e:
+                print(f"  Error generating music {clip_name}: {e}")
+                return []
+
+        return results
+
+
 class SpeechStrategy:
     """TTS via fal.ai ElevenLabs Turbo v2.5."""
 

@@ -277,7 +277,8 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
                   clips_meta: dict, clips_dir: str, adjusted_dir: str,
                   start_index: int | None, end_index: int | None,
                   output_path: str, audio_strategy: str | None,
-                  speech_voice: str | None, label: str = "film") -> str | None:
+                  speech_voice: str | None, music_strategy: str | None = None,
+                  label: str = "film") -> str | None:
     """Stitch a range of clips into a single video with optional audio.
 
     Filters prompts to start_index <= index <= end_index, collects and
@@ -370,18 +371,20 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
 
     # Mux audio (auto-discovers all available audio strategies if none specified)
     _mux_audio(output_dir, output_path, concat_list, prompts_full,
-               audio_strategy, speech_voice)
+               audio_strategy, speech_voice, music_strategy)
 
     return output_path
 
 
 def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
                prompts_full: list[dict], audio_strategy: str | None,
-               speech_voice: str | None):
+               speech_voice: str | None, music_strategy: str | None = None):
     """Build and mux audio/speech tracks into a video file.
 
     If audio_strategy is given, only that SFX track is used. Otherwise,
     auto-discovers all audio strategy directories and mixes them together.
+    If music_strategy is given, its track is overlaid at full volume on top
+    of the SFX track (music dominates for music-bucket shots).
     """
     # Compute actual adjusted video durations per shot
     shot_durations = {}
@@ -419,18 +422,29 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
         if track and os.path.exists(track):
             audio_tracks.append(track)
 
+    # Build music track (music-bucket shots only; silence elsewhere)
+    music_track = None
+    if music_strategy:
+        music_track = _stitch_audio(output_dir, music_strategy, stitched_prompts, None)
+        if music_track and not os.path.exists(music_track):
+            music_track = None
+
     # Build speech track
     speech_track = None
     if speech_voice:
         speech_track = _stitch_speech(output_dir, stitched_prompts, None)
 
     # Collect all tracks to mix, with volume levels:
-    #   SFX tracks are ducked to sit behind dialogue
-    #   Speech is boosted to be clearly audible over SFX
-    SFX_VOLUME_DB = -8   # duck SFX
+    #   SFX tracks are ducked to sit behind music and dialogue
+    #   Music is at full volume (dominates over SFX for music-bucket shots)
+    #   Speech is boosted to be clearly audible over everything
+    SFX_VOLUME_DB = -8    # duck SFX under music/speech
+    MUSIC_VOLUME_DB = 0   # music at full volume
     SPEECH_VOLUME_DB = 6  # boost speech
 
     sfx_tracks = [(t, SFX_VOLUME_DB) for t in audio_tracks]
+    if music_track:
+        sfx_tracks.append((music_track, MUSIC_VOLUME_DB))
     if speech_track and os.path.exists(speech_track):
         sfx_tracks.append((speech_track, SPEECH_VOLUME_DB))
 
@@ -531,6 +545,7 @@ def stitch_clips(args):
     audio_strategy = getattr(args, "audio_strategy", None)
     speech_voice = getattr(args, "speech_voice", None)
     start_index = getattr(args, "start_index", None)
+    music_strategy = getattr(args, "music_strategy", None)
 
     # Auto-detect speech if speech_progress.json exists
     if not speech_voice:
@@ -545,7 +560,7 @@ def stitch_clips(args):
     result = _stitch_range(
         output_dir, strategy_name, prompts_full, clips_meta, clips_dir,
         adjusted_dir, start_index, None, output_path,
-        audio_strategy, speech_voice, label="full reconstruction",
+        audio_strategy, speech_voice, music_strategy, label="full reconstruction",
     )
     if result is None:
         print("No clips found to stitch.")
@@ -574,7 +589,7 @@ def stitch_clips(args):
             scene_result = _stitch_range(
                 output_dir, strategy_name, prompts_full, clips_meta, clips_dir,
                 adjusted_dir, scene_start, scene_end, scene_output,
-                audio_strategy, speech_voice,
+                audio_strategy, speech_voice, music_strategy,
                 label=f"scene '{name}' (#{scene_start}-#{scene_end})",
             )
             if scene_result:

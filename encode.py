@@ -404,6 +404,18 @@ def aggregate_shot_audio(
     return {"bucket": bucket, "labels": labels}
 
 
+def extract_shot_audio(wav_path: str, start_s: float, end_s: float) -> bytes | None:
+    """Extract a shot's audio segment as WAV bytes via ffmpeg stdout pipe."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-ss", str(start_s), "-t", str(end_s - start_s),
+            "-i", wav_path, "-f", "wav", "-ac", "1", "-ar", "16000", "pipe:1", "-y",
+        ],
+        capture_output=True,
+    )
+    return result.stdout if result.returncode == 0 and result.stdout else None
+
+
 def extract_audio(video_path: str, output_dir: str) -> str:
     """Extract audio track to mono 16kHz WAV. Returns path to WAV file."""
     wav_path = os.path.join(output_dir, "audio.wav")
@@ -536,6 +548,22 @@ Return a JSON object with these fields:
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
 
+MUSIC_SYSTEM_PROMPT = """You are a film analysis expert. Given frames and audio from a single shot of a film, describe the shot for use as a video generation prompt.
+
+Return a JSON object with these fields:
+- "shot_type": one of "extreme wide", "wide", "medium wide", "medium", "medium close-up", "close-up", "extreme close-up", "insert"
+- "camera_movement": description of camera motion (e.g., "static", "slow pan left", "tracking forward", "handheld")
+- "subjects": who/what is in the shot and what they are doing
+- "action": what happens during the shot (describe the motion/change from start to end)
+- "lighting": description of lighting quality and direction
+- "color_palette": dominant colors
+- "mood": emotional tone or atmosphere
+- "setting": location/environment description
+- "sound": description of the non-speech soundtrack — music, sound effects, ambient sounds, and atmosphere only. Do NOT include dialogue, voices, or speech — those are handled by a separate system. If silence or near-silence, say so.
+- "music": description of the music/score heard in this shot — mood, estimated tempo (e.g., ~80bpm), instrumentation, and how the music functions in the scene (e.g., "builds tension", "underscores triumph"). Describe only the musical elements; exclude SFX and ambient sounds. Listen carefully to the audio provided.
+
+Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
+
 SEGMENT_THRESHOLD_S = 8.0   # shots longer than this get temporal_segments generated
 SEGMENT_DURATION_S = 12.0  # one segment per this many seconds of shot duration
 
@@ -629,6 +657,7 @@ def generate_prompts(
     audio_labels: dict,
     output_dir: str,
     provider: str,
+    wav_path: str | None = None,
 ) -> list[dict]:
     """Generate descriptive prompts for each shot via vision API."""
     from google import genai
@@ -711,17 +740,29 @@ def generate_prompts(
             texts = [d["text"] if isinstance(d, dict) else d for d in dialogue]
             context_lines.append(f"Dialogue during this shot: \"{' / '.join(texts)}\"")
 
+        is_music_shot = audio.get("bucket") == "music"
+
+        # For music shots, prepend raw audio so Gemini can describe the score
+        audio_parts = []
+        if is_music_shot and wav_path and os.path.exists(wav_path):
+            shot_audio = extract_shot_audio(wav_path, scene["start_s"], scene["end_s"])
+            if shot_audio:
+                audio_parts = [types.Part.from_bytes(data=shot_audio, mime_type="audio/wav")]
+
         context_lines.append(f"These are {len(parts)} uniformly-sampled frames from the shot, in chronological order.")
+        if is_music_shot and audio_parts:
+            context_lines.append("The audio for this shot is also provided. Use it to fill the 'music' field.")
         context_lines.append("Analyze the frames and return the JSON description.")
 
-        user_content = parts + [types.Part.from_text(text="\n".join(context_lines))]
+        user_content = audio_parts + parts + [types.Part.from_text(text="\n".join(context_lines))]
+        system_prompt = MUSIC_SYSTEM_PROMPT if is_music_shot else SYSTEM_PROMPT
 
         try:
             response = client.models.generate_content(
                 model="gemini-3.1-flash-lite-preview",
                 contents=[types.Content(role="user", parts=user_content)],
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
+                    system_instruction=system_prompt,
                     temperature=0.3,
                     response_mime_type="application/json",
                 ),
@@ -1314,10 +1355,11 @@ def run_stage2(args):
     # Step 3: Audio classification
     print("Classifying audio...")
     audio_labels = detect_audio_labels(video_path, scenes, output_dir)
+    wav_path = os.path.join(output_dir, "audio.wav")
 
     # Step 4: Generate prompts via vision API
     print("Generating prompts...")
-    prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir, args.provider)
+    prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir, args.provider, wav_path=wav_path)
 
     # Save prompt manifest — v2 format stores dialog as a global timeline list
     # (one entry per subtitle line at its original SRT timestamp) so that speech
