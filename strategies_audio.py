@@ -572,7 +572,7 @@ class ReplicateMusicGenStrategy(AudioStrategy):
 
     name = "musicgen"
     uses_music_field = True
-    MODEL = "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eeab43"
+    MODEL = "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb"
     MAX_DURATION = 30
     MIN_DURATION = 2
     COST_PER_SECOND = 0.002

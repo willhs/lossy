@@ -329,7 +329,8 @@ def run_audio(args, strategy: AudioStrategy):
 
         # Extract description: music strategies read the 'music' field; SFX strategies read 'sound'
         desc_field = "music" if getattr(strategy, "uses_music_field", False) else "sound"
-        sound = entry.get("description", {}).get(desc_field)
+        desc = entry.get("description")
+        sound = desc.get(desc_field) if isinstance(desc, dict) else None
         if not sound:
             skipped += 1
             progress["skipped"].append(idx)
