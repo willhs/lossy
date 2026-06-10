@@ -538,11 +538,7 @@ def main():
                 keep_pod=getattr(args, "keep_pod", False),
                 concurrent_audio=getattr(args, "concurrent_audio", False),
             ),
-            "runpod-wan22": lambda: RunPodWan22Strategy(
-                output_dir=args.output_dir,
-                keep_pod=getattr(args, "keep_pod", False),
-                concurrent_audio=getattr(args, "concurrent_audio", False),
-            ),
+            "runpod-wan22": lambda: _create_wan22_strategy(args),
             "runpod-wan-enriched": lambda: _create_wan_enriched_strategy(args),
             "runpod-vace": lambda: _create_vace_strategy(args),
         }
@@ -565,6 +561,29 @@ def _create_wan_enriched_strategy(args):
         print("Warning: characters.json not found. Running without prompt enrichment.")
 
     return RunPodWanEnrichedStrategy(
+        output_dir=output_dir,
+        keep_pod=getattr(args, "keep_pod", False),
+        concurrent_audio=getattr(args, "concurrent_audio", False),
+        character_shot_map=character_shot_map,
+        characters_data=characters_data,
+    )
+
+
+def _create_wan22_strategy(args):
+    output_dir = args.output_dir
+    characters_path = os.path.join(output_dir, "characters.json")
+
+    character_shot_map = {}
+    characters_data = {}
+
+    if os.path.exists(characters_path):
+        with open(characters_path) as f:
+            characters_data = json.load(f)
+        character_shot_map = build_character_shot_map(characters_data)
+    else:
+        print("Warning: characters.json not found. Running without prompt enrichment.")
+
+    return RunPodWan22Strategy(
         output_dir=output_dir,
         keep_pod=getattr(args, "keep_pod", False),
         concurrent_audio=getattr(args, "concurrent_audio", False),
