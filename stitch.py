@@ -420,7 +420,7 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
     for strat in strategies:
         track = _stitch_audio(output_dir, strat, stitched_prompts, None)
         if track and os.path.exists(track):
-            audio_tracks.append(track)
+            audio_tracks.append((strat, track))
 
     # Build music track (music-bucket shots only; silence elsewhere)
     music_track = None
@@ -435,16 +435,18 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
         speech_track = _stitch_speech(output_dir, stitched_prompts, None)
 
     # Collect all tracks to mix, with volume levels:
-    #   SFX tracks are ducked to sit behind music and dialogue
-    #   Music is at full volume (dominates over SFX for music-bucket shots)
+    #   Music strategies (-4 dB): prominent but not overpowering
+    #   SFX strategies (-8 dB): ducked under music and dialogue
+    #   Explicit music_strategy track (0 dB): full volume (legacy path)
     #   Speech is boosted to be clearly audible over everything
-    SFX_VOLUME_DB = -8    # duck SFX under music/speech
-    MUSIC_VOLUME_DB = 0   # music at full volume
     SPEECH_VOLUME_DB = 6  # boost speech
 
-    sfx_tracks = [(t, SFX_VOLUME_DB) for t in audio_tracks]
+    def _strategy_vol(strat: str) -> int:
+        return -4 if "music" in strat else -8
+
+    sfx_tracks = [(t, _strategy_vol(strat)) for strat, t in audio_tracks]
     if music_track:
-        sfx_tracks.append((music_track, MUSIC_VOLUME_DB))
+        sfx_tracks.append((music_track, 0))
     if speech_track and os.path.exists(speech_track):
         sfx_tracks.append((speech_track, SPEECH_VOLUME_DB))
 
