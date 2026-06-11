@@ -26,18 +26,18 @@ Source Film → [encode] → output/<film>/{manifest,prompts,characters}.json, k
 
 ## On-Disk Contract
 
-All stage-to-stage communication lives in one output directory per film. `manifest.py` is the single source of truth for the filename conventions and the `prompts.json` schema — readers should go through `manifest.load_prompts()` rather than reinventing the v2 check.
+All stage-to-stage communication lives in one output directory per film. `manifest.py` is the single source of truth for the filename conventions and the `shots.json` schema — readers should go through `manifest.load_shots()` rather than reinventing the v2 check.
 
 ### Encoder outputs
 
 | Path | Producer | Purpose |
 |---|---|---|
-| `manifest.json` | encode stage 1 | Shot boundaries (`index`, `start_s`, `end_s`, `duration_s`, `keyframes[]`) plus `source` metadata. Read by stage 2, eval, and any tool that needs the shot map. |
+| `shot_index.json` | encode stage 1 | Shot boundaries (`index`, `start_s`, `end_s`, `duration_s`, `keyframes[]`) plus `source` metadata. Read by stage 2, eval, and any tool that needs the shot map. |
 | `keyframes/NNNN-MM.jpg` | encode stage 1 | Per-shot keyframes (512px, adaptive count) used by stage 2 for vision prompts. |
 | `subtitles.srt` | encode stage 2 | Extracted SRT track from the source (when embedded). |
 | `camera_motion.json` | encode stage 2 | Per-shot motion label from Farneback optical flow. Cached so stage 2 is re-runnable without re-processing the whole video. |
 | `audio_labels.json` | encode stage 2 | Per-shot YAMNet aggregation into 6 buckets (speech, music, effects, ambient, silence, other). |
-| `prompts.json` | encode stage 2 | The real "compressed" film — v2 format: `{"format": "v2", "shots": [...], "dialog": [...]}`. `shots` are per-shot descriptions used by decode; `dialog` is a flat global subtitle timeline used by speech TTS. |
+| `shots.json` | encode stage 2 | The real "compressed" film — v2 format: `{"format": "v2", "shots": [...], "dialog": [...]}`. `shots` are per-shot descriptions used by decode; `dialog` is a flat global subtitle timeline used by speech TTS. |
 | `characters.json` | encode stage 3 | Character registry produced from `shots[].description.subjects`. Drives portrait generation and VACE reference conditioning downstream. TMDB-seeded when `--tmdb-id` is passed (ADR-006); unsupervised Gemini otherwise. |
 | `encode_costs.json` | encode stage 2 | Gemini input/output token costs per stage. |
 
@@ -50,7 +50,7 @@ All stage-to-stage communication lives in one output directory per film. `manife
 | `decode_progress_<strategy>.json` | decode (video) | Resume state: `completed[]`, `failed[]`, `clips{}` map with per-clip duration and cost. Read back by stitch. |
 | `audio/<strategy>/NNNN.flac\|mp3` | decode (audio) | Per-shot SFX/music generated from the shot's `description.sound`. |
 | `audio_progress_<strategy>.json` | decode (audio) | Resume state for audio. |
-| `speech/NNNN-00.mp3` | decode (speech) | Per-dialog-line TTS, one file per entry in `prompts.json:dialog`. Indexed by global dialog position, not shot index. |
+| `speech/NNNN-00.mp3` | decode (speech) | Per-dialog-line TTS, one file per entry in `shots.json:dialog`. Indexed by global dialog position, not shot index. |
 | `speech_progress.json` | decode (speech) | Resume state for speech, always `{"format": "v2", ...}`. |
 | `characters/<name>.png` | decode (portraits) | Canonical portrait generated from `characters.json`. Used by the VACE strategy as reference conditioning (SPEC-210, SPEC-220). |
 | `runpod_pod.json` | decode (RunPod strategies) | Active pod lifecycle state managed by `runpod_pod.RunPodSession`. |
@@ -63,15 +63,15 @@ All stage-to-stage communication lives in one output directory per film. `manife
 
 ### Encode
 
-**Stage 1 (`encode.py stage1`)** — PySceneDetect AdaptiveDetector (ADR-003) splits the source into shots; FFmpeg extracts 2-8 keyframes per shot at 512px. Writes `manifest.json` and `keyframes/`.
+**Stage 1 (`encode.py stage1`)** — PySceneDetect AdaptiveDetector (ADR-003) splits the source into shots; FFmpeg extracts 2-8 keyframes per shot at 512px. Writes `shot_index.json` and `keyframes/`.
 
-**Stage 2 (`encode.py stage2`)** — Enriches each shot with metadata (subtitles, camera motion, audio buckets) and calls Gemini Flash-Lite with the keyframes and metadata to produce a structured description: `shot_type`, `camera_movement`, `subjects`, `action`, `lighting`, `color_palette`, `mood`, `setting`, `sound`. Shots longer than the split threshold (ADR-007) get additional per-segment descriptions stored under `temporal_segments`. Writes `prompts.json` (v2), `camera_motion.json`, `audio_labels.json`, `subtitles.srt`.
+**Stage 2 (`encode.py stage2`)** — Enriches each shot with metadata (subtitles, camera motion, audio buckets) and calls Gemini Flash-Lite with the keyframes and metadata to produce a structured description: `shot_type`, `camera_movement`, `subjects`, `action`, `lighting`, `color_palette`, `mood`, `setting`, `sound`. Shots longer than the split threshold (ADR-007) get additional per-segment descriptions stored under `temporal_segments`. Writes `shots.json` (v2), `camera_motion.json`, `audio_labels.json`, `subtitles.srt`.
 
 **Stage 3 (`encode.py stage3`)** — Builds a character registry from the `subjects` fields. With `--tmdb-id` uses TMDB cast as ground truth for a two-step text-match + supervised Gemini pass (ADR-006); without, falls back to an unsupervised Gemini pass. Writes `characters.json`.
 
 ### Decode
 
-Reads `prompts.json` via `manifest.load_prompts`. Dispatches each shot to a selected **video strategy**, and optionally to an **audio strategy** and the **speech strategy**. Video and audio have per-strategy progress files so runs are resumable and multiple backends can coexist in the same output directory.
+Reads `shots.json` via `manifest.load_shots`. Dispatches each shot to a selected **video strategy**, and optionally to an **audio strategy** and the **speech strategy**. Video and audio have per-strategy progress files so runs are resumable and multiple backends can coexist in the same output directory.
 
 **Video strategies** (`strategies_video.py`):
 
@@ -97,13 +97,13 @@ Long shots that exceed the strategy's max clip duration are split into multiple 
 
 The speech filter (SPEC-100) strips speech/dialogue/voice keywords from the `sound` description before passing to MMAudio variants, since those backends produce garbled dialogue when asked for speech.
 
-**Speech strategy** (ElevenLabs TTS) generates one clip per entry in `prompts.json:dialog` at its original SRT timestamp, so lines that span shot boundaries are spoken exactly once.
+**Speech strategy** (ElevenLabs TTS) generates one clip per entry in `shots.json:dialog` at its original SRT timestamp, so lines that span shot boundaries are spoken exactly once.
 
 ### Stitch (`python decode.py ... --stitch` or implicit after decode)
 
 FFmpeg-driven concatenation (`stitch.py`):
 
-1. Load `prompts.json` via `manifest.load_prompts` and the per-strategy `decode_progress_<strategy>.json`.
+1. Load `shots.json` via `manifest.load_shots` and the per-strategy `decode_progress_<strategy>.json`.
 2. Speed-adjust each clip to match the original shot duration (skipped for split-shot parts, whose filenames carry a `-NN` suffix).
 3. Concatenate via FFmpeg concat demuxer.
 4. Auto-discover all audio strategies under `audio/` (or use `--audio-strategy`) and mix their per-shot tracks, duration-adjusted to match the stitched video.
@@ -122,7 +122,7 @@ Browser-based side-by-side viewer served by `tools/serve.py` (static file server
 
 - **Cost first.** Every external API call costs money; pipeline defaults aim for the cheapest viable options (480p, short clips, fewest frames sampled). See `docs/philosophy/principles.md`.
 - **Stateless stages (ADR-002).** Stages communicate by files in the output directory. No shared database, no long-running server, no in-memory state that survives a CLI invocation.
-- **Single source of truth for the on-disk contract.** `manifest.py` owns filename conventions and the `prompts.json` v2 schema; other modules import it rather than reinventing the check.
+- **Single source of truth for the on-disk contract.** `manifest.py` owns filename conventions and the `shots.json` v2 schema; other modules import it rather than reinventing the check.
 - **Strategy pattern for backends.** New video or audio backends plug in as subclasses of `GenerationStrategy` / `AudioStrategy` in `strategies_video.py` / `strategies_audio.py`.
 - **No package manager.** Dependencies are installed directly into `.venv`. New dependencies require discussion (see `CLAUDE.md`).
 

@@ -142,9 +142,9 @@ def run_decode(args, strategy: GenerationStrategy):
     output_dir = args.output_dir
 
     try:
-        prompts, _ = manifest.load_prompts(output_dir)
+        prompts, _ = manifest.load_shots(output_dir)
     except FileNotFoundError:
-        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
+        print(f"Error: {manifest.shots_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
 
     # Apply start index and limit
@@ -283,9 +283,9 @@ def run_audio(args, strategy: AudioStrategy):
     output_dir = args.output_dir
 
     try:
-        prompts, _ = manifest.load_prompts(output_dir)
+        prompts, _ = manifest.load_shots(output_dir)
     except FileNotFoundError:
-        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
+        print(f"Error: {manifest.shots_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
 
     # Apply start index and limit
@@ -409,9 +409,9 @@ def run_speech(args, strategy: SpeechStrategy):
     output_dir = args.output_dir
 
     try:
-        _, dialog = manifest.load_prompts(output_dir)
+        _, dialog = manifest.load_shots(output_dir)
     except FileNotFoundError:
-        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
+        print(f"Error: {manifest.shots_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
 
     speech_dir = manifest.speech_dir(output_dir)

@@ -265,8 +265,8 @@ function playToBoundary() {
   video.play();
 }
 
-// Load manifest
-fetch('/manifest.json')
+// Load shot index
+fetch('/shot_index.json')
   .then(r => r.json())
   .then(data => {
     scenes = data.scenes;

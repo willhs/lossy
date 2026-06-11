@@ -657,10 +657,10 @@ def generate_prompts(
     client = genai.Client(api_key=api_key)
     keyframes_dir = os.path.join(output_dir, "keyframes")
 
-    # Load existing prompts for resume support
-    prompts_path = os.path.join(output_dir, "prompts.json")
-    if os.path.exists(prompts_path):
-        with open(prompts_path) as f:
+    # Load existing shots for resume support
+    shots_path = os.path.join(output_dir, "shots.json")
+    if os.path.exists(shots_path):
+        with open(shots_path) as f:
             existing = json.load(f)
         existing_indices = {p["index"] for p in existing}
     else:
@@ -770,7 +770,7 @@ def generate_prompts(
             if new_count % 10 == 0:
                 print(f"  Described {len(prompts)}/{total} shots")
                 # Incremental save
-                with open(prompts_path, "w") as f:
+                with open(shots_path, "w") as f:
                     json.dump(prompts, f, indent=2)
 
         except Exception as e:
@@ -1146,18 +1146,18 @@ def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot)
 
 
 def run_stage3(args):
-    """Stage 3: Build character registry from prompts.json subjects."""
+    """Stage 3: Build character registry from shots.json subjects."""
     from google import genai
     from google.genai import types
 
     output_dir = args.output_dir
-    prompts_path = os.path.join(output_dir, "prompts.json")
+    shots_path = os.path.join(output_dir, "shots.json")
 
-    if not os.path.exists(prompts_path):
-        print(f"Error: {prompts_path} not found. Run stage2 first.")
+    if not os.path.exists(shots_path):
+        print(f"Error: {shots_path} not found. Run stage2 first.")
         sys.exit(1)
 
-    with open(prompts_path) as f:
+    with open(shots_path) as f:
         raw = json.load(f)
 
     # Support both v2 format ({"format": "v2", "shots": [...]}) and v1 (flat array)
@@ -1171,7 +1171,7 @@ def run_stage3(args):
             subjects_by_shot.append(f"Shot {entry['index']}: {subjects}")
 
     if not subjects_by_shot:
-        print("No subjects found in prompts.json")
+        print("No subjects found in shots.json")
         sys.exit(1)
 
     # Load .env for API keys
@@ -1271,11 +1271,11 @@ def run_stage1(args):
     extract_keyframes(args.video, scenes, args.output)
 
     manifest = build_manifest(scenes, args.video)
-    manifest_path = os.path.join(args.output, "manifest.json")
-    with open(manifest_path, "w") as f:
+    shot_index_path = os.path.join(args.output, "shot_index.json")
+    with open(shot_index_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"\nManifest saved to {manifest_path}")
+    print(f"\nShot index saved to {shot_index_path}")
     print(f"  {manifest['shot_count']} shots detected")
     durations = [s["duration_s"] for s in manifest["scenes"]]
     print(f"  Average shot duration: {sum(durations) / len(durations):.2f}s")
@@ -1285,13 +1285,13 @@ def run_stage1(args):
 def run_stage2(args):
     """Stage 2: Enrich shots with metadata, generate prompts via vision API."""
     output_dir = args.output_dir
-    manifest_path = os.path.join(output_dir, "manifest.json")
+    shot_index_path = os.path.join(output_dir, "shot_index.json")
 
-    if not os.path.exists(manifest_path):
-        print(f"Error: {manifest_path} not found. Run stage1 first.")
+    if not os.path.exists(shot_index_path):
+        print(f"Error: {shot_index_path} not found. Run stage1 first.")
         sys.exit(1)
 
-    with open(manifest_path) as f:
+    with open(shot_index_path) as f:
         manifest = json.load(f)
 
     video_path = manifest["source"]["path"]
@@ -1319,16 +1319,16 @@ def run_stage2(args):
     print("Generating prompts...")
     prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir, args.provider)
 
-    # Save prompt manifest — v2 format stores dialog as a global timeline list
+    # Save shots — v2 format stores dialog as a global timeline list
     # (one entry per subtitle line at its original SRT timestamp) so that speech
     # generation places each line exactly once, avoiding repetition across shots
     # that span subtitle boundaries.
-    prompts_path = os.path.join(output_dir, "prompts.json")
-    prompts_data = {"format": "v2", "shots": prompts, "dialog": subtitles}
-    with open(prompts_path, "w") as f:
-        json.dump(prompts_data, f, indent=2)
+    shots_path = os.path.join(output_dir, "shots.json")
+    shots_data = {"format": "v2", "shots": prompts, "dialog": subtitles}
+    with open(shots_path, "w") as f:
+        json.dump(shots_data, f, indent=2)
 
-    print(f"\nPrompts saved to {prompts_path}")
+    print(f"\nShots saved to {shots_path}")
     print(f"  {len(prompts)} shots described")
 
 

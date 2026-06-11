@@ -405,8 +405,8 @@ class TestAggregateShotAudio:
 # ---------------------------------------------------------------------------
 
 def _mock_stage3(tmp_path, monkeypatch, prompts_data, mock_response):
-    """Helper: write prompts.json, mock Gemini, run stage3, return parsed characters.json."""
-    (tmp_path / "prompts.json").write_text(json.dumps(prompts_data))
+    """Helper: write shots.json, mock Gemini, run stage3, return parsed characters.json."""
+    (tmp_path / "shots.json").write_text(json.dumps(prompts_data))
 
     mock_client = MagicMock()
     mock_client.models.generate_content.return_value = MagicMock(
@@ -496,7 +496,7 @@ class TestStage3OutputStructure:
 
     @pytest.mark.req("SPEC-200/REQ-007")
     def test_shot_indices_match_prompts(self, tmp_path, monkeypatch):
-        """REQ-007: Shot indices shall correspond to indices in prompts.json."""
+        """REQ-007: Shot indices shall correspond to indices in shots.json."""
         data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
         valid_indices = {e["index"] for e in PROMPTS_V1}
         for char in data["characters"]:
@@ -513,7 +513,7 @@ class TestStage3CharacterSelection:
 
         Verified via the system prompt sent to Gemini.
         """
-        (tmp_path / "prompts.json").write_text(json.dumps(PROMPTS_V1))
+        (tmp_path / "shots.json").write_text(json.dumps(PROMPTS_V1))
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = MagicMock(
             text=json.dumps(MOCK_CHARACTERS)
@@ -533,7 +533,7 @@ class TestStage3CharacterSelection:
 
         Verified via the system prompt sent to Gemini.
         """
-        (tmp_path / "prompts.json").write_text(json.dumps(PROMPTS_V1))
+        (tmp_path / "shots.json").write_text(json.dumps(PROMPTS_V1))
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = MagicMock(
             text=json.dumps(MOCK_CHARACTERS)
@@ -550,7 +550,7 @@ class TestStage3CharacterSelection:
     @pytest.mark.req("SPEC-200/REQ-013")
     def test_all_subjects_sent_to_gemini(self, tmp_path, monkeypatch):
         """REQ-013: All shot subjects shall be sent to Gemini for merging."""
-        (tmp_path / "prompts.json").write_text(json.dumps(PROMPTS_V1))
+        (tmp_path / "shots.json").write_text(json.dumps(PROMPTS_V1))
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = MagicMock(
             text=json.dumps(MOCK_CHARACTERS)
@@ -575,13 +575,13 @@ class TestStage3InputHandling:
 
     @pytest.mark.req("SPEC-200/REQ-020")
     def test_reads_v1_format(self, tmp_path, monkeypatch):
-        """REQ-020: Stage 3 shall support v1 (flat array) prompts.json."""
+        """REQ-020: Stage 3 shall support v1 (flat array) shots.json."""
         data = _mock_stage3(tmp_path, monkeypatch, PROMPTS_V1, MOCK_CHARACTERS)
         assert len(data["characters"]) == 2
 
     @pytest.mark.req("SPEC-200/REQ-021")
     def test_reads_v2_format(self, tmp_path, monkeypatch):
-        """REQ-021: Stage 3 shall support v2 format prompts.json."""
+        """REQ-021: Stage 3 shall support v2 format shots.json."""
         prompts_v2 = {
             "format": "v2",
             "shots": PROMPTS_V1,
@@ -592,7 +592,7 @@ class TestStage3InputHandling:
 
     @pytest.mark.req("SPEC-200/REQ-022")
     def test_missing_prompts_exits(self, tmp_path):
-        """REQ-022: Stage 3 shall exit if prompts.json does not exist."""
+        """REQ-022: Stage 3 shall exit if shots.json does not exist."""
         with pytest.raises(SystemExit):
             run_stage3(argparse.Namespace(output_dir=str(tmp_path)))
 
@@ -600,7 +600,7 @@ class TestStage3InputHandling:
     def test_no_subjects_exits(self, tmp_path, monkeypatch):
         """REQ-023: Stage 3 shall exit if no subjects are found."""
         prompts = [{"index": 0, "description": {"action": "A door opens."}}]
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        (tmp_path / "shots.json").write_text(json.dumps(prompts))
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
         with pytest.raises(SystemExit):
@@ -610,7 +610,7 @@ class TestStage3InputHandling:
     def test_missing_api_key_exits(self, tmp_path, monkeypatch):
         """REQ-024: Stage 3 shall exit if GEMINI_API_KEY is not set."""
         prompts = [{"index": 0, "description": {"subjects": "Luke"}}]
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts))
+        (tmp_path / "shots.json").write_text(json.dumps(prompts))
         monkeypatch.setenv("GEMINI_API_KEY", "")
 
         with pytest.raises(SystemExit):
@@ -967,7 +967,7 @@ class TestRunStage3WithTmdb:
     def _write_prompts(self, tmp_path, prompts_data=None):
         if prompts_data is None:
             prompts_data = PROMPTS_WITH_SUBJECTS
-        (tmp_path / "prompts.json").write_text(json.dumps(prompts_data))
+        (tmp_path / "shots.json").write_text(json.dumps(prompts_data))
 
     def test_supervised_path_invoked_when_tmdb_id_set(self, tmp_path, monkeypatch):
         """When --tmdb-id and TMDB_API_KEY are set, the supervised path is used."""

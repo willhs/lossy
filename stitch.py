@@ -171,7 +171,7 @@ def _stitch_speech(output_dir: str, prompts: list[dict],
         speech_progress = json.load(f)
 
     try:
-        _, global_dialog = manifest.load_prompts(output_dir)
+        _, global_dialog = manifest.load_shots(output_dir)
     except (FileNotFoundError, ValueError):
         return None
 
@@ -512,9 +512,9 @@ def stitch_clips(args):
             sys.exit(1)
 
     try:
-        prompts_full, _ = manifest.load_prompts(output_dir)
+        prompts_full, _ = manifest.load_shots(output_dir)
     except FileNotFoundError:
-        print(f"Error: {manifest.prompts_path(output_dir)} not found. Run encoder first.")
+        print(f"Error: {manifest.shots_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
 
     # Load clip metadata from progress (try per-strategy, fall back to legacy)

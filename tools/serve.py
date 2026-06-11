@@ -35,11 +35,11 @@ def scan_project():
             dirpath = os.path.join(output_dir, name)
             if not os.path.isdir(dirpath):
                 continue
-            manifest_path = os.path.join(dirpath, "manifest.json")
+            manifest_path = os.path.join(dirpath, "shot_index.json")
             if not os.path.isfile(manifest_path):
                 continue
 
-            # Read source from manifest
+            # Read source from the shot index
             try:
                 with open(manifest_path) as f:
                     manifest = json.load(f)
@@ -50,7 +50,7 @@ def scan_project():
                 source_file = "unknown"
                 source_path = "unknown"
 
-            has_prompts = os.path.isfile(os.path.join(dirpath, "prompts.json"))
+            has_prompts = os.path.isfile(os.path.join(dirpath, "shots.json"))
             has_speech = os.path.isfile(os.path.join(dirpath, "speech_track.wav"))
 
             # Collect strategies from reconstructed videos and/or decode progress files

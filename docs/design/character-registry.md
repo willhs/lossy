@@ -11,7 +11,7 @@ purpose: Requirements for encode stage 3 — character registry extraction from 
 
 ## Overview
 
-Stage 3 reads all `description.subjects` fields from `prompts.json`, sends them to Gemini in a single call, and produces a `characters.json` sidecar with named characters, canonical descriptions, and shot appearances. This registry drives portrait generation and VACE reference conditioning downstream.
+Stage 3 reads all `description.subjects` fields from `shots.json`, sends them to Gemini in a single call, and produces a `characters.json` sidecar with named characters, canonical descriptions, and shot appearances. This registry drives portrait generation and VACE reference conditioning downstream.
 
 ## Output Structure
 
@@ -22,7 +22,7 @@ Stage 3 reads all `description.subjects` fields from `prompts.json`, sends them 
 **REQ-004**: Each character entry shall have a `"display_name"` field: human-readable name.
 **REQ-005**: Each character entry shall have a `"description"` field: canonical appearance text.
 **REQ-006**: Each character entry shall have a `"shots"` field: a list of integer shot indices.
-**REQ-007**: Shot indices in the `"shots"` field shall correspond to indices present in `prompts.json`.
+**REQ-007**: Shot indices in the `"shots"` field shall correspond to indices present in `shots.json`.
 
 ## Character Selection
 
@@ -42,8 +42,8 @@ Stage 3 reads all `description.subjects` fields from `prompts.json`, sends them 
 ## Input Handling
 
 <!-- REQ-020 to REQ-029 -->
-**REQ-020**: Stage 3 shall support v1 format (flat array) `prompts.json`.
-**REQ-021**: Stage 3 shall support v2 format (`{"format": "v2", "shots": [...]}`) `prompts.json`.
-**REQ-022**: Stage 3 shall exit with an error if `prompts.json` does not exist.
+**REQ-020**: Stage 3 shall support v1 format (flat array) `shots.json`.
+**REQ-021**: Stage 3 shall support v2 format (`{"format": "v2", "shots": [...]}`) `shots.json`.
+**REQ-022**: Stage 3 shall exit with an error if `shots.json` does not exist.
 **REQ-023**: Stage 3 shall exit with an error if no subjects are found in any shot.
 **REQ-024**: Stage 3 shall exit with an error if `GEMINI_API_KEY` is not set.

@@ -14,7 +14,7 @@ purpose: Per-segment prompt variation for long shots split across multiple gener
 When a shot exceeds a video generation strategy's max clip duration, it is split into multiple parts. Without intervention, all parts would be generated from the same prompt, producing near-identical clips. This spec defines the behavior for varying prompts across split parts so that each generated clip is visually distinct.
 
 There are two mechanisms:
-1. **Encoded temporal segments** (`temporal_segments` in prompts.json): Per-segment descriptions generated from the actual keyframes of each half of the shot during encode stage 2.
+1. **Encoded temporal segments** (`temporal_segments` in shots.json): Per-segment descriptions generated from the actual keyframes of each half of the shot during encode stage 2.
 2. **Generic fallback cues**: When encoded segments are absent, a simple text cue is appended based on temporal position ("Beginning of the action.", etc.).
 
 ## Encode: Temporal Segment Generation
@@ -30,7 +30,7 @@ There are two mechanisms:
 
 **REQ-005**: The whole-shot description shall be provided as context when generating each segment, so the segment description stays coherent with the full shot.
 
-**REQ-006**: If fewer than 2 keyframes are available for the shot, `temporal_segments` shall not be generated and the field shall be absent from the prompts.json entry.
+**REQ-006**: If fewer than 2 keyframes are available for the shot, `temporal_segments` shall not be generated and the field shall be absent from the shots.json entry.
 
 **REQ-007**: If a Gemini call fails for any segment, `temporal_segments` shall not be added (partial segments shall not be stored).
 

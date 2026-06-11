@@ -1458,7 +1458,7 @@ class TestRunSpeechV2:
             {"text": "Hello world", "start_s": 1.0, "end_s": 2.5},
             {"text": "Goodbye", "start_s": 3.0, "end_s": 4.0},
         ]
-        (tmp_path / "prompts.json").write_text(
+        (tmp_path / "shots.json").write_text(
             json.dumps(self._make_prompts_v2(dialog))
         )
 
@@ -1483,7 +1483,7 @@ class TestRunSpeechV2:
     def test_v2_writes_v2_progress_format(self, tmp_path):
         """speech_progress.json is written with format=v2."""
         dialog = [{"text": "Hi", "start_s": 0.5, "end_s": 1.5}]
-        (tmp_path / "prompts.json").write_text(
+        (tmp_path / "shots.json").write_text(
             json.dumps(self._make_prompts_v2(dialog))
         )
         (tmp_path / "speech").mkdir()
@@ -1509,7 +1509,7 @@ class TestRunSpeechV2:
             {"text": "Line 1", "start_s": 1.0, "end_s": 2.0},
             {"text": "Line 2", "start_s": 3.0, "end_s": 4.0},
         ]
-        (tmp_path / "prompts.json").write_text(
+        (tmp_path / "shots.json").write_text(
             json.dumps(self._make_prompts_v2(dialog))
         )
         # Pre-existing progress marks line 0 as done

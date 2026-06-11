@@ -1,7 +1,7 @@
 """On-disk contract for the lossy pipeline.
 
 Single source of truth for:
-  * The ``prompts.json`` v2 schema (see ``load_prompts`` / ``save_prompts``)
+  * The ``shots.json`` v2 schema (see ``load_shots`` / ``save_shots``)
   * Filename and directory conventions for clips, audio, speech, and progress
     files (see the ``*_path`` / ``*_dir`` helpers)
 
@@ -10,7 +10,13 @@ check and ``f"{idx:04d}.mp4"`` string literals were reinvented in every
 reader, so a schema tweak meant grepping five modules. This module removes
 the duplication.
 
-v1 ``prompts.json`` (a flat list of shots) is no longer supported on the
+The two top-level encode artifacts:
+  * ``shot_index.json`` — shot boundaries + keyframe filenames (stage 1, from
+    PySceneDetect). Where the shots are.
+  * ``shots.json`` — per-shot descriptions + the dialog timeline (stage 2).
+    What the shots are: the compressed film itself.
+
+v1 ``shots.json`` (a flat list of shots) is no longer supported on the
 decode side. Encode stage 2 has emitted v2 since the format was introduced,
 so the only places v1 still lives are stage 3's fixture tests.
 """
@@ -26,12 +32,12 @@ PROMPTS_FORMAT_VERSION = "v2"
 # Top-level file paths
 # ---------------------------------------------------------------------------
 
-def manifest_path(output_dir: str) -> str:
-    return os.path.join(output_dir, "manifest.json")
+def shot_index_path(output_dir: str) -> str:
+    return os.path.join(output_dir, "shot_index.json")
 
 
-def prompts_path(output_dir: str) -> str:
-    return os.path.join(output_dir, "prompts.json")
+def shots_path(output_dir: str) -> str:
+    return os.path.join(output_dir, "shots.json")
 
 
 def characters_path(output_dir: str) -> str:
@@ -120,7 +126,7 @@ def clip_exists_for_shot(clips_dir_path: str, shot_idx: int,
 
 
 # ---------------------------------------------------------------------------
-# prompts.json (v2 format)
+# shots.json (v2 format)
 # ---------------------------------------------------------------------------
 #
 # Shape:
@@ -141,20 +147,20 @@ def clip_exists_for_shot(clips_dir_path: str, shot_idx: int,
 # once.
 
 
-def load_prompts(output_dir: str) -> tuple[list[dict], list[dict]]:
-    """Read prompts.json (v2) and return ``(shots, dialog)``.
+def load_shots(output_dir: str) -> tuple[list[dict], list[dict]]:
+    """Read shots.json (v2) and return ``(shots, dialog)``.
 
     Raises ``FileNotFoundError`` if the file is missing, ``ValueError`` if
-    it is not in v2 format. v1 flat-list prompts are no longer supported on
+    it is not in v2 format. v1 flat-list shots are no longer supported on
     the decode side — re-run ``encode stage2`` to regenerate.
     """
-    path = prompts_path(output_dir)
+    path = shots_path(output_dir)
     with open(path) as f:
         raw = json.load(f)
 
     if not (isinstance(raw, dict) and raw.get("format") == PROMPTS_FORMAT_VERSION):
         raise ValueError(
-            f"{path}: expected v2 prompts.json "
+            f"{path}: expected v2 shots.json "
             f"({{'format': 'v2', 'shots': [...], 'dialog': [...]}}). "
             f"Re-run `python encode.py stage2 {output_dir}` to regenerate."
         )
@@ -162,8 +168,8 @@ def load_prompts(output_dir: str) -> tuple[list[dict], list[dict]]:
     return raw["shots"], raw.get("dialog", [])
 
 
-def save_prompts(output_dir: str, shots: list[dict], dialog: list[dict]) -> str:
-    path = prompts_path(output_dir)
+def save_shots(output_dir: str, shots: list[dict], dialog: list[dict]) -> str:
+    path = shots_path(output_dir)
     data = {"format": PROMPTS_FORMAT_VERSION, "shots": shots, "dialog": dialog}
     with open(path, "w") as f:
         json.dump(data, f, indent=2)

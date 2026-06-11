@@ -47,11 +47,11 @@ _SPEECH_RE = re.compile(
 
 
 def load_data(output_dir):
-    """Load prompts.json and audio_labels.json from the output directory."""
-    prompts_path = os.path.join(output_dir, "prompts.json")
+    """Load shots.json and audio_labels.json from the output directory."""
+    shots_path = os.path.join(output_dir, "shots.json")
     labels_path = os.path.join(output_dir, "audio_labels.json")
 
-    with open(prompts_path) as f:
+    with open(shots_path) as f:
         prompts = json.load(f)
 
     audio_labels = {}

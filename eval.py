@@ -789,14 +789,14 @@ def main():
 
     if args.command == "audio":
         output_dir = Path(args.output_dir)
-        prompts, _ = manifest.load_prompts(str(output_dir))
+        prompts, _ = manifest.load_shots(str(output_dir))
         run_audio_clip_eval(output_dir, args.strategy, prompts, args.sample, args.report_dir)
         return
 
     # Video eval
     output_dir = Path(args.output_dir)
-    shot_manifest = load_json(output_dir / "manifest.json")
-    prompts, _ = manifest.load_prompts(str(output_dir))
+    shot_manifest = load_json(manifest.shot_index_path(str(output_dir)))
+    prompts, _ = manifest.load_shots(str(output_dir))
     reconstructed_path = Path(manifest.reconstructed_path(str(output_dir), args.strategy))
 
     if not reconstructed_path.exists():

@@ -26,11 +26,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             with open(os.path.join(SCRIPT_DIR, "verify_shots.html"), "rb") as f:
                 self.wfile.write(f.read())
-        elif path == "/manifest.json":
+        elif path == "/shot_index.json":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            with open(os.path.join(OUTPUT_DIR, "manifest.json"), "rb") as f:
+            with open(os.path.join(OUTPUT_DIR, "shot_index.json"), "rb") as f:
                 self.wfile.write(f.read())
         elif path.startswith("/keyframes/"):
             filepath = os.path.join(OUTPUT_DIR, path[1:])
