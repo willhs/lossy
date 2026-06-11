@@ -56,6 +56,8 @@ from strategies_audio import (  # noqa: E402 -- re-export for backwards compat
     ElevenLabsStrategy,
     MMAudioStrategy,
     RunPodMMAudioStrategy,
+    ReplicateMusicGenStrategy,
+    RunPodMusicGenStrategy,
     SpeechStrategy,
     filter_speech_from_sound,
 )
@@ -325,10 +327,11 @@ def run_audio(args, strategy: AudioStrategy):
         if idx in completed_set or idx in skipped_set:
             continue
 
-        # Extract sound description
-        sound = entry.get("description", {}).get("sound")
+        # Extract description: music strategies read the 'music' field; SFX strategies read 'sound'
+        desc_field = "music" if getattr(strategy, "uses_music_field", False) else "sound"
+        desc = entry.get("description")
+        sound = desc.get(desc_field) if isinstance(desc, dict) else None
         if not sound:
-            print(f"  Shot {idx}: no sound description, skipping")
             skipped += 1
             progress["skipped"].append(idx)
             skipped_set.add(idx)
@@ -499,7 +502,8 @@ def main():
                         help="Video generation backend (default: runpod-wan)")
     parser.add_argument("--audio", action="store_true",
                         help="Generate audio clips (instead of video)")
-    parser.add_argument("--audio-strategy", choices=["elevenlabs", "mmaudio", "runpod-mmaudio"],
+    parser.add_argument("--audio-strategy",
+                        choices=["elevenlabs", "mmaudio", "runpod-mmaudio", "musicgen", "runpod-musicgen"],
                         default=None,
                         help="Audio generation backend (default: auto-detect all for stitch, elevenlabs for generate)")
     parser.add_argument("--keep-pod", action="store_true",
@@ -508,6 +512,10 @@ def main():
                         help="Generate speech/dialogue clips (instead of video)")
     parser.add_argument("--speech-voice", default="Roger",
                         help="ElevenLabs voice name for speech (default: Roger)")
+    parser.add_argument("--music-strategy",
+                        choices=["musicgen", "runpod-musicgen"],
+                        default=None,
+                        help="Music generation strategy to overlay on stitch (music-bucket shots only)")
     parser.add_argument("--concurrent-audio", action="store_true",
                         help="Generate audio concurrently with video on RunPod (requires >=24GB VRAM)")
     args = parser.parse_args()
@@ -521,6 +529,8 @@ def main():
             "elevenlabs": lambda: ElevenLabsStrategy(),
             "mmaudio": lambda: MMAudioStrategy(),
             "runpod-mmaudio": lambda: RunPodMMAudioStrategy(output_dir=args.output_dir),
+            "musicgen": lambda: ReplicateMusicGenStrategy(),
+            "runpod-musicgen": lambda: RunPodMusicGenStrategy(output_dir=args.output_dir),
         }
         audio_name = args.audio_strategy or "elevenlabs"
         audio_strategy = audio_strategies[audio_name]()
