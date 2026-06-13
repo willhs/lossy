@@ -696,17 +696,21 @@ class RunPodWanEnrichedStrategy(RunPodWanStrategy):
         concurrent_audio: bool = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
+        blended_prompts: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
         self._character_shot_map = character_shot_map or {}
         self._characters_by_name = {
             c["name"]: c for c in (characters_data or {}).get("characters", [])
         }
+        self._blended_prompts = blended_prompts or {}
 
     def format_prompt(self, entry: dict) -> str:
-        """Prepend canonical character identity to prompt when available."""
-        base = super().format_prompt(entry)
+        """Return blended prompt when available; fall back to static prepend, then base."""
         shot_idx = entry.get("index")
+        if shot_idx is not None and shot_idx in self._blended_prompts:
+            return self._blended_prompts[shot_idx]
+        base = super().format_prompt(entry)
         if shot_idx is None:
             return base
         char_names = self._character_shot_map.get(shot_idx, [])
@@ -757,16 +761,21 @@ class RunPodWan22Strategy(RunPodWanStrategy):
         concurrent_audio: bool = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
+        blended_prompts: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
         self._character_shot_map = character_shot_map or {}
         self._characters_by_name = {
             c["name"]: c for c in (characters_data or {}).get("characters", [])
         }
+        self._blended_prompts = blended_prompts or {}
 
     def format_prompt(self, entry: dict) -> str:
-        base = super().format_prompt(entry)
+        """Return blended prompt when available; fall back to static prepend, then base."""
         shot_idx = entry.get("index")
+        if shot_idx is not None and shot_idx in self._blended_prompts:
+            return self._blended_prompts[shot_idx]
+        base = super().format_prompt(entry)
         if shot_idx is None:
             return base
         char_names = self._character_shot_map.get(shot_idx, [])
