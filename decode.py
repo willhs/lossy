@@ -557,6 +557,7 @@ def main():
 
 
 def _create_wan_enriched_strategy(args):
+    from prompt_blend import build_blended_prompts
     output_dir = args.output_dir
     characters_path = os.path.join(output_dir, "characters.json")
 
@@ -569,6 +570,12 @@ def _create_wan_enriched_strategy(args):
         character_shot_map = build_character_shot_map(characters_data)
     else:
         print("Warning: characters.json not found. Running without prompt enrichment.")
+
+    shots = []
+    if os.path.exists(manifest.shots_path(output_dir)):
+        shots, _ = manifest.load_shots(output_dir)
+
+    blended_prompts = build_blended_prompts(output_dir, shots, characters_data, character_shot_map)
 
     return RunPodWanEnrichedStrategy(
         output_dir=output_dir,
@@ -576,10 +583,12 @@ def _create_wan_enriched_strategy(args):
         concurrent_audio=getattr(args, "concurrent_audio", False),
         character_shot_map=character_shot_map,
         characters_data=characters_data,
+        blended_prompts=blended_prompts,
     )
 
 
 def _create_wan22_strategy(args):
+    from prompt_blend import build_blended_prompts
     output_dir = args.output_dir
     characters_path = os.path.join(output_dir, "characters.json")
 
@@ -593,12 +602,19 @@ def _create_wan22_strategy(args):
     else:
         print("Warning: characters.json not found. Running without prompt enrichment.")
 
+    shots = []
+    if os.path.exists(manifest.shots_path(output_dir)):
+        shots, _ = manifest.load_shots(output_dir)
+
+    blended_prompts = build_blended_prompts(output_dir, shots, characters_data, character_shot_map)
+
     return RunPodWan22Strategy(
         output_dir=output_dir,
         keep_pod=getattr(args, "keep_pod", False),
         concurrent_audio=getattr(args, "concurrent_audio", False),
         character_shot_map=character_shot_map,
         characters_data=characters_data,
+        blended_prompts=blended_prompts,
     )
 
 

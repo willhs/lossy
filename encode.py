@@ -631,7 +631,7 @@ def generate_temporal_segments(
 
         try:
             response = client.models.generate_content(
-                model="gemini-3.1-flash-lite-preview",
+                model="gemini-2.5-flash-lite",
                 contents=[types.Content(role="user", parts=user_content)],
                 config=types.GenerateContentConfig(
                     system_instruction=SEGMENT_SYSTEM_PROMPT,
@@ -701,7 +701,7 @@ def generate_prompts(
     errors = 0
 
     # Cost tracking
-    encode_costs = {"model": "gemini-3.1-flash-lite-preview", "per_shot": [],
+    encode_costs = {"model": "gemini-2.5-flash-lite", "per_shot": [],
                     "total_input_tokens": 0, "total_output_tokens": 0, "cost_estimate": 0.0}
     costs_path = os.path.join(output_dir, "encode_costs.json")
 
@@ -759,7 +759,7 @@ def generate_prompts(
 
         try:
             response = client.models.generate_content(
-                model="gemini-3.1-flash-lite-preview",
+                model="gemini-2.5-flash-lite",
                 contents=[types.Content(role="user", parts=user_content)],
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
@@ -822,7 +822,7 @@ def generate_prompts(
                 time.sleep(30)
                 try:
                     response = client.models.generate_content(
-                        model="gemini-3.1-flash-lite-preview",
+                        model="gemini-2.5-flash-lite",
                         contents=[types.Content(role="user", parts=user_content)],
                         config=types.GenerateContentConfig(
                             system_instruction=SYSTEM_PROMPT,
@@ -1001,7 +1001,7 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
             f"Subject descriptions from {len(batch)} shots:\n\n" + "\n".join(batch)
         )
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-2.5-flash-lite",
             contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -1072,7 +1072,7 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
                 "age, gender, skin tone, hair, eyes, costume."
             )
             resp = client.models.generate_content(
-                model="gemini-3.1-flash-lite-preview",
+                model="gemini-2.5-flash-lite",
                 contents=[types.Content(role="user", parts=[types.Part.from_text(text=desc_prompt)])],
                 config=types.GenerateContentConfig(temperature=0.3),
             )
@@ -1147,7 +1147,7 @@ def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot)
 
     print(f"  Refining: {len(unassigned)} unassigned shots...")
     response = client.models.generate_content(
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-2.5-flash-lite",
         contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
         config=types.GenerateContentConfig(
             system_instruction=REFINE_SYSTEM_PROMPT,
@@ -1261,7 +1261,7 @@ def run_stage3(args):
 
         print(f"Analyzing subjects across {len(prompts)} shots...")
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-2.5-flash-lite",
             contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
             config=types.GenerateContentConfig(
                 system_instruction=STAGE3_SYSTEM_PROMPT,
