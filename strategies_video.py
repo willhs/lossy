@@ -7,6 +7,7 @@ formatting, duration splitting, and clip download.
 
 import os
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -247,6 +248,15 @@ class RunPodWanStrategy(GenerationStrategy):
         self._audio_failures: list[int] = []
         self._audio_dir: str | None = None
         self._pending_audio: tuple | None = None
+        # Long-shot chaining (I2V): seed each split part from the previous part's
+        # last frame so a long shot stays continuous instead of jump-cutting.
+        # Default on; set LOSSY_CHAIN=0 to disable. Only used when the strategy's
+        # model supports image conditioning (see _supports_i2v).
+        self._chaining = os.environ.get("LOSSY_CHAIN", "1").lower() not in ("0", "false", "no", "off")
+
+    # Whether this strategy's model accepts a start_image (I2V). Base Wan 2.1
+    # T2V can't chain; RunPodWan22Strategy (TI2V-5B) overrides this to True.
+    _supports_i2v = False
 
     def format_prompt(self, entry: dict) -> str:
         return _format_prompt_wan(entry)
@@ -282,7 +292,7 @@ class RunPodWanStrategy(GenerationStrategy):
             return
         self._session.ensure_pod()
         if self._session.ssh_host:
-            self._session.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+            self._session.ssh_cmd('pkill -f "main.py" || true', timeout=10)
             time.sleep(2)
             print("  Waiting for SSH...")
             time.sleep(10)
@@ -463,8 +473,12 @@ class RunPodWanStrategy(GenerationStrategy):
         """Return accumulated audio results and failures. Call after finish_audio()."""
         return self._audio_results, self._audio_failures
 
-    def _build_workflow(self, prompt: str, seed: int, length: int = 81) -> dict:
-        """Build ComfyUI API-format workflow JSON for Wan T2V."""
+    def _build_workflow(self, prompt: str, seed: int, length: int = 81, start_image: str | None = None) -> dict:
+        """Build ComfyUI API-format workflow JSON for Wan T2V.
+
+        Base Wan 2.1 is T2V-only and ignores ``start_image``; the Wan 2.2
+        (TI2V) subclass overrides this to wire image conditioning for chaining.
+        """
         return {
             "1": {
                 "class_type": "UNETLoader",
@@ -554,14 +568,40 @@ class RunPodWanStrategy(GenerationStrategy):
             },
         }
 
+    def _extract_last_frame(self, clip_path: str, out_path: str) -> bool:
+        """Write a clip's final frame to out_path (PNG). Returns success."""
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-sseof", "-0.2", "-i", clip_path,
+             "-frames:v", "1", "-update", "1", out_path],
+            capture_output=True,
+        )
+        return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0
+
+    def _upload_start_frame(self, clip_path: str, shot_index: int, part_idx: int) -> str | None:
+        """Extract a clip's last frame and upload it to the pod's ComfyUI input
+        dir for I2V chaining. Returns the remote filename (for LoadImage) or None."""
+        if not self._session.ssh_host:
+            return None
+        from runpod_pod import COMFYUI_DIR
+        name = f"chain_{shot_index:04d}_{part_idx:02d}.png"
+        local = os.path.join(tempfile.gettempdir(), name)
+        if not self._extract_last_frame(clip_path, local):
+            return None
+        result = self._session.scp_to([local], f"{COMFYUI_DIR}/input", timeout=30)
+        if result.returncode != 0:
+            print(f"  Chain: failed to upload start frame: {result.stderr.strip()[:120]}")
+            return None
+        return name
+
     def _generate_one_clip(
         self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
+        start_image: str | None = None,
     ) -> ClipResult | None:
         """Generate a single clip with the given frame count."""
         clip_path = os.path.join(clips_dir, clip_name)
 
         try:
-            workflow = self._build_workflow(prompt, seed, length=frames)
+            workflow = self._build_workflow(prompt, seed, length=frames, start_image=start_image)
             history = self._session.submit_workflow(workflow, timeout=300)
             if not history:
                 return None
@@ -636,6 +676,10 @@ class RunPodWanStrategy(GenerationStrategy):
 
         frame_counts = self._target_durations(target_duration_s)
         results = []
+        # Chain split parts via I2V when the model supports it (Wan 2.2 TI2V):
+        # each part after the first is seeded with the previous part's last frame.
+        chaining = self._supports_i2v and self._chaining and len(frame_counts) > 1
+        start_image = None
 
         for part_idx, frames in enumerate(frame_counts):
             if len(frame_counts) == 1:
@@ -654,10 +698,15 @@ class RunPodWanStrategy(GenerationStrategy):
 
             clip_result = self._generate_one_clip(
                 part_prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
+                start_image=start_image,
             )
             if clip_result is None:
                 return []  # Fail the whole shot if any part fails
             results.append(clip_result)
+
+            # Seed the next split part from this part's last frame.
+            if chaining and part_idx < len(frame_counts) - 1:
+                start_image = self._upload_start_frame(clip_result.path, shot_index, part_idx)
 
         # Queue THIS shot's audio for the NEXT iteration
         if self._audio_capable and entry is not None:
@@ -731,10 +780,13 @@ class RunPodWan22Strategy(RunPodWanStrategy):
 
     Unified T2V + I2V single dense model (~10 GB fp16, ~24 GB VRAM). Uses the
     new wan2.2_vae.safetensors. Fits on RTX 4090 class pods (same tier as 2.1).
-    T2V mode only -- I2V support (start_image conditioning) can be added later.
+    Unified T2V + I2V: split long-shot parts are chained via start_image
+    conditioning (see _supports_i2v and _build_workflow) so a long shot stays
+    continuous instead of jump-cutting.
     """
 
     name = "runpod-wan22"
+    _supports_i2v = True  # accepts a start_image — enables long-shot chaining
     FPS = 24
     MIN_FRAMES = 49   # ~2.04s at 24fps (4*12+1)
     MAX_FRAMES = 97   # ~4.04s at 24fps (4*24+1); conservative for 24GB VRAM headroom
@@ -790,9 +842,14 @@ class RunPodWan22Strategy(RunPodWanStrategy):
             return base
         return " ".join(identity_parts) + " " + base
 
-    def _build_workflow(self, prompt: str, seed: int, length: int = 97) -> dict:
-        """Build ComfyUI API-format workflow JSON for Wan 2.2 TI2V-5B T2V."""
-        return {
+    def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
+        """Build ComfyUI API-format workflow JSON for Wan 2.2 TI2V-5B.
+
+        With ``start_image`` (a filename already in the pod's ComfyUI input dir),
+        the first frame is conditioned on it via a LoadImage node — used to chain
+        split long-shot parts so the shot stays continuous.
+        """
+        wf = {
             "1": {
                 "class_type": "UNETLoader",
                 "inputs": {
@@ -881,6 +938,11 @@ class RunPodWan22Strategy(RunPodWanStrategy):
                 },
             },
         }
+        if start_image:
+            # Condition the first frame on the previous part's last frame (I2V chaining).
+            wf["11"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
+            wf["7"]["inputs"]["start_image"] = ["11", 0]
+        return wf
 
 
 class RunPodVaceStrategy(RunPodWanStrategy):
@@ -950,7 +1012,7 @@ class RunPodVaceStrategy(RunPodWanStrategy):
             return
         self._session.ensure_pod()
         if self._session.ssh_host:
-            self._session.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+            self._session.ssh_cmd('pkill -f "main.py" || true', timeout=10)
             time.sleep(2)
             print("  Waiting for SSH...")
             time.sleep(10)

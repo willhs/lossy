@@ -389,7 +389,7 @@ class RunPodMMAudioStrategy(AudioStrategy):
             print("  ComfyUI-MMAudio: already installed")
         else:
             # Stop ComfyUI for installation
-            self._session.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+            self._session.ssh_cmd('pkill -f "main.py" || true', timeout=10)
             time.sleep(2)
 
             print("  Installing ComfyUI-MMAudio custom nodes...")
@@ -670,7 +670,7 @@ class RunPodMusicGenStrategy(AudioStrategy):
         if check.returncode == 0 and "exists" in check.stdout:
             print("  ComfyUI-MusicGen: already installed")
         else:
-            self._session.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+            self._session.ssh_cmd('pkill -f "main.py" || true', timeout=10)
             time.sleep(2)
 
             print("  Installing ComfyUI-MusicGen custom nodes...")

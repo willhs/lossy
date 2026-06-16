@@ -71,6 +71,24 @@ For context, a typical MP4 at this duration runs ~710 KB/s. The lossy text encod
 ## Potential Optimisations (Not Pursued)
 
 - **Strip manifest to decode-only fields** (timecodes, duration) -- could halve its size.
-- **Compress prompts** -- JSON has significant whitespace and repeated keys; a binary format or gzip would shrink it ~3-5x.
 - **Delta-encode similar shots** -- consecutive shots in the same scene often share description fragments.
-- With these, the encoded representation could plausibly fit under 1 MB for a feature film.
+
+## Generic Text Compression (measured)
+
+Compressing the four encoded JSON files as a tarball, max settings on each compressor (2026-05-15, on the Star Wars IV encoded output):
+
+| Compressor | Combined output | Ratio vs 3.91 MB raw | Ratio vs 632 MB source |
+|------------|-----------------|----------------------|------------------------|
+| gzip -9    | 584 KB          | 6.9×                 | ~1,083×                |
+| zstd -22   | 374 KB          | 10.7×                | ~1,690×                |
+| brotli -11 | 366 KB          | 11.0×                | ~1,727×                |
+| xz -9e     | **350 KB**      | **11.5×**            | **~1,765×**            |
+
+Per-file (raw → xz -9e):
+
+- `prompts.json`: 2.83 MB → 292 KB
+- `manifest.json`: 772 KB → 45 KB
+- `audio_labels.json`: 297 KB → 17 KB
+- `camera_motion.json`: 38 KB → 3 KB
+
+**Even plain gzip puts a feature film under 1 MB**, and xz nearly halves it again. The hypothesised 3-5× from gzip was conservative -- actual is ~7× -- because the prompts are unusually repetitive: consistent JSON keys, plus a small vocabulary of character and place names recurring across 2,070 shots. No schema changes, no delta encoding, no manifest stripping required to hit sub-1 MB.

@@ -73,6 +73,20 @@ def format_prompt(entry: dict) -> str:
     return " ".join(parts)
 
 
+def _subject_to_str(s) -> str:
+    """Coerce a subject entry to text. Gemini sometimes emits subjects as
+    dicts (e.g. {"subject": ..., "description": ...}) instead of plain
+    strings; flatten those into a single descriptive clause."""
+    if isinstance(s, str):
+        return s
+    if isinstance(s, dict):
+        for key in ("description", "subject", "name", "text"):
+            if s.get(key):
+                return str(s[key])
+        return ", ".join(str(v) for v in s.values() if v)
+    return str(s)
+
+
 def _format_prompt_wan(entry: dict) -> str:
     """Wan-optimized prompt: Subject > Action > Camera > Style.
 
@@ -87,7 +101,9 @@ def _format_prompt_wan(entry: dict) -> str:
     subjects = desc.get("subjects", "")
     if subjects:
         if isinstance(subjects, list):
-            subjects = ", ".join(subjects)
+            subjects = ", ".join(_subject_to_str(s) for s in subjects)
+        elif isinstance(subjects, dict):
+            subjects = _subject_to_str(subjects)
         parts.append(subjects.rstrip(".") + ".")
 
     # 2. Action (core content)

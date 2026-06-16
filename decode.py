@@ -595,10 +595,16 @@ def _create_wan22_strategy(args):
     character_shot_map = {}
     characters_data = {}
 
-    if os.path.exists(characters_path):
+    # Character prompt enrichment is on by default when characters.json exists.
+    # Set LOSSY_NO_ENRICH=1 to decode from the raw shot descriptions instead.
+    enrich = os.environ.get("LOSSY_NO_ENRICH", "").lower() not in ("1", "true", "yes", "on")
+
+    if enrich and os.path.exists(characters_path):
         with open(characters_path) as f:
             characters_data = json.load(f)
         character_shot_map = build_character_shot_map(characters_data)
+    elif not enrich:
+        print("Character enrichment disabled (LOSSY_NO_ENRICH). Using raw descriptions.")
     else:
         print("Warning: characters.json not found. Running without prompt enrichment.")
 

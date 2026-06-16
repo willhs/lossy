@@ -323,7 +323,11 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
         basename = os.path.splitext(os.path.basename(clip_path))[0]
         adjusted_path = os.path.join(adjusted_dir, f"{basename}.mp4")
 
-        if not os.path.exists(adjusted_path):
+        # Regenerate if source clip is newer than adjusted (stale cache)
+        needs_regen = not os.path.exists(adjusted_path) or (
+            os.path.getmtime(clip_path) > os.path.getmtime(adjusted_path))
+
+        if needs_regen:
             if "-" in basename:
                 speed_factor = 1.0
             else:
@@ -331,7 +335,22 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
 
             if abs(speed_factor - 1.0) < 0.05:
                 subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+            elif speed_factor < 1.0:
+                # Clip is longer than the original shot. Trim (cut off the tail)
+                # to the target duration instead of speeding it up -- avoids the
+                # fast-motion "squeeze" artifact on short shots. Same output
+                # duration as the speed-up, so audio/speech sync is unchanged.
+                subprocess.run(
+                    [
+                        "ffmpeg", "-i", clip_path,
+                        "-t", f"{original_duration}",
+                        "-an", "-y", adjusted_path,
+                    ],
+                    capture_output=True,
+                )
             else:
+                # Clip is shorter than the target: slow it down to fill the shot
+                # (trimming can't lengthen a clip).
                 subprocess.run(
                     [
                         "ffmpeg", "-i", clip_path,

@@ -17,6 +17,7 @@ GPU_TYPES = [
     ("NVIDIA RTX 4000 Ada Generation", 0.34),
 ]
 
+CLOUD_TYPE = "COMMUNITY"  # set to "SECURE" for guaranteed (pricier) datacenter availability
 DOCKER_IMAGE = "runpod/comfyui:latest"
 CONTAINER_DISK_GB = 50
 COMFYUI_PORT = 8188
@@ -151,7 +152,7 @@ class RunPodSession:
                     name="lossy-comfyui",
                     image_name=DOCKER_IMAGE,
                     gpu_type_id=gpu_type,
-                    cloud_type="COMMUNITY",
+                    cloud_type=CLOUD_TYPE,
                     gpu_count=1,
                     container_disk_in_gb=CONTAINER_DISK_GB,
                     ports=f"{COMFYUI_PORT}/http,22/tcp",
@@ -343,7 +344,7 @@ class RunPodSession:
     def restart_comfyui(self):
         """Stop ComfyUI, then start it again. Used after installing custom nodes."""
         print("  Restarting ComfyUI...")
-        self.ssh_cmd('pkill -f "python main.py" || true', timeout=10)
+        self.ssh_cmd('pkill -f "main.py" || true', timeout=10)
         time.sleep(2)
 
         find_python = self.ssh_cmd(
