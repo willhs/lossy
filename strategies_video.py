@@ -44,6 +44,61 @@ class GenerationStrategy:
         """
         return format_prompt(entry)
 
+    def finish_audio(self) -> None:
+        """Flush any pipelined audio generation. No-op unless overridden."""
+        pass
+
+    def get_audio_results(self) -> tuple[dict[int, list[AudioClipResult]], list[int]]:
+        """Return accumulated pipelined audio results and failures. No-op default: none."""
+        return {}, []
+
+    def mark_clean_exit(self) -> None:
+        """Signal a clean run completion, e.g. for pod-lifecycle bookkeeping. No-op default."""
+        pass
+
+
+class CharacterIdentityMixin(GenerationStrategy):
+    """Shared character-identity prompt enrichment for RunPod strategies.
+
+    Prepends canonical character descriptions ("Name: description") ahead of
+    the base-formatted prompt for characters present in a shot, or returns a
+    precomputed blended prompt when one exists for the shot. Subclasses must
+    call _init_character_identity() in __init__ and appear before their
+    GenerationStrategy base in the MRO so super().format_prompt() reaches it.
+    """
+
+    def _init_character_identity(
+        self,
+        character_shot_map: dict | None = None,
+        characters_data: dict | None = None,
+        blended_prompts: dict | None = None,
+    ) -> None:
+        self._character_shot_map = character_shot_map or {}
+        self._characters_by_name = {
+            c["name"]: c for c in (characters_data or {}).get("characters", [])
+        }
+        self._blended_prompts = blended_prompts or {}
+
+    def format_prompt(self, entry: dict) -> str:
+        """Return blended prompt when available; fall back to static prepend, then base."""
+        shot_idx = entry.get("index")
+        if shot_idx is not None and shot_idx in self._blended_prompts:
+            return self._blended_prompts[shot_idx]
+        base = super().format_prompt(entry)
+        if shot_idx is None:
+            return base
+        char_names = self._character_shot_map.get(shot_idx, [])
+        if not char_names:
+            return base
+        identity_parts = []
+        for name in char_names:
+            char = self._characters_by_name.get(name)
+            if char:
+                identity_parts.append(f"{char['display_name']}: {char['description']}")
+        if not identity_parts:
+            return base
+        return " ".join(identity_parts) + " " + base
+
 
 class ReplicateWanStrategy(GenerationStrategy):
     """Replicate Wan 2.2 Fast -- fixed ~5.06s clips at $0.05 each."""
@@ -590,6 +645,14 @@ class RunPodWanStrategy(GenerationStrategy):
             return None
         return name
 
+    def _build_clip_workflow(self, prompt: str, seed: int, frames: int, start_image: str | None = None) -> dict:
+        """Choose the ComfyUI workflow for one clip.
+
+        Subclasses override to pick an alternate workflow (e.g. VACE
+        reference-conditioned generation) while reusing _generate_one_clip.
+        """
+        return self._build_workflow(prompt, seed, length=frames, start_image=start_image)
+
     def _generate_one_clip(
         self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
         start_image: str | None = None,
@@ -598,7 +661,7 @@ class RunPodWanStrategy(GenerationStrategy):
         clip_path = os.path.join(clips_dir, clip_name)
 
         try:
-            workflow = self._build_workflow(prompt, seed, length=frames, start_image=start_image)
+            workflow = self._build_clip_workflow(prompt, seed, frames, start_image=start_image)
             history = self._session.submit_workflow(workflow, timeout=300)
             if not history:
                 return None
@@ -719,7 +782,7 @@ class RunPodWanStrategy(GenerationStrategy):
         return results
 
 
-class RunPodWanEnrichedStrategy(RunPodWanStrategy):
+class RunPodWanEnrichedStrategy(CharacterIdentityMixin, RunPodWanStrategy):
     """RunPod Wan T2V with canonical character identity injected into prompts.
 
     Same model and pod setup as RunPodWanStrategy. Only difference: format_prompt()
@@ -742,34 +805,10 @@ class RunPodWanEnrichedStrategy(RunPodWanStrategy):
         blended_prompts: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
-        self._character_shot_map = character_shot_map or {}
-        self._characters_by_name = {
-            c["name"]: c for c in (characters_data or {}).get("characters", [])
-        }
-        self._blended_prompts = blended_prompts or {}
-
-    def format_prompt(self, entry: dict) -> str:
-        """Return blended prompt when available; fall back to static prepend, then base."""
-        shot_idx = entry.get("index")
-        if shot_idx is not None and shot_idx in self._blended_prompts:
-            return self._blended_prompts[shot_idx]
-        base = super().format_prompt(entry)
-        if shot_idx is None:
-            return base
-        char_names = self._character_shot_map.get(shot_idx, [])
-        if not char_names:
-            return base
-        identity_parts = []
-        for name in char_names:
-            char = self._characters_by_name.get(name)
-            if char:
-                identity_parts.append(f"{char['display_name']}: {char['description']}")
-        if not identity_parts:
-            return base
-        return " ".join(identity_parts) + " " + base
+        self._init_character_identity(character_shot_map, characters_data, blended_prompts)
 
 
-class RunPodWan22Strategy(RunPodWanStrategy):
+class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     """RunPod self-hosted Wan 2.2 TI2V-5B fp16 via ComfyUI -- 720P at 24fps, variable duration.
 
     Unified T2V + I2V single dense model (~10 GB fp16, ~24 GB VRAM). Uses the
@@ -810,31 +849,7 @@ class RunPodWan22Strategy(RunPodWanStrategy):
         blended_prompts: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
-        self._character_shot_map = character_shot_map or {}
-        self._characters_by_name = {
-            c["name"]: c for c in (characters_data or {}).get("characters", [])
-        }
-        self._blended_prompts = blended_prompts or {}
-
-    def format_prompt(self, entry: dict) -> str:
-        """Return blended prompt when available; fall back to static prepend, then base."""
-        shot_idx = entry.get("index")
-        if shot_idx is not None and shot_idx in self._blended_prompts:
-            return self._blended_prompts[shot_idx]
-        base = super().format_prompt(entry)
-        if shot_idx is None:
-            return base
-        char_names = self._character_shot_map.get(shot_idx, [])
-        if not char_names:
-            return base
-        identity_parts = []
-        for name in char_names:
-            char = self._characters_by_name.get(name)
-            if char:
-                identity_parts.append(f"{char['display_name']}: {char['description']}")
-        if not identity_parts:
-            return base
-        return " ".join(identity_parts) + " " + base
+        self._init_character_identity(character_shot_map, characters_data, blended_prompts)
 
     def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
         """Build ComfyUI API-format workflow JSON for Wan 2.2 TI2V-5B.
@@ -939,7 +954,7 @@ class RunPodWan22Strategy(RunPodWanStrategy):
         return wf
 
 
-class RunPodVaceStrategy(RunPodWanStrategy):
+class RunPodVaceStrategy(CharacterIdentityMixin, RunPodWanStrategy):
     """RunPod self-hosted Wan 2.1 VACE-1.3B -- reference-conditioned video generation."""
 
     name = "runpod-vace"
@@ -975,31 +990,8 @@ class RunPodVaceStrategy(RunPodWanStrategy):
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
         self._portraits = portraits or {}
-        self._character_shot_map = character_shot_map or {}
         self._uploaded_portraits: dict = {}  # name -> remote filename
-        self._characters_data = characters_data or {}
-        # Build name -> character lookup for prompt enrichment
-        self._characters_by_name = {
-            c["name"]: c for c in self._characters_data.get("characters", [])
-        }
-
-    def format_prompt(self, entry: dict) -> str:
-        """Enrich prompt with canonical character identity when available."""
-        base = super().format_prompt(entry)
-        shot_idx = entry.get("index")
-        if shot_idx is None:
-            return base
-        char_names = self._character_shot_map.get(shot_idx, [])
-        if not char_names:
-            return base
-        identity_parts = []
-        for name in char_names:
-            char = self._characters_by_name.get(name)
-            if char:
-                identity_parts.append(f"{char['display_name']}: {char['description']}")
-        if not identity_parts:
-            return base
-        return " ".join(identity_parts) + " " + base
+        self._init_character_identity(character_shot_map, characters_data)
 
     def _ensure_pod(self):
         if self._setup_done:
@@ -1144,69 +1136,12 @@ class RunPodVaceStrategy(RunPodWanStrategy):
             },
         }
 
-    def _generate_one_clip(
-        self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
-        reference_image: str | None = None,
-    ) -> ClipResult | None:
-        """Generate a single clip, optionally with VACE reference image."""
-        clip_path = os.path.join(clips_dir, clip_name)
-
-        try:
-            if reference_image:
-                workflow = self._build_vace_workflow(prompt, seed, length=frames, reference_image=reference_image)
-            else:
-                workflow = self._build_workflow(prompt, seed, length=frames)
-
-            history = self._session.submit_workflow(workflow, timeout=300)
-            if not history:
-                return None
-
-            outputs = history.get("outputs", {})
-            output_file = None
-            for node_id, node_output in outputs.items():
-                if "images" in node_output:
-                    for item in node_output["images"]:
-                        output_file = item
-                        break
-                    if output_file:
-                        break
-
-            if not output_file:
-                print(f"  No output file found for {clip_name}")
-                return None
-
-            data = self._session.download_output(output_file)
-            if not data:
-                return None
-
-            raw_ext = os.path.splitext(output_file["filename"])[1] or ".webm"
-            raw_path = clip_path.replace(".mp4", raw_ext)
-            with open(raw_path, "wb") as f:
-                f.write(data)
-
-            result = subprocess.run(
-                ["ffmpeg", "-y", "-i", raw_path,
-                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                 clip_path],
-                capture_output=True,
-            )
-            if result.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
-                os.remove(raw_path)
-            else:
-                if os.path.exists(clip_path):
-                    os.remove(clip_path)
-                os.rename(raw_path, clip_path)
-
-            elapsed_h = (time.time() - self._session.pod_start_time) / 3600 if self._session.pod_start_time else 0
-            clips_so_far = len([f for f in os.listdir(clips_dir) if f.endswith(".mp4")])
-            per_clip_cost = (elapsed_h * self._session.gpu_hourly_rate) / max(clips_so_far, 1)
-
-            self._session.free_vram()
-
-            return ClipResult(path=clip_path, actual_duration_s=manifest.probe_duration(clip_path), cost=per_clip_cost)
-        except Exception as e:
-            print(f"  Error generating {clip_name}: {e}")
-            return None
+    def _build_clip_workflow(self, prompt: str, seed: int, frames: int, start_image: str | None = None) -> dict:
+        """Use VACE reference conditioning when a reference image is given,
+        else fall back to the parent's plain T2V workflow."""
+        if start_image:
+            return self._build_vace_workflow(prompt, seed, length=frames, reference_image=start_image)
+        return super()._build_clip_workflow(prompt, seed, frames)
 
     def generate(
         self,
@@ -1242,7 +1177,7 @@ class RunPodVaceStrategy(RunPodWanStrategy):
 
             clip_result = self._generate_one_clip(
                 prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
-                reference_image=reference_image,
+                start_image=reference_image,
             )
             if clip_result is None:
                 return []

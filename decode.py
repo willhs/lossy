@@ -134,6 +134,17 @@ def build_character_shot_map(characters_data: dict) -> dict:
     return shot_map
 
 
+def _record_success(progress: dict, completed_set: set, idx: int, results: list) -> None:
+    """Record a successful generation (first attempt or retry) in the progress dict."""
+    progress["completed"].append(idx)
+    completed_set.add(idx)
+    progress["total_cost_estimate"] += sum(r.cost for r in results)
+    progress["clips"][str(idx)] = [
+        {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
+        for r in results
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Decode loop
 # ---------------------------------------------------------------------------
@@ -200,14 +211,7 @@ def run_decode(args, strategy: GenerationStrategy):
 
         if results:
             generated += 1
-            progress["completed"].append(idx)
-            completed_set.add(idx)
-            clip_cost = sum(r.cost for r in results)
-            progress["total_cost_estimate"] += clip_cost
-            progress["clips"][str(idx)] = [
-                {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
-                for r in results
-            ]
+            _record_success(progress, completed_set, idx, results)
         else:
             errors += 1
             progress["failed"].append(idx)
@@ -217,14 +221,7 @@ def run_decode(args, strategy: GenerationStrategy):
             results = strategy.generate(prompt_text, clips_dir, idx, entry["duration_s"], seed=idx, entry=entry)
             if results:
                 generated += 1
-                progress["completed"].append(idx)
-                completed_set.add(idx)
-                clip_cost = sum(r.cost for r in results)
-                progress["total_cost_estimate"] += clip_cost
-                progress["clips"][str(idx)] = [
-                    {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
-                    for r in results
-                ]
+                _record_success(progress, completed_set, idx, results)
                 progress["failed"] = [f for f in progress["failed"] if f != idx]
 
         # Save progress every 5 clips
@@ -237,38 +234,35 @@ def run_decode(args, strategy: GenerationStrategy):
             break
 
     # Finish pipelined audio (last shot + wait for thread)
-    if hasattr(strategy, 'finish_audio'):
-        strategy.finish_audio()
+    strategy.finish_audio()
 
     # Final save
     with open(progress_path, "w") as f:
         json.dump(progress, f, indent=2)
 
     # Save audio progress if pipelined audio was used
-    if hasattr(strategy, 'get_audio_results'):
-        audio_results, audio_failures = strategy.get_audio_results()
-        if audio_results or audio_failures:
-            audio_progress_path = manifest.audio_progress_path(output_dir, "runpod-mmaudio-pipelined")
-            audio_progress = {
-                "completed": sorted(audio_results.keys()),
-                "failed": audio_failures,
-                "skipped": [],
-                "total_cost_estimate": 0.0,
-                "clips": {
-                    str(idx): [
-                        {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
-                        for r in results_list
-                    ]
-                    for idx, results_list in audio_results.items()
-                },
-            }
-            with open(audio_progress_path, "w") as f:
-                json.dump(audio_progress, f, indent=2)
-            print(f"  Pipelined audio: {len(audio_results)} completed, {len(audio_failures)} failed")
+    audio_results, audio_failures = strategy.get_audio_results()
+    if audio_results or audio_failures:
+        audio_progress_path = manifest.audio_progress_path(output_dir, "runpod-mmaudio-pipelined")
+        audio_progress = {
+            "completed": sorted(audio_results.keys()),
+            "failed": audio_failures,
+            "skipped": [],
+            "total_cost_estimate": 0.0,
+            "clips": {
+                str(idx): [
+                    {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
+                    for r in results_list
+                ]
+                for idx, results_list in audio_results.items()
+            },
+        }
+        with open(audio_progress_path, "w") as f:
+            json.dump(audio_progress, f, indent=2)
+        print(f"  Pipelined audio: {len(audio_results)} completed, {len(audio_failures)} failed")
 
     # Signal clean exit for --keep-pod support
-    if hasattr(strategy, 'mark_clean_exit'):
-        strategy.mark_clean_exit()
+    strategy.mark_clean_exit()
 
     print(f"\nDone. Generated {generated} clips.")
     print(f"  Total: {len(progress['completed'])} completed, {len(progress['failed'])} failed")
@@ -351,14 +345,7 @@ def run_audio(args, strategy: AudioStrategy):
 
         if results:
             generated += 1
-            progress["completed"].append(idx)
-            completed_set.add(idx)
-            clip_cost = sum(r.cost for r in results)
-            progress["total_cost_estimate"] += clip_cost
-            progress["clips"][str(idx)] = [
-                {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
-                for r in results
-            ]
+            _record_success(progress, completed_set, idx, results)
         else:
             errors += 1
             progress["failed"].append(idx)
@@ -367,14 +354,7 @@ def run_audio(args, strategy: AudioStrategy):
             results = strategy.generate(sound, audio_dir, idx, entry["duration_s"], seed=idx)
             if results:
                 generated += 1
-                progress["completed"].append(idx)
-                completed_set.add(idx)
-                clip_cost = sum(r.cost for r in results)
-                progress["total_cost_estimate"] += clip_cost
-                progress["clips"][str(idx)] = [
-                    {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
-                    for r in results
-                ]
+                _record_success(progress, completed_set, idx, results)
                 progress["failed"] = [f for f in progress["failed"] if f != idx]
 
         # Save progress every 5 clips
