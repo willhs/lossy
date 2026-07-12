@@ -39,3 +39,8 @@ output/
 
 # Worktrees
 .worktrees/
+weights/
+ext_weights/
+
+# Agent/session workspaces
+.manager/

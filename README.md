@@ -2,6 +2,8 @@
 
 A "lossy codec" for films: encode a video into text descriptions, then decode those descriptions back into video using AI generation models. The result is a reconstructed film that has been "compressed" through natural language.
 
+Write-up with results and example reconstructions: [1mb movie](https://willhs.me/posts/1mb-movie/).
+
 ## Pipeline
 
 ```
@@ -108,3 +110,7 @@ Environment variables (in `.env`):
 ```bash
 python -m pytest -v
 ```
+
+## License
+
+[MIT](LICENSE)
