@@ -13,6 +13,21 @@ import sys
 import manifest
 
 
+def _stale_for_target(adjusted_path: str, target_duration: float) -> bool:
+    """True if adjusted_path is missing or was built for a different target.
+
+    Audio adjusted clips are cut to a target_duration derived from the
+    (now shots.json-accurate) video's per-shot duration. Regen is normally
+    keyed off source-clip mtime, but that misses the case where the video
+    fix changes the *target* without the audio source clip itself changing
+    -- without this check, stale audio_adjusted/ files silently keep chasing
+    a pre-fix duration.
+    """
+    if not os.path.exists(adjusted_path):
+        return True
+    return abs(manifest.probe_duration(adjusted_path) - target_duration) > 1 / 24
+
+
 def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                   start_index: int | None) -> str | None:
     """Concatenate per-shot audio clips into a single audio track.
@@ -59,7 +74,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
         if not clips:
             # Generate silence for this shot
             silence_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
-            if not os.path.exists(silence_path):
+            if _stale_for_target(silence_path, target_duration):
                 subprocess.run(
                     ["ffmpeg", "-y", "-f", "lavfi", "-i",
                      f"anullsrc=r=44100:cl=stereo",
@@ -74,9 +89,11 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             # Single clip -- trim or pad to match target duration
             clip_path = os.path.join(audio_dir, clips[0]["path"])
             adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
-            # Regenerate if source clip is newer than adjusted (stale cache)
-            needs_regen = not os.path.exists(adjusted_path) or (
-                os.path.getmtime(clip_path) > os.path.getmtime(adjusted_path))
+            # Regenerate if source clip is newer than adjusted (stale cache),
+            # or the target duration itself changed since adjusted was built.
+            needs_regen = _stale_for_target(adjusted_path, target_duration) or (
+                os.path.exists(adjusted_path)
+                and os.path.getmtime(clip_path) > os.path.getmtime(adjusted_path))
             if needs_regen:
                 subprocess.run(
                     ["ffmpeg", "-y", "-i", clip_path,
@@ -93,8 +110,9 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             newest_source = max(
                 os.path.getmtime(os.path.join(audio_dir, c["path"])) for c in clips
             )
-            needs_regen = not os.path.exists(adjusted_path) or (
-                newest_source > os.path.getmtime(adjusted_path))
+            needs_regen = _stale_for_target(adjusted_path, target_duration) or (
+                os.path.exists(adjusted_path)
+                and newest_source > os.path.getmtime(adjusted_path))
             if needs_regen:
                 clip_paths = [
                     os.path.join(audio_dir, c["path"]) for c in clips
@@ -260,17 +278,102 @@ def _stitch_speech_global(shots: list[dict], speech_dir: str, output_dir: str,
 
 def _probe_duration(clip_path: str) -> float:
     """Get video duration via ffprobe. Raises if ffprobe cannot parse the file."""
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
-            clip_path,
-        ],
-        capture_output=True,
-        text=True,
+    return manifest.probe_duration(clip_path)
+
+
+def _retime_clip(clip_path: str, adjusted_path: str, target_duration: float,
+                 actual_duration: float) -> None:
+    """Trim or slow a single clip to hit target_duration, writing to adjusted_path."""
+    # Boundary-locked targets can dip to near-zero (or, in pathological
+    # cases, negative) if prior shots ran long -- floor to one frame so
+    # ffmpeg always gets a valid trim; any residual gets caught up by
+    # later shots rather than producing a degenerate clip here.
+    target_duration = max(target_duration, 1 / 24)
+    speed_factor = target_duration / actual_duration if actual_duration > 0 else 1.0
+
+    # A relative "close enough" threshold (e.g. 5%) leaves multiple frames
+    # of residual on longer clips, which then compounds across shots under
+    # boundary-locked retiming. Compare absolute difference against one
+    # frame instead so every shot lands as close to its target as ffmpeg's
+    # own frame-boundary trim precision allows.
+    if abs(target_duration - actual_duration) < 1 / 24:
+        subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+    elif speed_factor < 1.0:
+        # Clip is longer than the target. Trim (cut off the tail) instead of
+        # speeding it up -- avoids the fast-motion "squeeze" artifact on short
+        # shots. Same output duration as the speed-up would give.
+        subprocess.run(
+            ["ffmpeg", "-i", clip_path, "-t", f"{target_duration}",
+             "-an", "-y", adjusted_path],
+            capture_output=True,
+        )
+    else:
+        # Clip is shorter than the target: slow it down to fill the shot
+        # (trimming can't lengthen a clip).
+        subprocess.run(
+            ["ffmpeg", "-i", clip_path, "-filter:v", f"setpts={speed_factor}*PTS",
+             "-an", "-y", adjusted_path],
+            capture_output=True,
+        )
+
+
+def _retime_shot_clips(clip_paths: list[str], original_duration: float,
+                       adjusted_dir: str) -> list[str]:
+    """Produce this shot's adjusted clip(s), matching original_duration.
+
+    Single-part shots are trimmed/slowed as a whole (existing behavior).
+    Split shots (multiple chained parts) are left untouched except for the
+    last part: earlier parts keep their generated timing so I2V chaining
+    continuity isn't disturbed, and only the last part is trimmed/slowed so
+    the group's total lands within ~1 frame of shots.json's duration --
+    correcting the frame-quantization/remainder-flooring overshoot that
+    otherwise passes straight through split shots uncorrected.
+
+    original_duration is boundary-locked (the caller passes how much time
+    this shot needs to occupy to catch the running timeline back up to its
+    true absolute end_s), so it can differ run-to-run even when the source
+    clips haven't changed. Cache invalidation therefore checks the existing
+    adjusted output's actual duration against the target, not just mtimes.
+    """
+    adjusted_paths = [
+        os.path.join(adjusted_dir, f"{os.path.splitext(os.path.basename(p))[0]}.mp4")
+        for p in clip_paths
+    ]
+
+    mtime_stale = any(
+        not os.path.exists(ap) or os.path.getmtime(cp) > os.path.getmtime(ap)
+        for cp, ap in zip(clip_paths, adjusted_paths)
     )
-    return float(result.stdout.strip())
+    target_stale = mtime_stale or (
+        abs(sum(_probe_duration(p) for p in adjusted_paths) - original_duration) > 1 / 24
+    )
+    if not target_stale:
+        return adjusted_paths
+
+    if len(clip_paths) == 1:
+        clip_path, adjusted_path = clip_paths[0], adjusted_paths[0]
+        actual_duration = _probe_duration(clip_path)
+        _retime_clip(clip_path, adjusted_path, original_duration, actual_duration)
+        return adjusted_paths
+
+    # Split shot: copy earlier parts through unchanged.
+    for clip_path, adjusted_path in zip(clip_paths[:-1], adjusted_paths[:-1]):
+        subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+
+    earlier_total = sum(_probe_duration(p) for p in adjusted_paths[:-1])
+    last_clip_path, last_adjusted_path = clip_paths[-1], adjusted_paths[-1]
+    remaining_budget = original_duration - earlier_total
+
+    if remaining_budget <= 0:
+        # Earlier parts alone already meet/exceed the shot's budget -- no
+        # room left to give the last part. Copy it through unchanged rather
+        # than produce a zero/negative-length clip.
+        subprocess.run(["cp", last_clip_path, last_adjusted_path], capture_output=True)
+    else:
+        last_actual = _probe_duration(last_clip_path)
+        _retime_clip(last_clip_path, last_adjusted_path, remaining_budget, last_actual)
+
+    return adjusted_paths
 
 
 def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
@@ -292,75 +395,48 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
     if end_index is not None:
         prompts = [p for p in prompts if p["index"] <= end_index]
 
-    # Collect existing clips in order
-    clip_entries = []
+    # Collect existing clips in order, grouped by shot so a split shot's
+    # parts can be corrected as a unit (see _retime_shot_clips).
+    shot_groups = []  # list of (entry, [clip_path, ...])
     for entry in prompts:
         idx = entry["index"]
         idx_str = str(idx)
 
         if idx_str in clips_meta:
-            for clip_info in clips_meta[idx_str]:
-                clip_path_ = os.path.join(clips_dir, clip_info["path"])
-                if os.path.exists(clip_path_):
-                    clip_entries.append((clip_path_, entry["duration_s"], clip_info["duration_s"]))
+            paths = [
+                os.path.join(clips_dir, clip_info["path"])
+                for clip_info in clips_meta[idx_str]
+            ]
+            paths = [p for p in paths if os.path.exists(p)]
         else:
-            clip_path_ = manifest.clip_path(clips_dir, idx)
-            if os.path.exists(clip_path_):
-                clip_duration = _probe_duration(clip_path_)
-                clip_entries.append((clip_path_, entry["duration_s"], clip_duration))
+            single_path = manifest.clip_path(clips_dir, idx)
+            paths = [single_path] if os.path.exists(single_path) else []
 
-    if not clip_entries:
+        if paths:
+            shot_groups.append((entry, paths))
+
+    if not shot_groups:
         print(f"  No clips found for {label}.")
         return None
 
-    print(f"Stitching {len(clip_entries)} clips for {label}...")
+    total_clips = sum(len(paths) for _, paths in shot_groups)
+    print(f"Stitching {total_clips} clips ({len(shot_groups)} shots) for {label}...")
 
-    # Speed-adjust each clip (reuses cached adjusted clips)
+    # Speed-adjust each clip (reuses cached adjusted clips). Targets are
+    # boundary-locked, not just duration-locked: each shot is retimed to
+    # close the gap between the running actual position and this shot's
+    # true absolute end_s, so small per-shot rounding residuals (ffmpeg's
+    # -t trims to the nearest frame) get corrected out shot-by-shot instead
+    # of silently accumulating across the whole scene.
     os.makedirs(adjusted_dir, exist_ok=True)
 
     concat_list = []
-    for clip_path, original_duration, actual_duration in clip_entries:
-        basename = os.path.splitext(os.path.basename(clip_path))[0]
-        adjusted_path = os.path.join(adjusted_dir, f"{basename}.mp4")
-
-        # Regenerate if source clip is newer than adjusted (stale cache)
-        needs_regen = not os.path.exists(adjusted_path) or (
-            os.path.getmtime(clip_path) > os.path.getmtime(adjusted_path))
-
-        if needs_regen:
-            if "-" in basename:
-                speed_factor = 1.0
-            else:
-                speed_factor = original_duration / actual_duration if actual_duration > 0 else 1.0
-
-            if abs(speed_factor - 1.0) < 0.05:
-                subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
-            elif speed_factor < 1.0:
-                # Clip is longer than the original shot. Trim (cut off the tail)
-                # to the target duration instead of speeding it up -- avoids the
-                # fast-motion "squeeze" artifact on short shots. Same output
-                # duration as the speed-up, so audio/speech sync is unchanged.
-                subprocess.run(
-                    [
-                        "ffmpeg", "-i", clip_path,
-                        "-t", f"{original_duration}",
-                        "-an", "-y", adjusted_path,
-                    ],
-                    capture_output=True,
-                )
-            else:
-                # Clip is shorter than the target: slow it down to fill the shot
-                # (trimming can't lengthen a clip).
-                subprocess.run(
-                    [
-                        "ffmpeg", "-i", clip_path,
-                        "-filter:v", f"setpts={speed_factor}*PTS",
-                        "-an", "-y", adjusted_path,
-                    ],
-                    capture_output=True,
-                )
-
-        concat_list.append(adjusted_path)
+    running_pos = shot_groups[0][0]["start_s"]
+    for entry, clip_paths in shot_groups:
+        target_duration = entry["end_s"] - running_pos
+        adjusted_paths = _retime_shot_clips(clip_paths, target_duration, adjusted_dir)
+        concat_list.extend(adjusted_paths)
+        running_pos += sum(_probe_duration(p) for p in adjusted_paths)
 
     # Write range-specific concat file
     range_suffix = ""
@@ -384,9 +460,9 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
     print(f"  Saved to {output_path}")
 
     # Report stats
-    total_original = sum(orig_dur for _, orig_dur, _ in clip_entries)
+    total_original = sum(entry["duration_s"] for entry, _ in shot_groups)
     print(f"  Original duration: {total_original:.1f}s ({total_original / 60:.1f}min)")
-    print(f"  Clips used: {len(clip_entries)}")
+    print(f"  Clips used: {total_clips}")
 
     # Mux audio (auto-discovers all available audio strategies if none specified)
     _mux_audio(output_dir, output_path, concat_list, prompts_full,
@@ -414,11 +490,24 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
         dur = _probe_duration(adjusted_path)
         shot_durations[idx] = shot_durations.get(idx, 0) + dur
 
+    # Diagnostic tripwire: flag any shot whose corrected video duration still
+    # deviates from shots.json by more than ~1 frame (24fps) -- should be rare
+    # now that _retime_shot_clips corrects split-shot overshoot, but a
+    # regression here would otherwise silently re-desync audio placement.
+    FRAME_TOLERANCE_S = 1 / 24
     stitched_prompts = []
     for p in prompts_full:
         if p["index"] in shot_durations:
+            actual = shot_durations[p["index"]]
+            deviation = actual - p["duration_s"]
+            if abs(deviation) > FRAME_TOLERANCE_S:
+                print(
+                    f"  Warning: shot {p['index']} duration deviates from "
+                    f"shots.json by {deviation:+.3f}s ({actual:.3f}s vs "
+                    f"{p['duration_s']:.3f}s expected)"
+                )
             patched = dict(p)
-            patched["duration_s"] = shot_durations[p["index"]]
+            patched["duration_s"] = actual
             stitched_prompts.append(patched)
 
     # Build SFX track(s)
@@ -503,12 +592,24 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
 
     if audio_to_mux:
         muxed_path = video_path.replace(".mp4", "_with_audio.mp4")
+        # Explicit -t (video's real length) instead of -shortest: audio and
+        # video are now built to the same target duration by construction,
+        # so any mismatch here indicates a bug upstream rather than expected
+        # drift -- -shortest would silently absorb it instead of surfacing it.
+        video_duration = _probe_duration(video_path)
+        audio_duration = _probe_duration(audio_to_mux)
+        if abs(audio_duration - video_duration) > 1 / 24:
+            print(
+                f"  Warning: muxed audio length ({audio_duration:.3f}s) "
+                f"differs from video length ({video_duration:.3f}s) by "
+                f"more than 1 frame"
+            )
         result = subprocess.run(
             ["ffmpeg", "-y",
              "-i", video_path,
              "-i", audio_to_mux,
              "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-             "-shortest",
+             "-t", f"{video_duration}",
              muxed_path],
             capture_output=True,
         )

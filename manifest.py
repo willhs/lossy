@@ -23,6 +23,7 @@ so the only places v1 still lives are stage 3's fixture tests.
 
 import json
 import os
+import subprocess
 
 
 PROMPTS_FORMAT_VERSION = "v2"
@@ -115,6 +116,21 @@ def speech_clip_filename(line_idx: int, sub_idx: int = 0) -> str:
 
 def speech_clip_path(speech_dir_path: str, line_idx: int, sub_idx: int = 0) -> str:
     return os.path.join(speech_dir_path, speech_clip_filename(line_idx, sub_idx))
+
+
+def probe_duration(path: str) -> float:
+    """Get a media file's real duration via ffprobe (ground truth, not nominal)."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return float(result.stdout.strip())
 
 
 def clip_exists_for_shot(clips_dir_path: str, shot_idx: int,

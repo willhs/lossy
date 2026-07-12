@@ -104,7 +104,7 @@ The speech filter (SPEC-100) strips speech/dialogue/voice keywords from the `sou
 FFmpeg-driven concatenation (`stitch.py`):
 
 1. Load `shots.json` via `manifest.load_shots` and the per-strategy `decode_progress_<strategy>.json`.
-2. Speed-adjust each clip to match the original shot duration (skipped for split-shot parts, whose filenames carry a `-NN` suffix).
+2. Speed-adjust each clip to match the original shot duration. Targets are boundary-locked, not just per-shot-duration-locked: each shot is retimed to close the gap between the running actual output position and that shot's true absolute `end_s`, so small per-shot rounding residuals don't silently accumulate across a scene. Split-shot parts (filenames carrying a `-NN` suffix) are chained via I2V and left untouched except for the last part, which absorbs the group's retiming so earlier parts' generated motion isn't disturbed.
 3. Concatenate via FFmpeg concat demuxer.
 4. Auto-discover all audio strategies under `audio/` (or use `--audio-strategy`) and mix their per-shot tracks, duration-adjusted to match the stitched video.
 5. Mix the global speech track at SRT timestamps using `adelay`, ducking SFX (-8 dB) and boosting speech (+6 dB).

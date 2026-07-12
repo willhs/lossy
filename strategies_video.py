@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 
+import manifest
 from clip_types import AudioClipResult, ClipResult
 from prompt_format import _format_prompt_wan, _format_prompt_seedance, format_prompt, vary_prompt_for_part
 
@@ -91,7 +92,7 @@ class ReplicateWanStrategy(GenerationStrategy):
             with open(clip_path, "wb") as f:
                 f.write(resp.content)
 
-            return [ClipResult(path=clip_path, actual_duration_s=self.CLIP_DURATION, cost=0.05)]
+            return [ClipResult(path=clip_path, actual_duration_s=manifest.probe_duration(clip_path), cost=0.05)]
 
         except Exception as e:
             print(f"  Error generating clip: {e}")
@@ -194,7 +195,7 @@ class FalSeedanceStrategy(GenerationStrategy):
                 cost = duration * self.COST_PER_SECOND_480P
                 results.append(ClipResult(
                     path=clip_path,
-                    actual_duration_s=float(duration),
+                    actual_duration_s=manifest.probe_duration(clip_path),
                     cost=cost,
                 ))
 
@@ -651,7 +652,7 @@ class RunPodWanStrategy(GenerationStrategy):
 
             self._session.free_vram()
 
-            return ClipResult(path=clip_path, actual_duration_s=frames / self.FPS, cost=per_clip_cost)
+            return ClipResult(path=clip_path, actual_duration_s=manifest.probe_duration(clip_path), cost=per_clip_cost)
         except Exception as e:
             print(f"  Error generating {clip_name}: {e}")
             return None
@@ -1209,7 +1210,7 @@ class RunPodVaceStrategy(RunPodWanStrategy):
 
             self._session.free_vram()
 
-            return ClipResult(path=clip_path, actual_duration_s=frames / self.FPS, cost=per_clip_cost)
+            return ClipResult(path=clip_path, actual_duration_s=manifest.probe_duration(clip_path), cost=per_clip_cost)
         except Exception as e:
             print(f"  Error generating {clip_name}: {e}")
             return None
