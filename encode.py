@@ -20,7 +20,12 @@ import cv2
 import numpy as np
 from scenedetect import open_video, SceneManager, AdaptiveDetector, ContentDetector
 
+import manifest
 from manifest import _run_ffmpeg
+
+# Gemini Flash Lite pricing (per token)
+GEMINI_INPUT_COST = 0.075 / 1_000_000   # $0.075 per 1M input tokens
+GEMINI_OUTPUT_COST = 0.30 / 1_000_000   # $0.30 per 1M output tokens
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +657,59 @@ def generate_temporal_segments(
     return descriptions if len(descriptions) == n_segments else []
 
 
+def _describe_shot(client, types, idx, scene, camera, audio_labels, dialogue,
+                   frame_files, keyframes_dir, system_prompt, user_content,
+                   encode_costs) -> dict | None:
+    """Call Gemini for one shot, track cost, and build its shots.json entry.
+
+    Returns ``None`` if Gemini returned an empty response. Raises on API
+    errors so the caller can decide whether to retry (e.g. on a 429).
+    """
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-lite",
+        contents=[types.Content(role="user", parts=user_content)],
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.3,
+            response_mime_type="application/json",
+        ),
+    )
+    text = response.text
+    if not text:
+        return None
+    description = json.loads(text.strip())
+
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        in_tok = getattr(usage, "prompt_token_count", 0) or 0
+        out_tok = getattr(usage, "candidates_token_count", 0) or 0
+        shot_cost = in_tok * GEMINI_INPUT_COST + out_tok * GEMINI_OUTPUT_COST
+        encode_costs["total_input_tokens"] += in_tok
+        encode_costs["total_output_tokens"] += out_tok
+        encode_costs["cost_estimate"] += shot_cost
+        encode_costs["per_shot"].append(
+            {"index": idx, "input_tokens": in_tok, "output_tokens": out_tok, "cost": round(shot_cost, 6)})
+
+    prompt_entry = {
+        "index": idx,
+        "start_s": scene["start_s"],
+        "end_s": scene["end_s"],
+        "duration_s": scene["duration_s"],
+        "camera_motion_detected": camera,
+        "audio_detected": audio_labels.get(str(idx)),
+        "dialogue": dialogue if dialogue else None,
+        "description": description,
+    }
+
+    # Generate temporal segments for long shots so decode can vary prompts per split part
+    if scene["duration_s"] >= SEGMENT_THRESHOLD_S:
+        segs = generate_temporal_segments(scene, description, frame_files, keyframes_dir, client)
+        if segs:
+            prompt_entry["temporal_segments"] = segs
+
+    return prompt_entry
+
+
 def generate_prompts(
     scenes: list[dict],
     dialogue_map: dict[int, list[str]],
@@ -659,11 +717,14 @@ def generate_prompts(
     audio_labels: dict,
     output_dir: str,
     provider: str,
+    dialog: list[dict] | None = None,
     wav_path: str | None = None,
 ) -> list[dict]:
     """Generate descriptive prompts for each shot via vision API."""
     from google import genai
     from google.genai import types
+
+    dialog = dialog or []
 
     # Load from .env if present
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -681,22 +742,15 @@ def generate_prompts(
         print("Get one at https://aistudio.google.com/apikey")
         sys.exit(1)
 
-    # Gemini Flash Lite pricing (per token)
-    GEMINI_INPUT_COST = 0.075 / 1_000_000   # $0.075 per 1M input tokens
-    GEMINI_OUTPUT_COST = 0.30 / 1_000_000   # $0.30 per 1M output tokens
-
     client = genai.Client(api_key=api_key)
     keyframes_dir = os.path.join(output_dir, "keyframes")
 
-    # Load existing shots for resume support
-    shots_path = os.path.join(output_dir, "shots.json")
-    if os.path.exists(shots_path):
-        with open(shots_path) as f:
-            existing = json.load(f)
-        existing_indices = {p["index"] for p in existing}
-    else:
+    # Load existing shots for resume support (v2 shots.json, per the manifest contract)
+    try:
+        existing, _ = manifest.load_shots(output_dir)
+    except FileNotFoundError:
         existing = []
-        existing_indices = set()
+    existing_indices = {p["index"] for p in existing}
 
     prompts = list(existing)
     total = len(scenes)
@@ -760,61 +814,19 @@ def generate_prompts(
         system_prompt = MUSIC_SYSTEM_PROMPT if is_music_shot else SYSTEM_PROMPT
 
         try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=[types.Content(role="user", parts=user_content)],
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.3,
-                    response_mime_type="application/json",
-                ),
-            )
-
-            # Parse JSON response
-            text = response.text
-            if not text:
+            prompt_entry = _describe_shot(
+                client, types, idx, scene, camera, audio_labels, dialogue,
+                frame_files, keyframes_dir, system_prompt, user_content, encode_costs)
+            if prompt_entry is None:
                 print(f"  Shot {idx}: empty response, skipping")
                 continue
-            text = text.strip()
-            description = json.loads(text)
-
-            # Track token usage and cost
-            usage = getattr(response, "usage_metadata", None)
-            if usage:
-                in_tok = getattr(usage, "prompt_token_count", 0) or 0
-                out_tok = getattr(usage, "candidates_token_count", 0) or 0
-                shot_cost = in_tok * GEMINI_INPUT_COST + out_tok * GEMINI_OUTPUT_COST
-                encode_costs["total_input_tokens"] += in_tok
-                encode_costs["total_output_tokens"] += out_tok
-                encode_costs["cost_estimate"] += shot_cost
-                encode_costs["per_shot"].append(
-                    {"index": idx, "input_tokens": in_tok, "output_tokens": out_tok, "cost": round(shot_cost, 6)})
-
-            prompt_entry = {
-                "index": idx,
-                "start_s": scene["start_s"],
-                "end_s": scene["end_s"],
-                "duration_s": scene["duration_s"],
-                "camera_motion_detected": camera,
-                "audio_detected": audio_labels.get(str(idx)),
-                "dialogue": dialogue if dialogue else None,
-                "description": description,
-            }
-
-            # Generate temporal segments for long shots so decode can vary prompts per split part
-            if scene["duration_s"] >= SEGMENT_THRESHOLD_S:
-                segs = generate_temporal_segments(scene, description, frame_files, keyframes_dir, client)
-                if segs:
-                    prompt_entry["temporal_segments"] = segs
-
             prompts.append(prompt_entry)
 
             new_count = len(prompts) - len(existing)
             if new_count % 10 == 0:
                 print(f"  Described {len(prompts)}/{total} shots")
-                # Incremental save
-                with open(shots_path, "w") as f:
-                    json.dump(prompts, f, indent=2)
+                # Incremental save, through the same v2 contract as the final save
+                manifest.save_shots(output_dir, prompts, dialog)
 
         except Exception as e:
             err_str = str(e)
@@ -823,45 +835,14 @@ def generate_prompts(
                 print(f"  Rate limited at shot {idx}, waiting 30s...")
                 time.sleep(30)
                 try:
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash-lite",
-                        contents=[types.Content(role="user", parts=user_content)],
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            temperature=0.3,
-                            response_mime_type="application/json",
-                        ),
-                    )
-                    text = response.text.strip()
-                    description = json.loads(text)
-
-                    # Track token usage from retry
-                    usage = getattr(response, "usage_metadata", None)
-                    if usage:
-                        in_tok = getattr(usage, "prompt_token_count", 0) or 0
-                        out_tok = getattr(usage, "candidates_token_count", 0) or 0
-                        shot_cost = in_tok * GEMINI_INPUT_COST + out_tok * GEMINI_OUTPUT_COST
-                        encode_costs["total_input_tokens"] += in_tok
-                        encode_costs["total_output_tokens"] += out_tok
-                        encode_costs["cost_estimate"] += shot_cost
-                        encode_costs["per_shot"].append(
-                            {"index": idx, "input_tokens": in_tok, "output_tokens": out_tok, "cost": round(shot_cost, 6)})
-
-                    prompt_entry = {
-                        "index": idx,
-                        "start_s": scene["start_s"],
-                        "end_s": scene["end_s"],
-                        "duration_s": scene["duration_s"],
-                        "camera_motion_detected": camera,
-                        "audio_detected": audio_labels.get(str(idx)),
-                        "dialogue": dialogue if dialogue else None,
-                        "description": description,
-                    }
-                    if scene["duration_s"] >= SEGMENT_THRESHOLD_S:
-                        segs = generate_temporal_segments(scene, description, frame_files, keyframes_dir, client)
-                        if segs:
-                            prompt_entry["temporal_segments"] = segs
-                    prompts.append(prompt_entry)
+                    prompt_entry = _describe_shot(
+                        client, types, idx, scene, camera, audio_labels, dialogue,
+                        frame_files, keyframes_dir, system_prompt, user_content, encode_costs)
+                    if prompt_entry is None:
+                        errors += 1
+                        print(f"  Shot {idx}: empty response on retry, skipping")
+                    else:
+                        prompts.append(prompt_entry)
                 except Exception as e2:
                     errors += 1
                     print(f"  Shot {idx}: retry failed - {e2}")
@@ -1194,7 +1175,7 @@ def run_stage3(args):
     from google.genai import types
 
     output_dir = args.output_dir
-    shots_path = os.path.join(output_dir, "shots.json")
+    shots_path = manifest.shots_path(output_dir)
 
     if not os.path.exists(shots_path):
         print(f"Error: {shots_path} not found. Run stage2 first.")
@@ -1286,7 +1267,7 @@ def run_stage3(args):
     )
     characters = characters_data.get("characters", [])
 
-    characters_path = os.path.join(output_dir, "characters.json")
+    characters_path = manifest.characters_path(output_dir)
     with open(characters_path, "w") as f:
         json.dump(characters_data, f, indent=2)
 
@@ -1313,14 +1294,14 @@ def run_stage1(args):
     print(f"\nExtracting keyframes (512px, adaptive frame count)...")
     extract_keyframes(args.video, scenes, args.output)
 
-    manifest = build_manifest(scenes, args.video)
-    shot_index_path = os.path.join(args.output, "shot_index.json")
+    shot_manifest = build_manifest(scenes, args.video)
+    shot_index_path = manifest.shot_index_path(args.output)
     with open(shot_index_path, "w") as f:
-        json.dump(manifest, f, indent=2)
+        json.dump(shot_manifest, f, indent=2)
 
     print(f"\nShot index saved to {shot_index_path}")
-    print(f"  {manifest['shot_count']} shots detected")
-    durations = [s["duration_s"] for s in manifest["scenes"]]
+    print(f"  {shot_manifest['shot_count']} shots detected")
+    durations = [s["duration_s"] for s in shot_manifest["scenes"]]
     print(f"  Average shot duration: {sum(durations) / len(durations):.2f}s")
     print(f"  Shortest: {min(durations):.2f}s / Longest: {max(durations):.2f}s")
 
@@ -1328,21 +1309,21 @@ def run_stage1(args):
 def run_stage2(args):
     """Stage 2: Enrich shots with metadata, generate prompts via vision API."""
     output_dir = args.output_dir
-    shot_index_path = os.path.join(output_dir, "shot_index.json")
+    shot_index_path = manifest.shot_index_path(output_dir)
 
     if not os.path.exists(shot_index_path):
         print(f"Error: {shot_index_path} not found. Run stage1 first.")
         sys.exit(1)
 
     with open(shot_index_path) as f:
-        manifest = json.load(f)
+        shot_manifest = json.load(f)
 
-    video_path = manifest["source"]["path"]
-    scenes = manifest["scenes"]
+    video_path = shot_manifest["source"]["path"]
+    scenes = shot_manifest["scenes"]
 
     if args.limit:
         scenes = scenes[:args.limit]
-        print(f"Processing first {args.limit} shots (of {manifest['shot_count']})")
+        print(f"Processing first {args.limit} shots (of {shot_manifest['shot_count']})")
 
     # Step 1: Extract subtitles
     srt_path = extract_subtitles(video_path, output_dir)
@@ -1361,16 +1342,13 @@ def run_stage2(args):
 
     # Step 4: Generate prompts via vision API
     print("Generating prompts...")
-    prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir, args.provider, wav_path=wav_path)
+    # dialog is a global subtitle timeline (one entry per SRT line, at its
+    # original timestamp) so that speech generation places each line exactly
+    # once, even for shots that span subtitle boundaries.
+    prompts = generate_prompts(scenes, dialogue_map, motion_labels, audio_labels, output_dir,
+                                args.provider, dialog=subtitles, wav_path=wav_path)
 
-    # Save shots — v2 format stores dialog as a global timeline list
-    # (one entry per subtitle line at its original SRT timestamp) so that speech
-    # generation places each line exactly once, avoiding repetition across shots
-    # that span subtitle boundaries.
-    shots_path = os.path.join(output_dir, "shots.json")
-    shots_data = {"format": "v2", "shots": prompts, "dialog": subtitles}
-    with open(shots_path, "w") as f:
-        json.dump(shots_data, f, indent=2)
+    shots_path = manifest.save_shots(output_dir, prompts, subtitles)
 
     print(f"\nShots saved to {shots_path}")
     print(f"  {len(prompts)} shots described")

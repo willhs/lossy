@@ -248,7 +248,7 @@ def run_decode(args, strategy: GenerationStrategy):
     if hasattr(strategy, 'get_audio_results'):
         audio_results, audio_failures = strategy.get_audio_results()
         if audio_results or audio_failures:
-            audio_progress_path = os.path.join(output_dir, "audio_progress_runpod-mmaudio-pipelined.json")
+            audio_progress_path = manifest.audio_progress_path(output_dir, "runpod-mmaudio-pipelined")
             audio_progress = {
                 "completed": sorted(audio_results.keys()),
                 "failed": audio_failures,
@@ -559,7 +559,7 @@ def main():
 def _create_wan_enriched_strategy(args):
     from prompt_blend import build_blended_prompts
     output_dir = args.output_dir
-    characters_path = os.path.join(output_dir, "characters.json")
+    characters_path = manifest.characters_path(output_dir)
 
     character_shot_map = {}
     characters_data = {}
@@ -590,7 +590,7 @@ def _create_wan_enriched_strategy(args):
 def _create_wan22_strategy(args):
     from prompt_blend import build_blended_prompts
     output_dir = args.output_dir
-    characters_path = os.path.join(output_dir, "characters.json")
+    characters_path = manifest.characters_path(output_dir)
 
     character_shot_map = {}
     characters_data = {}
@@ -626,7 +626,7 @@ def _create_wan22_strategy(args):
 
 def _create_vace_strategy(args):
     output_dir = args.output_dir
-    characters_path = os.path.join(output_dir, "characters.json")
+    characters_path = manifest.characters_path(output_dir)
 
     portraits = {}
     character_shot_map = {}

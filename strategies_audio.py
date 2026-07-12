@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 
+import manifest
 from clip_types import AudioClipResult, SpeechClipResult
 
 
@@ -205,10 +206,8 @@ class ElevenLabsStrategy(AudioStrategy):
         results = []
 
         for part_idx, duration in enumerate(durations):
-            if len(durations) == 1:
-                clip_name = f"{shot_index:04d}.mp3"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp3"
+            clip_name = manifest.audio_clip_filename(
+                shot_index, None if len(durations) == 1 else part_idx + 1, ".mp3")
 
             clip_path = os.path.join(audio_dir, clip_name)
 
@@ -284,10 +283,8 @@ class MMAudioStrategy(AudioStrategy):
         results = []
 
         for part_idx, duration in enumerate(durations):
-            if len(durations) == 1:
-                clip_name = f"{shot_index:04d}.flac"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.flac"
+            clip_name = manifest.audio_clip_filename(
+                shot_index, None if len(durations) == 1 else part_idx + 1, ".flac")
 
             clip_path = os.path.join(audio_dir, clip_name)
 
@@ -510,10 +507,8 @@ class RunPodMMAudioStrategy(AudioStrategy):
         results = []
 
         for part_idx, duration in enumerate(durations):
-            if len(durations) == 1:
-                clip_name = f"{shot_index:04d}.flac"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.flac"
+            clip_name = manifest.audio_clip_filename(
+                shot_index, None if len(durations) == 1 else part_idx + 1, ".flac")
 
             clip_path = os.path.join(audio_dir, clip_name)
             effective_seed = (seed if seed is not None else shot_index) + part_idx
@@ -591,7 +586,7 @@ class ReplicateMusicGenStrategy(AudioStrategy):
         duration = int(min(max(target_duration_s, self.MIN_DURATION), self.MAX_DURATION))
         effective_seed = seed if seed is not None else shot_index
 
-        clip_path = os.path.join(audio_dir, f"{shot_index:04d}.wav")
+        clip_path = manifest.audio_clip_path(audio_dir, shot_index, None, ".wav")
 
         try:
             output = replicate.run(
@@ -757,10 +752,8 @@ class RunPodMusicGenStrategy(AudioStrategy):
         results = []
 
         for part_idx, duration in enumerate(durations):
-            if len(durations) == 1:
-                clip_name = f"{shot_index:04d}.wav"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.wav"
+            clip_name = manifest.audio_clip_filename(
+                shot_index, None if len(durations) == 1 else part_idx + 1, ".wav")
 
             clip_path = os.path.join(audio_dir, clip_name)
             effective_seed = (seed if seed is not None else shot_index) + part_idx
@@ -829,7 +822,7 @@ class SpeechStrategy:
         import fal_client
         import httpx
 
-        clip_name = f"{shot_index:04d}-{line_index:02d}.mp3"
+        clip_name = manifest.speech_clip_filename(shot_index, line_index)
         clip_path = os.path.join(speech_dir, clip_name)
 
         try:

@@ -74,7 +74,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
 
         if not clips:
             # Generate silence for this shot
-            silence_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+            silence_path = os.path.join(adjusted_dir, manifest.clip_filename(idx, None, ".wav"))
             if _stale_for_target(silence_path, target_duration):
                 _run_ffmpeg(
                     ["ffmpeg", "-y", "-f", "lavfi", "-i",
@@ -89,7 +89,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
         if len(clips) == 1:
             # Single clip -- trim or pad to match target duration
             clip_path = os.path.join(audio_dir, clips[0]["path"])
-            adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+            adjusted_path = os.path.join(adjusted_dir, manifest.clip_filename(idx, None, ".wav"))
             # Regenerate if source clip is newer than adjusted (stale cache),
             # or the target duration itself changed since adjusted was built.
             needs_regen = _stale_for_target(adjusted_path, target_duration) or (
@@ -107,7 +107,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             audio_entries.append(adjusted_path)
         else:
             # Multiple clips (split shot) -- crossfade parts, then adjust
-            adjusted_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
+            adjusted_path = os.path.join(adjusted_dir, manifest.clip_filename(idx, None, ".wav"))
             newest_source = max(
                 os.path.getmtime(os.path.join(audio_dir, c["path"])) for c in clips
             )
@@ -708,7 +708,7 @@ def stitch_clips(args):
 
     # Auto-detect speech if speech_progress.json exists
     if not speech_voice:
-        speech_progress = os.path.join(output_dir, "speech_progress.json")
+        speech_progress = manifest.speech_progress_path(output_dir)
         if os.path.exists(speech_progress):
             speech_voice = "auto"
 

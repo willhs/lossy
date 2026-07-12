@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+import manifest
 from encode import (
     _normalize_character_name,
     _refine_shot_assignments,
@@ -18,6 +19,7 @@ from encode import (
     class_to_bucket,
     classify_motion,
     frames_for_duration,
+    generate_prompts,
     generate_temporal_segments,
     parse_srt,
     run_stage3,
@@ -1211,3 +1213,92 @@ class TestGenerateTemporalSegments:
 
         assert len(result) == 3
         assert client.models.generate_content.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# generate_prompts — resume via the manifest contract
+# ---------------------------------------------------------------------------
+
+class TestGeneratePromptsResume:
+    """generate_prompts must resume/save through manifest.load_shots/save_shots
+    (v2), not hand-rolled JSON — a v1-shaped resume crashes on a v2 shots.json.
+    """
+
+    def _make_scene(self, idx):
+        return {
+            "index": idx, "start_s": float(idx), "end_s": float(idx) + 1.0,
+            "duration_s": 1.0, "keyframes": [f"{idx:04d}-01.jpg"],
+        }
+
+    def _write_keyframe(self, tmp_path, idx):
+        keyframes_dir = tmp_path / "keyframes"
+        keyframes_dir.mkdir(exist_ok=True)
+        (keyframes_dir / f"{idx:04d}-01.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+
+    def test_resumes_from_v2_shots_json_without_crashing(self, tmp_path, monkeypatch):
+        """A v2 shots.json (the only shape stage2 ever writes) must resume cleanly.
+
+        Regression test: the old resume path did `json.load` then
+        `{p["index"] for p in existing}`, which raises TypeError against the
+        v2 dict shape — re-running stage2 on a completed/interrupted dir
+        always crashed.
+        """
+        existing_dialog = [{"text": "hello", "start_s": 0.0, "end_s": 0.5}]
+        manifest.save_shots(
+            str(tmp_path),
+            [{"index": 0, "start_s": 0.0, "end_s": 1.0, "duration_s": 1.0,
+              "camera_motion_detected": "static", "audio_detected": None,
+              "dialogue": None, "description": {"action": "Shot 0."}}],
+            existing_dialog,
+        )
+
+        self._write_keyframe(tmp_path, 1)
+        scenes = [self._make_scene(0), self._make_scene(1)]
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps({"action": "Shot 1."}), usage_metadata=None,
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        prompts = generate_prompts(
+            scenes, {}, {}, {}, str(tmp_path), "gemini", dialog=existing_dialog,
+        )
+
+        # Shot 0 was skipped (already in shots.json); only shot 1 hit Gemini.
+        assert mock_client.models.generate_content.call_count == 1
+        assert {p["index"] for p in prompts} == {0, 1}
+
+    def test_incremental_and_final_save_round_trip_via_manifest(self, tmp_path, monkeypatch):
+        """An interrupted stage2 leaves a v2 shots.json that manifest.load_shots accepts."""
+        for idx in range(11):
+            self._write_keyframe(tmp_path, idx)
+        scenes = [self._make_scene(idx) for idx in range(11)]
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps({"action": "Shot."}), usage_metadata=None,
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        dialog = [{"text": "line", "start_s": 0.0, "end_s": 0.5}]
+        prompts = generate_prompts(
+            scenes, {}, {}, {}, str(tmp_path), "gemini", dialog=dialog,
+        )
+        manifest.save_shots(str(tmp_path), prompts, dialog)
+
+        # The incremental save at shot 10 (11th shot) must already be v2-shaped.
+        shots, loaded_dialog = manifest.load_shots(str(tmp_path))
+        assert {s["index"] for s in shots} == set(range(11))
+        assert loaded_dialog == dialog
+
+        # Interrupt-and-resume: a fresh call against the same output_dir must
+        # not crash and must not re-describe already-completed shots.
+        mock_client.models.generate_content.reset_mock()
+        resumed = generate_prompts(
+            scenes, {}, {}, {}, str(tmp_path), "gemini", dialog=dialog,
+        )
+        assert mock_client.models.generate_content.call_count == 0
+        assert {p["index"] for p in resumed} == set(range(11))

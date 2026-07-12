@@ -66,7 +66,7 @@ class ReplicateWanStrategy(GenerationStrategy):
         import httpx
         import replicate
 
-        clip_path = os.path.join(clips_dir, f"{shot_index:04d}.mp4")
+        clip_path = manifest.clip_path(clips_dir, shot_index)
 
         try:
             input_params = {
@@ -153,10 +153,8 @@ class FalSeedanceStrategy(GenerationStrategy):
 
         for part_idx, duration in enumerate(durations):
             # Single clip: 0010.mp4, split clips: 0010-01.mp4, 0010-02.mp4
-            if len(durations) == 1:
-                clip_name = f"{shot_index:04d}.mp4"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp4"
+            clip_name = manifest.clip_filename(
+                shot_index, None if len(durations) == 1 else part_idx + 1, ".mp4")
 
             clip_path = os.path.join(clips_dir, clip_name)
 
@@ -382,10 +380,8 @@ class RunPodWanStrategy(GenerationStrategy):
         results = []
 
         for part_idx, dur in enumerate(durations):
-            if len(durations) == 1:
-                clip_name = f"{shot_index:04d}.flac"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.flac"
+            clip_name = manifest.audio_clip_filename(
+                shot_index, None if len(durations) == 1 else part_idx + 1)
 
             remote_path = f"/tmp/audio_{shot_index:04d}_{part_idx:02d}.flac"
             local_path = os.path.join(audio_dir, clip_name)
@@ -683,10 +679,8 @@ class RunPodWanStrategy(GenerationStrategy):
         start_image = None
 
         for part_idx, frames in enumerate(frame_counts):
-            if len(frame_counts) == 1:
-                clip_name = f"{shot_index:04d}.mp4"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp4"
+            clip_name = manifest.clip_filename(
+                shot_index, None if len(frame_counts) == 1 else part_idx + 1, ".mp4")
 
             # Per-part prompt: use encoded temporal segments if available, else generic cues
             temporal_segs = (entry or {}).get("temporal_segments") if len(frame_counts) > 1 else None
@@ -717,9 +711,8 @@ class RunPodWanStrategy(GenerationStrategy):
                 sound = filter_speech_from_sound(sound)
             if sound:
                 if self._audio_dir is None:
-                    self._audio_dir = os.path.join(
-                        os.path.dirname(clips_dir), "..", "audio", "runpod-mmaudio-pipelined"
-                    )
+                    self._audio_dir = manifest.audio_dir(
+                        os.path.dirname(os.path.dirname(clips_dir)), "runpod-mmaudio-pipelined")
                     os.makedirs(self._audio_dir, exist_ok=True)
                 self._pending_audio = (shot_index, sound, target_duration_s, effective_seed, self._audio_dir)
 
@@ -1244,10 +1237,8 @@ class RunPodVaceStrategy(RunPodWanStrategy):
         results = []
 
         for part_idx, frames in enumerate(frame_counts):
-            if len(frame_counts) == 1:
-                clip_name = f"{shot_index:04d}.mp4"
-            else:
-                clip_name = f"{shot_index:04d}-{part_idx + 1:02d}.mp4"
+            clip_name = manifest.clip_filename(
+                shot_index, None if len(frame_counts) == 1 else part_idx + 1, ".mp4")
 
             clip_result = self._generate_one_clip(
                 prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
@@ -1265,9 +1256,8 @@ class RunPodVaceStrategy(RunPodWanStrategy):
                 sound = filter_speech_from_sound(sound)
             if sound:
                 if self._audio_dir is None:
-                    self._audio_dir = os.path.join(
-                        os.path.dirname(clips_dir), "..", "audio", "runpod-mmaudio-pipelined"
-                    )
+                    self._audio_dir = manifest.audio_dir(
+                        os.path.dirname(os.path.dirname(clips_dir)), "runpod-mmaudio-pipelined")
                     os.makedirs(self._audio_dir, exist_ok=True)
                 self._pending_audio = (shot_index, sound, target_duration_s, effective_seed, self._audio_dir)
 
