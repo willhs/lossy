@@ -825,7 +825,7 @@ def generate_prompts(
                         model="gemini-2.5-flash-lite",
                         contents=[types.Content(role="user", parts=user_content)],
                         config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT,
+                            system_instruction=system_prompt,
                             temperature=0.3,
                             response_mime_type="application/json",
                         ),

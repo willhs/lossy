@@ -490,7 +490,7 @@ from stitch import stitch_clips  # noqa: E402,F811 -- re-export for backwards co
 
 def main():
     parser = argparse.ArgumentParser(description="lossy decoder: prompts -> video")
-    parser.add_argument("output_dir", help="Output directory containing prompts.json")
+    parser.add_argument("output_dir", help="Output directory containing shots.json")
     parser.add_argument("--start-index", type=int, default=None,
                         help="Skip shots before this index (e.g., 10 to skip credits)")
     parser.add_argument("--limit", type=int, default=None,

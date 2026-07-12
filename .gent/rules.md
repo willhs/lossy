@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-lossy is a Python CLI pipeline that encodes films into text descriptions and decodes them back into video using AI generation. Three standalone scripts: `encode.py`, `decode.py`, `pipeline.py`. No package manager -- dependencies installed directly into a `.venv`.
+lossy is a Python CLI pipeline that encodes films into text descriptions and decodes them back into video using AI generation. Three standalone scripts: `encode.py`, `decode.py`, `pipeline.py`. Dependencies are managed with uv (`pyproject.toml` + `uv.lock`); run `uv sync`.
 
 ## Architecture
 
@@ -84,4 +84,4 @@ Tests use mocks for external APIs. No real API calls in tests.
 
 - Respect human-owned files flagged in `docs/philosophy/`.
 - Keep generated content ASCII unless the project explicitly opts in.
-- Do not add new dependencies without discussion -- the project intentionally avoids a package manager.
+- Do not add new dependencies without discussion; when agreed, add them via `uv add` so `pyproject.toml` and `uv.lock` stay in sync.

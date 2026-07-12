@@ -124,7 +124,7 @@ Browser-based side-by-side viewer served by `tools/serve.py` (static file server
 - **Stateless stages (ADR-002).** Stages communicate by files in the output directory. No shared database, no long-running server, no in-memory state that survives a CLI invocation.
 - **Single source of truth for the on-disk contract.** `manifest.py` owns filename conventions and the `shots.json` v2 schema; other modules import it rather than reinventing the check.
 - **Strategy pattern for backends.** New video or audio backends plug in as subclasses of `GenerationStrategy` / `AudioStrategy` in `strategies_video.py` / `strategies_audio.py`.
-- **No package manager.** Dependencies are installed directly into `.venv`. New dependencies require discussion (see `CLAUDE.md`).
+- **uv-managed dependencies.** `pyproject.toml` + `uv.lock` are the single install source (`uv sync`). New dependencies require discussion (see `CLAUDE.md`).
 
 ## Tech Stack
 

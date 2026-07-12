@@ -89,13 +89,14 @@ python tools/serve.py
 
 ## Setup
 
-Requires Python 3.11+ and FFmpeg.
+Requires Python 3.11+, FFmpeg, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install scenedetect[opencv] google-genai replicate fal-client httpx runpod tensorflow tensorflow-hub scipy numpy pytest
+uv sync          # install dependencies from pyproject.toml / uv.lock
+uv run python pipeline.py --help
 ```
+
+Prefix commands with `uv run` (or activate the venv it creates: `source .venv/bin/activate`).
 
 Environment variables (in `.env`):
 - `GOOGLE_API_KEY` -- Gemini API key (encode stage 2)
@@ -108,7 +109,7 @@ Environment variables (in `.env`):
 ## Tests
 
 ```bash
-python -m pytest -v
+uv run python -m pytest -v
 ```
 
 ## License
