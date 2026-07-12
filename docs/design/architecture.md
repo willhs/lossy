@@ -123,6 +123,7 @@ Browser-based side-by-side viewer served by `tools/serve.py` (static file server
 - **Cost first.** Every external API call costs money; pipeline defaults aim for the cheapest viable options (480p, short clips, fewest frames sampled). See `docs/philosophy/principles.md`.
 - **Stateless stages (ADR-002).** Stages communicate by files in the output directory. No shared database, no long-running server, no in-memory state that survives a CLI invocation.
 - **Single source of truth for the on-disk contract.** `manifest.py` owns filename conventions and the `shots.json` v2 schema; other modules import it rather than reinventing the check.
+- **Single configuration surface.** `config.py` owns `.env` loading, Gemini model-id constants (`ENCODE_MODEL`, `EVAL_MODEL`), and the video-strategy registry (name → class + capability flags like `supports_concurrent_audio`); `encode.py`/`decode.py`/`eval.py`/`pipeline.py` import from it rather than reimplementing. `load_env()` is called once per CLI's `main()`, never from library functions, so tests exercising those functions directly stay isolated from the real `.env`.
 - **Strategy pattern for backends.** New video or audio backends plug in as subclasses of `GenerationStrategy` / `AudioStrategy` in `strategies_video.py` / `strategies_audio.py`.
 - **uv-managed dependencies.** `pyproject.toml` + `uv.lock` are the single install source (`uv sync`). New dependencies require discussion (see `CLAUDE.md`).
 
@@ -131,7 +132,7 @@ Browser-based side-by-side viewer served by `tools/serve.py` (static file server
 - **Language:** Python 3.11 (flat scripts, no package layout)
 - **Video processing:** FFmpeg via subprocess
 - **Shot detection:** PySceneDetect 0.6.7 AdaptiveDetector (ADR-003)
-- **Vision model:** Gemini Flash-Lite Preview
+- **Vision model:** Two Gemini models, pinned as constants in `config.py` — `ENCODE_MODEL` (`gemini-2.5-flash-lite`, stable, used at encode time) and `EVAL_MODEL` (`gemini-3.1-flash-lite-preview`, latest preview, used only by the offline eval harness)
 - **Audio classification:** YAMNet via TensorFlow Hub (ADR-005)
 - **Character enrichment:** TMDB API + Gemini (ADR-006)
 - **Video generation:** 7 swappable strategies (hosted + self-hosted ComfyUI)

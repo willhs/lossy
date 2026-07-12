@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 
+from config import ENCODE_MODEL
 from prompt_format import _format_prompt_wan
 
 
@@ -28,17 +29,6 @@ Requirements:
 - Do NOT write separate identity and action paragraphs — synthesize them into one
 - Output the prompt text only, nothing else
 """
-
-
-def _load_env():
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as ef:
-            for line in ef:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
 
 
 def _input_hash(base: str, identity_blocks: list[str]) -> str:
@@ -74,7 +64,6 @@ def build_blended_prompts(
         except (json.JSONDecodeError, OSError):
             cache = {}
 
-    _load_env()
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("Warning: GEMINI_API_KEY not set — skipping blended prompts (static prepend fallback).")
@@ -113,7 +102,7 @@ def build_blended_prompts(
 
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
+                model=ENCODE_MODEL,
                 contents=user_content,
                 config={"system_instruction": BLEND_SYSTEM_PROMPT, "temperature": 0.3},
             )

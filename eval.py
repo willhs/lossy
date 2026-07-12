@@ -13,6 +13,7 @@ import google.genai as genai
 from google.genai import types as genai_types
 
 import manifest
+from config import EVAL_MODEL, load_env
 from encode import (
     SYSTEM_PROMPT,
     aggregate_shot_audio,
@@ -21,7 +22,7 @@ from encode import (
     run_yamnet,
 )
 
-# Pricing for cost tracking (gemini-3.1-flash-lite-preview)
+# Pricing for cost tracking (gemini-3.1-flash-lite-preview, see EVAL_MODEL)
 GEMINI_INPUT_COST = 0.075 / 1_000_000
 GEMINI_OUTPUT_COST = 0.30 / 1_000_000
 
@@ -39,17 +40,6 @@ Compare these two descriptions of the same field and rate their similarity from 
 - 0.0 = completely different or unrelated
 
 Respond with ONLY a JSON object: {"score": <float>, "reason": "<brief explanation>"}"""
-
-
-def load_env():
-    """Load .env file if present."""
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip())
 
 
 def load_json(path: str) -> dict | list:
@@ -147,7 +137,7 @@ def reencode_descriptions(
 
         try:
             response = client.models.generate_content(
-                model="gemini-3.1-flash-lite-preview",
+                model=EVAL_MODEL,
                 contents=[genai_types.Content(role="user", parts=parts)],
                 config=genai_types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -231,7 +221,7 @@ def score_text_similarity(
 
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model=EVAL_MODEL,
             contents=[genai_types.Content(role="user", parts=[genai_types.Part.from_text(text=prompt)])],
             config=genai_types.GenerateContentConfig(
                 system_instruction=SIMILARITY_PROMPT,
@@ -504,7 +494,7 @@ def judge_audio_clip(client, clip_path: str, sound_description: str) -> dict:
 
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model=EVAL_MODEL,
             contents=[genai_types.Content(role="user", parts=parts)],
             config=genai_types.GenerateContentConfig(
                 system_instruction=AUDIO_JUDGE_PROMPT,

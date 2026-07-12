@@ -9,12 +9,9 @@ import sys
 import time
 
 import manifest
+from config import AUDIO_STRATEGIES, CONCURRENT_AUDIO_STRATEGIES, VIDEO_STRATEGY_NAMES as STRATEGIES
 
 STAGES = ["encode1", "encode2", "encode3", "decode", "audio", "speech", "stitch"]
-
-STRATEGIES = ["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan22", "runpod-wan-enriched", "runpod-vace"]
-
-AUDIO_STRATEGIES = ["elevenlabs", "mmaudio", "runpod-mmaudio"]
 
 
 def build_commands(args):
@@ -45,7 +42,7 @@ def build_commands(args):
         "--strategy", args.strategy,
     ]
     # When both video and audio are on RunPod, run audio concurrently on the same pod
-    if args.strategy in ("runpod-wan", "runpod-wan22", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
+    if args.strategy in CONCURRENT_AUDIO_STRATEGIES and args.audio_strategy == "runpod-mmaudio":
         commands["decode"].append("--concurrent-audio")
         commands["decode"].append("--keep-pod")
     if args.start_index is not None:
@@ -90,7 +87,7 @@ def run_pipeline(args):
     if not args.audio_strategy:
         skip.add("audio")
     # Skip separate audio stage when decode handles it concurrently
-    if args.strategy in ("runpod-wan", "runpod-wan22", "runpod-vace") and args.audio_strategy == "runpod-mmaudio":
+    if args.strategy in CONCURRENT_AUDIO_STRATEGIES and args.audio_strategy == "runpod-mmaudio":
         skip.add("audio")
     if not args.speech_voice:
         skip.add("speech")

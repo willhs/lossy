@@ -15,19 +15,7 @@ import subprocess
 import sys
 import time
 
-
-def load_env():
-    """Load .env file if present."""
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(env_path):
-        with open(env_path) as ef:
-            for line in ef:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-
-
+from config import DECODE_AUDIO_STRATEGIES, MUSIC_STRATEGIES, VIDEO_STRATEGY_NAMES, load_env  # noqa: E402 -- re-export for backwards compat
 from clip_types import ClipResult, AudioClipResult, SpeechClipResult  # noqa: E402
 import manifest  # noqa: E402
 
@@ -477,13 +465,13 @@ def main():
                         help="Process only first N shots (after start-index)")
     parser.add_argument("--stitch", action="store_true",
                         help="Only run the stitching step (skip generation)")
-    parser.add_argument("--strategy", choices=["replicate-wan", "fal-seedance", "fal-seedance-pro", "runpod-wan", "runpod-wan22", "runpod-wan-enriched", "runpod-vace"],
+    parser.add_argument("--strategy", choices=VIDEO_STRATEGY_NAMES,
                         default="runpod-wan",
                         help="Video generation backend (default: runpod-wan)")
     parser.add_argument("--audio", action="store_true",
                         help="Generate audio clips (instead of video)")
     parser.add_argument("--audio-strategy",
-                        choices=["elevenlabs", "mmaudio", "runpod-mmaudio", "musicgen", "runpod-musicgen"],
+                        choices=DECODE_AUDIO_STRATEGIES,
                         default=None,
                         help="Audio generation backend (default: auto-detect all for stitch, elevenlabs for generate)")
     parser.add_argument("--keep-pod", action="store_true",
@@ -493,7 +481,7 @@ def main():
     parser.add_argument("--speech-voice", default="Roger",
                         help="ElevenLabs voice name for speech (default: Roger)")
     parser.add_argument("--music-strategy",
-                        choices=["musicgen", "runpod-musicgen"],
+                        choices=MUSIC_STRATEGIES,
                         default=None,
                         help="Music generation strategy to overlay on stitch (music-bucket shots only)")
     parser.add_argument("--concurrent-audio", action="store_true",

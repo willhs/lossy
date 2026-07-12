@@ -16,22 +16,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from encode import MUSIC_SYSTEM_PROMPT, extract_shot_audio  # noqa: E402
 from strategies_video import FalSeedanceStrategy  # noqa: E402
 from strategies_audio import ReplicateMusicGenStrategy  # noqa: E402
+from config import ENCODE_MODEL, load_env  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "output", "star_wars_iv_v2")
 STAGE = os.path.join(OUT, "music_demos")
 KEYFRAMES = os.path.join(OUT, "keyframes")
 WAV = os.path.join(OUT, "audio.wav")
-
-
-def load_env():
-    env_path = os.path.join(ROOT, ".env")
-    with open(env_path) as ef:
-        for line in ef:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
 
 
 def shot_keyframes(idx):
@@ -61,7 +52,7 @@ def describe_music(client, types, shot):
     ]
     user_content = audio_parts + parts + [types.Part.from_text(text="\n".join(context))]
     resp = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
+        model=ENCODE_MODEL,
         contents=[types.Content(role="user", parts=user_content)],
         config=types.GenerateContentConfig(
             system_instruction=MUSIC_SYSTEM_PROMPT,
