@@ -322,12 +322,20 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
     """Produce this shot's adjusted clip(s), matching original_duration.
 
     Single-part shots are trimmed/slowed as a whole (existing behavior).
-    Split shots (multiple chained parts) are left untouched except for the
-    last part: earlier parts keep their generated timing so I2V chaining
-    continuity isn't disturbed, and only the last part is trimmed/slowed so
-    the group's total lands within ~1 frame of shots.json's duration --
-    correcting the frame-quantization/remainder-flooring overshoot that
-    otherwise passes straight through split shots uncorrected.
+    Split shots (multiple chained parts) get the group's frame-quantization/
+    remainder-flooring overshoot spread evenly across every part via a shared
+    setpts factor, rather than dumped entirely onto the last part --
+    concentrating the whole group's correction on one clip produced visibly
+    unnatural speed-ramps (up to ~7x) on that segment. Non-final parts are
+    never trimmed (only speed-adjusted): trimming would cut into the frames
+    the next part's I2V generation was seeded from, breaking chaining
+    continuity, whereas setpts preserves every frame (including the seed
+    frame) and just compresses/expands its timing. The last part still
+    absorbs a final, now much smaller, correction (via _retime_clip, which
+    may trim) to snap the group's total to within one frame of
+    original_duration -- the shared factor alone leaves a small residual
+    per part from ffmpeg's own frame-boundary rounding on each independent
+    setpts re-encode, and that residual compounds across parts.
 
     original_duration is boundary-locked (the caller passes how much time
     this shot needs to occupy to catch the running timeline back up to its
@@ -356,13 +364,40 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
         _retime_clip(clip_path, adjusted_path, original_duration, actual_duration)
         return adjusted_paths
 
-    # Split shot: copy earlier parts through unchanged.
-    for clip_path, adjusted_path in zip(clip_paths[:-1], adjusted_paths[:-1]):
-        subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+    # Split shot: distribute the group's correction evenly across all parts.
+    raw_durations = [_probe_duration(p) for p in clip_paths]
+    raw_total = sum(raw_durations)
 
-    earlier_total = sum(_probe_duration(p) for p in adjusted_paths[:-1])
+    if raw_total <= 0 or original_duration <= 0:
+        # Degenerate case -- no sane factor to compute. Copy parts through
+        # unchanged rather than produce zero/negative-length clips.
+        for clip_path, adjusted_path in zip(clip_paths, adjusted_paths):
+            subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+        return adjusted_paths
+
+    uniform_factor = original_duration / raw_total
+
+    # Apply the shared factor to every part except the last.
+    for clip_path, adjusted_path, raw_duration in zip(
+        clip_paths[:-1], adjusted_paths[:-1], raw_durations[:-1]
+    ):
+        part_target = raw_duration * uniform_factor
+        if abs(part_target - raw_duration) < 1 / 24:
+            subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+        else:
+            subprocess.run(
+                ["ffmpeg", "-i", clip_path, "-filter:v", f"setpts={uniform_factor}*PTS",
+                 "-an", "-y", adjusted_path],
+                capture_output=True,
+            )
+
+    # Last part closes the gap between what the earlier parts actually landed
+    # on (post frame-rounding) and the group's true target, so the group's
+    # total still snaps to within one frame despite each independent setpts
+    # re-encode's own rounding.
+    earlier_achieved_total = sum(_probe_duration(p) for p in adjusted_paths[:-1])
     last_clip_path, last_adjusted_path = clip_paths[-1], adjusted_paths[-1]
-    remaining_budget = original_duration - earlier_total
+    remaining_budget = original_duration - earlier_achieved_total
 
     if remaining_budget <= 0:
         # Earlier parts alone already meet/exceed the shot's budget -- no
@@ -370,7 +405,7 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
         # than produce a zero/negative-length clip.
         subprocess.run(["cp", last_clip_path, last_adjusted_path], capture_output=True)
     else:
-        last_actual = _probe_duration(last_clip_path)
+        last_actual = raw_durations[-1]
         _retime_clip(last_clip_path, last_adjusted_path, remaining_budget, last_actual)
 
     return adjusted_paths
