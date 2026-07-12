@@ -7,10 +7,11 @@ subprocess calls.
 
 import json
 import os
-import subprocess
+import shutil
 import sys
 
 import manifest
+from manifest import _run_ffmpeg
 
 
 def _stale_for_target(adjusted_path: str, target_duration: float) -> bool:
@@ -75,12 +76,12 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             # Generate silence for this shot
             silence_path = os.path.join(adjusted_dir, f"{idx:04d}.wav")
             if _stale_for_target(silence_path, target_duration):
-                subprocess.run(
+                _run_ffmpeg(
                     ["ffmpeg", "-y", "-f", "lavfi", "-i",
                      f"anullsrc=r=44100:cl=stereo",
                      "-t", str(target_duration),
                      silence_path],
-                    capture_output=True,
+                    f"silence generation for shot {idx}",
                 )
             audio_entries.append(silence_path)
             continue
@@ -95,13 +96,13 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                 os.path.exists(adjusted_path)
                 and os.path.getmtime(clip_path) > os.path.getmtime(adjusted_path))
             if needs_regen:
-                subprocess.run(
+                _run_ffmpeg(
                     ["ffmpeg", "-y", "-i", clip_path,
                      "-af", f"apad=whole_dur={target_duration},atrim=0:{target_duration}",
                      "-ar", "44100", "-ac", "2",
                      "-t", str(target_duration),
                      adjusted_path],
-                    capture_output=True,
+                    f"single-clip audio adjust for shot {idx}",
                 )
             audio_entries.append(adjusted_path)
         else:
@@ -138,13 +139,13 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
                         )
                     af = (";".join(parts)
                           + f",apad=whole_dur={target_duration},atrim=0:{target_duration}")
-                subprocess.run(
+                _run_ffmpeg(
                     ["ffmpeg", "-y"] + inputs +
                     ["-filter_complex", af,
                      "-ar", "44100", "-ac", "2",
                      "-t", str(target_duration),
                      adjusted_path],
-                    capture_output=True,
+                    f"crossfade audio adjust for shot {idx}",
                 )
 
             audio_entries.append(adjusted_path)
@@ -159,11 +160,11 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             f.write(f"file '{os.path.abspath(path)}'\n")
 
     audio_track_path = os.path.join(output_dir, f"audio_track_{audio_strategy}.wav")
-    subprocess.run(
+    _run_ffmpeg(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
          "-i", concat_file, "-c", "copy",
          audio_track_path],
-        capture_output=True,
+        f"audio concat for {audio_strategy}",
     )
 
     print(f"  Audio track: {audio_track_path}")
@@ -232,24 +233,24 @@ def _stitch_speech_global(shots: list[dict], speech_dir: str, output_dir: str,
     speech_track_path = os.path.join(output_dir, "speech_track.wav")
 
     if not active_clips:
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
              "-t", str(total_duration), speech_track_path],
-            capture_output=True,
+            "speech track silence generation",
         )
         print(f"  Speech track: {speech_track_path} (silence — no clips in window)")
         return speech_track_path
 
     if len(active_clips) == 1:
         clip_path, delay_ms = active_clips[0]
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-y", "-i", clip_path,
              "-af", (f"adelay={delay_ms}|{delay_ms},"
                      f"apad=whole_dur={total_duration},"
                      f"atrim=0:{total_duration}"),
              "-ar", "44100", "-ac", "2", "-t", str(total_duration),
              speech_track_path],
-            capture_output=True,
+            "speech track single-clip build",
         )
     else:
         inputs = []
@@ -263,13 +264,13 @@ def _stitch_speech_global(shots: list[dict], speech_dir: str, output_dir: str,
             f"apad=whole_dur={total_duration},"
             f"atrim=0:{total_duration}[out]"
         )
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-y"] + inputs +
             ["-filter_complex", ";".join(filters),
              "-map", "[out]",
              "-ar", "44100", "-ac", "2", "-t", str(total_duration),
              speech_track_path],
-            capture_output=True,
+            "speech track mix",
         )
 
     print(f"  Speech track: {speech_track_path}")
@@ -297,23 +298,23 @@ def _retime_clip(clip_path: str, adjusted_path: str, target_duration: float,
     # frame instead so every shot lands as close to its target as ffmpeg's
     # own frame-boundary trim precision allows.
     if abs(target_duration - actual_duration) < 1 / 24:
-        subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+        shutil.copy(clip_path, adjusted_path)
     elif speed_factor < 1.0:
         # Clip is longer than the target. Trim (cut off the tail) instead of
         # speeding it up -- avoids the fast-motion "squeeze" artifact on short
         # shots. Same output duration as the speed-up would give.
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-i", clip_path, "-t", f"{target_duration}",
              "-an", "-y", adjusted_path],
-            capture_output=True,
+            f"trim adjust for {clip_path}",
         )
     else:
         # Clip is shorter than the target: slow it down to fill the shot
         # (trimming can't lengthen a clip).
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-i", clip_path, "-filter:v", f"setpts={speed_factor}*PTS",
              "-an", "-y", adjusted_path],
-            capture_output=True,
+            f"setpts adjust for {clip_path}",
         )
 
 
@@ -372,7 +373,7 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
         # Degenerate case -- no sane factor to compute. Copy parts through
         # unchanged rather than produce zero/negative-length clips.
         for clip_path, adjusted_path in zip(clip_paths, adjusted_paths):
-            subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+            shutil.copy(clip_path, adjusted_path)
         return adjusted_paths
 
     uniform_factor = original_duration / raw_total
@@ -383,12 +384,12 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
     ):
         part_target = raw_duration * uniform_factor
         if abs(part_target - raw_duration) < 1 / 24:
-            subprocess.run(["cp", clip_path, adjusted_path], capture_output=True)
+            shutil.copy(clip_path, adjusted_path)
         else:
-            subprocess.run(
+            _run_ffmpeg(
                 ["ffmpeg", "-i", clip_path, "-filter:v", f"setpts={uniform_factor}*PTS",
                  "-an", "-y", adjusted_path],
-                capture_output=True,
+                f"split-shot setpts adjust for {clip_path}",
             )
 
     # Last part closes the gap between what the earlier parts actually landed
@@ -403,7 +404,7 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
         # Earlier parts alone already meet/exceed the shot's budget -- no
         # room left to give the last part. Copy it through unchanged rather
         # than produce a zero/negative-length clip.
-        subprocess.run(["cp", last_clip_path, last_adjusted_path], capture_output=True)
+        shutil.copy(last_clip_path, last_adjusted_path)
     else:
         last_actual = raw_durations[-1]
         _retime_clip(last_clip_path, last_adjusted_path, remaining_budget, last_actual)
@@ -483,13 +484,13 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
             f.write(f"file '{os.path.abspath(path)}'\n")
 
     # Concatenate video
-    subprocess.run(
+    _run_ffmpeg(
         [
             "ffmpeg", "-f", "concat", "-safe", "0",
             "-i", concat_file,
             "-c", "copy", "-y", output_path,
         ],
-        capture_output=True,
+        f"video concat for {label}",
     )
 
     print(f"  Saved to {output_path}")
@@ -608,20 +609,20 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
             f"{mix_inputs}amix=inputs={len(sfx_tracks)}:duration=longest:normalize=0,"
             f"alimiter=limit=0.95[out]"
         )
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-y"] + inputs +
             ["-filter_complex", ";".join(filters),
              "-map", "[out]",
              combined_path],
-            capture_output=True,
+            "combined audio mix",
         )
         audio_to_mux = combined_path
     elif len(sfx_tracks) == 1:
         track, vol = sfx_tracks[0]
         filtered_path = os.path.join(output_dir, "single_audio_filtered.wav")
-        subprocess.run(
+        _run_ffmpeg(
             ["ffmpeg", "-y", "-i", track, "-af", f"volume={vol}dB", filtered_path],
-            capture_output=True,
+            "single audio track volume filter",
         )
         audio_to_mux = filtered_path
 
@@ -639,25 +640,26 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
                 f"differs from video length ({video_duration:.3f}s) by "
                 f"more than 1 frame"
             )
-        result = subprocess.run(
-            ["ffmpeg", "-y",
-             "-i", video_path,
-             "-i", audio_to_mux,
-             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-             "-t", f"{video_duration}",
-             muxed_path],
-            capture_output=True,
-        )
-        if result.returncode == 0:
+        try:
+            _run_ffmpeg(
+                ["ffmpeg", "-y",
+                 "-i", video_path,
+                 "-i", audio_to_mux,
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                 "-t", f"{video_duration}",
+                 muxed_path],
+                "final audio/video mux",
+            )
+        except RuntimeError as e:
+            print(f"  Warning: audio mux failed, silent video preserved ({e})")
+            if os.path.exists(muxed_path):
+                os.remove(muxed_path)
+        else:
             os.replace(muxed_path, video_path)
             labels = [s for s in strategies if any(s in t for t in audio_tracks)]
             if speech_track and os.path.exists(speech_track):
                 labels.append("speech")
             print(f"  {'+'.join(labels)} muxed into {video_path}")
-        else:
-            print(f"  Warning: audio mux failed, silent video preserved")
-            if os.path.exists(muxed_path):
-                os.remove(muxed_path)
 
 
 def stitch_clips(args):

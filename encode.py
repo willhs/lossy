@@ -20,6 +20,8 @@ import cv2
 import numpy as np
 from scenedetect import open_video, SceneManager, AdaptiveDetector, ContentDetector
 
+from manifest import _run_ffmpeg
+
 
 # ---------------------------------------------------------------------------
 # Stage 1: Shot detection & keyframe extraction
@@ -83,14 +85,14 @@ def extract_keyframes(video_path: str, scenes: list, output_dir: str):
             out_path = os.path.join(keyframes_dir, f"{i + 1:04d}-{j + 1:02d}.jpg")
             if os.path.exists(out_path):
                 continue
-            subprocess.run(
+            _run_ffmpeg(
                 [
                     "ffmpeg", "-ss", f"{ts:.3f}", "-i", video_path,
                     "-vframes", "1",
                     "-vf", "scale='if(gt(iw,ih),512,-2)':'if(gt(ih,iw),512,-2)'",
                     "-q:v", "2", "-y", out_path,
                 ],
-                capture_output=True,
+                f"keyframe extraction for shot {i + 1} frame {j + 1}",
             )
 
         if (i + 1) % 100 == 0 or i + 1 == total:
@@ -151,9 +153,9 @@ def extract_subtitles(video_path: str, output_dir: str) -> str | None:
         return None
 
     # Extract first subtitle stream
-    subprocess.run(
+    _run_ffmpeg(
         ["ffmpeg", "-i", video_path, "-map", "0:s:0", "-y", srt_path],
-        capture_output=True,
+        "subtitle extraction",
     )
     print(f"Subtitles extracted to {srt_path}")
     return srt_path

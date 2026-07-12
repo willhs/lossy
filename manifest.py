@@ -118,6 +118,19 @@ def speech_clip_path(speech_dir_path: str, line_idx: int, sub_idx: int = 0) -> s
     return os.path.join(speech_dir_path, speech_clip_filename(line_idx, sub_idx))
 
 
+def _run_ffmpeg(cmd: list[str], context: str) -> subprocess.CompletedProcess:
+    """Run an ffmpeg/ffprobe command, raising with its stderr if it fails.
+
+    A failed encode that goes unchecked silently yields a missing or empty
+    output file downstream, so every call site should route through here
+    instead of a bare ``subprocess.run(..., capture_output=True)``.
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"{context} failed: {result.stderr.strip()}")
+    return result
+
+
 def probe_duration(path: str) -> float:
     """Get a media file's real duration via ffprobe (ground truth, not nominal)."""
     result = subprocess.run(
