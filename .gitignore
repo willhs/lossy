@@ -44,3 +44,6 @@ ext_weights/
 
 # Agent/session workspaces
 .manager/
+
+# personal agent workflows
+.gent/skills/
