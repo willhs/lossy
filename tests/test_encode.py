@@ -1302,3 +1302,71 @@ class TestGeneratePromptsResume:
         )
         assert mock_client.models.generate_content.call_count == 0
         assert {p["index"] for p in resumed} == set(range(11))
+
+
+class TestGeneratePromptsPreviousShotContext:
+    """Each shot's Gemini call should be given the previous shot's description
+    for continuity, and a resumed run must seed that context from the last
+    already-described shot rather than starting cold.
+    """
+
+    def _make_scene(self, idx):
+        return {
+            "index": idx, "start_s": float(idx), "end_s": float(idx) + 1.0,
+            "duration_s": 1.0, "keyframes": [f"{idx:04d}-01.jpg"],
+        }
+
+    def _write_keyframe(self, tmp_path, idx):
+        keyframes_dir = tmp_path / "keyframes"
+        keyframes_dir.mkdir(exist_ok=True)
+        (keyframes_dir / f"{idx:04d}-01.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+
+    def _user_text(self, call_args) -> str:
+        """Extract the joined text part from a generate_content call's contents."""
+        contents = call_args.kwargs["contents"]
+        parts = contents[0].parts
+        return parts[-1].text
+
+    def test_second_shot_receives_first_shots_description(self, tmp_path, monkeypatch):
+        for idx in (0, 1):
+            self._write_keyframe(tmp_path, idx)
+        scenes = [self._make_scene(0), self._make_scene(1)]
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            MagicMock(text=json.dumps({"action": "Luke looks at the twin suns."}), usage_metadata=None),
+            MagicMock(text=json.dumps({"action": "Luke walks inside."}), usage_metadata=None),
+        ]
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        generate_prompts(scenes, {}, {}, {}, str(tmp_path), "gemini")
+
+        assert mock_client.models.generate_content.call_count == 2
+        first_call, second_call = mock_client.models.generate_content.call_args_list
+        assert "Luke looks at the twin suns." not in self._user_text(first_call)
+        assert "Luke looks at the twin suns." in self._user_text(second_call)
+
+    def test_resumed_run_seeds_context_from_last_existing_shot(self, tmp_path, monkeypatch):
+        manifest.save_shots(
+            str(tmp_path),
+            [{"index": 0, "start_s": 0.0, "end_s": 1.0, "duration_s": 1.0,
+              "camera_motion_detected": "static", "audio_detected": None,
+              "dialogue": None, "description": {"action": "R2-D2 beeps in the corridor."}}],
+            [],
+        )
+        self._write_keyframe(tmp_path, 1)
+        scenes = [self._make_scene(0), self._make_scene(1)]
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps({"action": "Leia enters the frame."}), usage_metadata=None,
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        generate_prompts(scenes, {}, {}, {}, str(tmp_path), "gemini")
+
+        assert mock_client.models.generate_content.call_count == 1
+        call = mock_client.models.generate_content.call_args_list[0]
+        assert "R2-D2 beeps in the corridor." in self._user_text(call)

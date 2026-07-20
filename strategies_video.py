@@ -60,9 +60,10 @@ class GenerationStrategy:
 class CharacterIdentityMixin(GenerationStrategy):
     """Shared character-identity prompt enrichment for RunPod strategies.
 
-    Prepends canonical character descriptions ("Name: description") ahead of
-    the base-formatted prompt for characters present in a shot, or returns a
-    precomputed blended prompt when one exists for the shot. Subclasses must
+    Prepends canonical character descriptions ("Name: description") verbatim
+    ahead of the base-formatted prompt for characters present in a shot.
+    Identical tokens hold continuity, not more detail — the same string is
+    prepended for a character in every shot, never reworded. Subclasses must
     call _init_character_identity() in __init__ and appear before their
     GenerationStrategy base in the MRO so super().format_prompt() reaches it.
     """
@@ -71,19 +72,15 @@ class CharacterIdentityMixin(GenerationStrategy):
         self,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
-        blended_prompts: dict | None = None,
     ) -> None:
         self._character_shot_map = character_shot_map or {}
         self._characters_by_name = {
             c["name"]: c for c in (characters_data or {}).get("characters", [])
         }
-        self._blended_prompts = blended_prompts or {}
 
     def format_prompt(self, entry: dict) -> str:
-        """Return blended prompt when available; fall back to static prepend, then base."""
+        """Prepend the locked verbatim character identity blocks, then base."""
         shot_idx = entry.get("index")
-        if shot_idx is not None and shot_idx in self._blended_prompts:
-            return self._blended_prompts[shot_idx]
         base = super().format_prompt(entry)
         if shot_idx is None:
             return base
@@ -802,10 +799,9 @@ class RunPodWanEnrichedStrategy(CharacterIdentityMixin, RunPodWanStrategy):
         concurrent_audio: bool = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
-        blended_prompts: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
-        self._init_character_identity(character_shot_map, characters_data, blended_prompts)
+        self._init_character_identity(character_shot_map, characters_data)
 
 
 class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
@@ -846,10 +842,9 @@ class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
         concurrent_audio: bool = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
-        blended_prompts: dict | None = None,
     ):
         super().__init__(output_dir, keep_pod, concurrent_audio)
-        self._init_character_identity(character_shot_map, characters_data, blended_prompts)
+        self._init_character_identity(character_shot_map, characters_data)
 
     def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
         """Build ComfyUI API-format workflow JSON for Wan 2.2 TI2V-5B.

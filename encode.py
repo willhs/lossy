@@ -554,7 +554,11 @@ Return a JSON object with these fields:
 - "setting": location/environment description
 - "sound": description of the non-speech soundtrack — music, sound effects, ambient sounds, and atmosphere only. Do NOT include dialogue, voices, or speech — those are handled by a separate system. If silence or near-silence, say so.
 
-Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
+Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame.
+
+You may also be given the previous shot's description as context. Use it only for continuity — keeping character names, setting, and lighting/style consistent across the cut. Do not carry over actions or details from the previous shot; describe only what is visible/audible in THIS shot's frames.
+
+Output ONLY valid JSON, no markdown."""
 
 MUSIC_SYSTEM_PROMPT = """You are a film analysis expert. Given frames and audio from a single shot of a film, describe the shot for use as a video generation prompt.
 
@@ -570,7 +574,11 @@ Return a JSON object with these fields:
 - "sound": description of the non-speech soundtrack — music, sound effects, ambient sounds, and atmosphere only. Do NOT include dialogue, voices, or speech — those are handled by a separate system. If silence or near-silence, say so.
 - "music": description of the music/score heard in this shot — mood, estimated tempo (e.g., ~80bpm), instrumentation, and how the music functions in the scene (e.g., "builds tension", "underscores triumph"). Describe only the musical elements; exclude SFX and ambient sounds. Listen carefully to the audio provided.
 
-Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame. Output ONLY valid JSON, no markdown."""
+Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame.
+
+You may also be given the previous shot's description as context. Use it only for continuity — keeping character names, setting, and lighting/style consistent across the cut. Do not carry over actions or details from the previous shot; describe only what is visible/audible in THIS shot's frames.
+
+Output ONLY valid JSON, no markdown."""
 
 SEGMENT_THRESHOLD_S = 8.0   # shots longer than this get temporal_segments generated
 SEGMENT_DURATION_S = 12.0  # one segment per this many seconds of shot duration
@@ -742,10 +750,12 @@ def generate_prompts(
     except FileNotFoundError:
         existing = []
     existing_indices = {p["index"] for p in existing}
+    existing_by_index = {p["index"]: p for p in existing}
 
     prompts = list(existing)
     total = len(scenes)
     errors = 0
+    prev_description = None
 
     # Cost tracking
     encode_costs = {"model": ENCODE_MODEL, "per_shot": [],
@@ -755,6 +765,7 @@ def generate_prompts(
     for scene in scenes:
         idx = scene["index"]
         if idx in existing_indices:
+            prev_description = existing_by_index[idx].get("description")
             continue
 
         # Load keyframe images
@@ -799,6 +810,8 @@ def generate_prompts(
         context_lines.append(f"These are {len(parts)} uniformly-sampled frames from the shot, in chronological order.")
         if is_music_shot and audio_parts:
             context_lines.append("The audio for this shot is also provided. Use it to fill the 'music' field.")
+        if prev_description:
+            context_lines.append(f"Previous shot's description (context only): {json.dumps(prev_description)}")
         context_lines.append("Analyze the frames and return the JSON description.")
 
         user_content = audio_parts + parts + [types.Part.from_text(text="\n".join(context_lines))]
@@ -812,6 +825,7 @@ def generate_prompts(
                 print(f"  Shot {idx}: empty response, skipping")
                 continue
             prompts.append(prompt_entry)
+            prev_description = prompt_entry["description"]
 
             new_count = len(prompts) - len(existing)
             if new_count % 10 == 0:
@@ -834,6 +848,7 @@ def generate_prompts(
                         print(f"  Shot {idx}: empty response on retry, skipping")
                     else:
                         prompts.append(prompt_entry)
+                        prev_description = prompt_entry["description"]
                 except Exception as e2:
                     errors += 1
                     print(f"  Shot {idx}: retry failed - {e2}")

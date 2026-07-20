@@ -88,6 +88,65 @@ class TestFormatPrompt:
 
 
 # ---------------------------------------------------------------------------
+# CharacterIdentityMixin.format_prompt -- locked verbatim character strings
+# ---------------------------------------------------------------------------
+
+class TestCharacterIdentityMixin:
+    """The mixin must prepend the exact same string for a character in every
+    shot it appears in -- identical tokens hold continuity, not more detail.
+    There must be no LLM rewording step in this path (see prompt_blend.py removal).
+    """
+
+    def _make_strategy(self, character_shot_map, characters_data):
+        from strategies_video import CharacterIdentityMixin, GenerationStrategy
+
+        class _FakeStrategy(CharacterIdentityMixin, GenerationStrategy):
+            def format_prompt(self, entry):
+                return super().format_prompt(entry)
+
+        strategy = _FakeStrategy()
+        strategy._init_character_identity(character_shot_map, characters_data)
+        return strategy
+
+    def test_identity_prefix_identical_across_shots(self):
+        characters_data = {
+            "characters": [
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "A young man in a beige tunic with sandy blond hair."},
+            ]
+        }
+        character_shot_map = {0: ["luke"], 5: ["luke"]}
+        strategy = self._make_strategy(character_shot_map, characters_data)
+
+        entry0 = {"index": 0, "description": {"action": "Luke looks at the twin suns."}}
+        entry5 = {"index": 5, "description": {"action": "Luke ignites his lightsaber."}}
+
+        result0 = strategy.format_prompt(entry0)
+        result5 = strategy.format_prompt(entry5)
+
+        prefix = "Luke Skywalker: A young man in a beige tunic with sandy blond hair."
+        assert result0.startswith(prefix)
+        assert result5.startswith(prefix)
+        # Only the base shot text should differ -- the identity block is byte-identical.
+        assert result0[: len(prefix)] == result5[: len(prefix)]
+
+    def test_no_characters_in_shot_falls_back_to_base(self):
+        strategy = self._make_strategy({}, {"characters": []})
+        entry = {"index": 0, "description": {"action": "An empty corridor."}}
+        result = strategy.format_prompt(entry)
+        assert "An empty corridor." in result
+        assert ":" not in result.split(".")[0]
+
+    def test_no_blended_prompts_support(self):
+        """The mixin no longer accepts or consults a blended_prompts arg."""
+        import inspect
+        from strategies_video import CharacterIdentityMixin
+
+        sig = inspect.signature(CharacterIdentityMixin._init_character_identity)
+        assert "blended_prompts" not in sig.parameters
+
+
+# ---------------------------------------------------------------------------
 # FalSeedanceStrategy._target_durations
 # ---------------------------------------------------------------------------
 
