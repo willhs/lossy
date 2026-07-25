@@ -13,8 +13,9 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 
 ## Key Files
 
-- `encode.py` -- encoder CLI (stage1: shots+keyframes, stage2: prompts via Gemini, stage3: character registry via Gemini; supports `--tmdb-id` for TMDB-seeded supervised discovery)
-- `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols
+- `encode.py` -- encoder CLI (stage1: shots+keyframes, stage2: prompts via Gemini, stage3: character registry via Gemini, stage4: dialog-line speaker attribution via Gemini -> `speakers.json`; supports `--tmdb-id` for TMDB-seeded supervised discovery)
+- `voice_casting.py` -- proposes a per-character voice map (`voice_map.json`) from `characters.json` via Gemini, with `--sample` to render one short clip per voice for review. A proposal only -- casting is a human call, made by editing `voice_map.json`
+- `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols. Speech generation reads `speakers.json`/`voice_map.json` if present (falls back to the single `--speech-voice` otherwise)
 - `prompt_format.py` -- prompt formatting functions (CAMERA_TERMS, format_prompt, model-specific variants)
 - `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod WAN T2V, RunPod VACE)
 - `strategies_audio.py` -- audio/speech generation strategies (AudioStrategy base + ElevenLabs, MMAudio, RunPod, SpeechStrategy)
@@ -51,6 +52,12 @@ python encode.py stage3 output/film
 # Find the TMDB ID on themoviedb.org (e.g. Star Wars IV = 11)
 python encode.py stage3 output/film --tmdb-id 11
 python encode.py stage3 output/film --tmdb-id 60059 --tmdb-type tv  # TV series
+
+# Stage 4: speaker attribution (dialog line -> character, speakers.json)
+python encode.py stage4 output/film
+
+# Propose a per-character voice map + short samples for review (not final -- edit voice_map.json to re-cast)
+python voice_casting.py output/film --sample
 
 # Decode (generate clips)
 python decode.py output/film --strategy fal-seedance

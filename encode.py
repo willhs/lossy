@@ -5,6 +5,8 @@ lossy encoder: video → shot manifest → prompt manifest.
 Usage:
     python encode.py stage1 media/star_wars_iv.mp4 -o output/star_wars_iv
     python encode.py stage2 output/star_wars_iv [--limit 20]
+    python encode.py stage3 output/star_wars_iv [--tmdb-id 11]
+    python encode.py stage4 output/star_wars_iv  # speaker attribution -> speakers.json
 """
 
 import argparse
@@ -1271,6 +1273,155 @@ def run_stage3(args):
 
 
 # ---------------------------------------------------------------------------
+# Stage 4: Speaker attribution (dialog line -> character)
+# ---------------------------------------------------------------------------
+#
+# Writes a decode-side sidecar (speakers.json) so shots.json stays untouched.
+# Every assigned character name is gated against characters.json's registry
+# (or the literal "narrator") — Gemini is never allowed to invent a name.
+# This is the concrete mitigation for the character-naming instability
+# documented in docs/research/0021-training-data-contamination/research.md.
+
+SPEAKER_ATTRIBUTION_SYSTEM_PROMPT = """You are a film dialogue editor. You are given a batch of subtitle lines from a film, each with the characters known to be on-screen around that moment (candidates), plus neighboring lines for conversational context.
+
+For each line, decide who is speaking.
+
+Return a JSON object with an "assignments" array. Each entry has:
+- "line": the line index (integer)
+- "character": the speaker — MUST be exactly one of that line's candidate names, or the literal string "narrator" if none of the candidates is plausible (e.g. off-screen narration, or a candidate list that doesn't include the true speaker)
+- "confidence": a float from 0.0 to 1.0
+
+Rules:
+- Never invent a character name. Only use names from that specific line's candidate list, or "narrator".
+- Use the surrounding lines to track turn-taking in a conversation (speakers usually alternate).
+- If a line has exactly one candidate, that candidate is almost certainly the speaker (high confidence) unless the content clearly contradicts it.
+- If a line has no candidates at all, use "narrator".
+
+Output ONLY valid JSON."""
+
+
+def _build_shot_character_map(characters: list[dict]) -> dict[int, list[str]]:
+    """Reverse characters.json's per-character shot lists into shot -> [names]."""
+    shot_map: dict[int, list[str]] = {}
+    for char in characters:
+        for shot_idx in char.get("shots", []):
+            shot_map.setdefault(shot_idx, []).append(char["name"])
+    return shot_map
+
+
+def _candidate_characters_for_line(line: dict, shots: list[dict],
+                                    shot_character_map: dict[int, list[str]]) -> list[str]:
+    """Union of character names from every shot overlapping this dialog line's timestamp."""
+    candidates: list[str] = []
+    for shot in shots:
+        if shot["start_s"] >= line["end_s"] or shot["end_s"] <= line["start_s"]:
+            continue
+        for name in shot_character_map.get(shot["index"], []):
+            if name not in candidates:
+                candidates.append(name)
+    return candidates
+
+
+def run_stage4(args):
+    """Stage 4: Attribute each dialog line to a character via Gemini."""
+    from google import genai
+    from google.genai import types
+
+    output_dir = args.output_dir
+    shots_file = manifest.shots_path(output_dir)
+    characters_file = manifest.characters_path(output_dir)
+
+    if not os.path.exists(shots_file):
+        print(f"Error: {shots_file} not found. Run stage2 first.")
+        sys.exit(1)
+    if not os.path.exists(characters_file):
+        print(f"Error: {characters_file} not found. Run stage3 first.")
+        sys.exit(1)
+
+    shots, dialog = manifest.load_shots(output_dir)
+    with open(characters_file) as f:
+        characters = json.load(f).get("characters", [])
+
+    if not dialog:
+        print("No dialog lines in shots.json; nothing to attribute.")
+        sys.exit(0)
+
+    valid_names = {c["name"] for c in characters}
+    descriptions = {c["name"]: c["description"] for c in characters}
+    shot_character_map = _build_shot_character_map(characters)
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not set")
+        sys.exit(1)
+    client = genai.Client(api_key=api_key)
+
+    BATCH_SIZE = 50
+    assignments: dict[int, dict] = {}
+
+    print(f"Attributing {len(dialog)} dialog lines across {len(characters)} characters...")
+
+    for batch_start in range(0, len(dialog), BATCH_SIZE):
+        batch_indices = range(batch_start, min(batch_start + BATCH_SIZE, len(dialog)))
+        lines_text = []
+        for i in batch_indices:
+            line = dialog[i]
+            candidates = _candidate_characters_for_line(line, shots, shot_character_map)
+            candidate_desc = ", ".join(
+                f"{name} ({descriptions.get(name, '')[:60]})" for name in candidates
+            ) or "(none on screen)"
+            lines_text.append(
+                f"Line {i}: \"{line['text']}\"\n  Candidates: {candidate_desc}"
+            )
+
+        user_text = "Subtitle lines (in order):\n\n" + "\n".join(lines_text)
+
+        response = client.models.generate_content(
+            model=ENCODE_MODEL,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=user_text)])],
+            config=types.GenerateContentConfig(
+                system_instruction=SPEAKER_ATTRIBUTION_SYSTEM_PROMPT,
+                temperature=0.2,
+                response_mime_type="application/json",
+            ),
+        )
+
+        try:
+            batch_data = json.loads(response.text.strip())
+        except (json.JSONDecodeError, AttributeError):
+            batch_num = batch_start // BATCH_SIZE + 1
+            print(f"  Warning: batch {batch_num} response not valid JSON, skipping")
+            continue
+
+        for entry in batch_data.get("assignments", []):
+            line_idx = entry.get("line")
+            character = entry.get("character")
+            if line_idx is None:
+                continue
+            if character not in valid_names and character != "narrator":
+                print(f"  Warning: line {line_idx} got unregistered name "
+                      f"'{character}', falling back to narrator")
+                character = "narrator"
+            assignments[line_idx] = {
+                "character": character,
+                "confidence": entry.get("confidence", 0.0),
+            }
+
+    speakers_data = {
+        "format": "v1",
+        "model": ENCODE_MODEL,
+        "assignments": {str(idx): val for idx, val in sorted(assignments.items())},
+    }
+    speakers_file = manifest.speakers_path(output_dir)
+    with open(speakers_file, "w") as f:
+        json.dump(speakers_data, f, indent=2)
+
+    unattributed = len(dialog) - len(assignments)
+    print(f"\nSpeaker attribution saved to {speakers_file}")
+    print(f"  {len(assignments)} lines attributed, {unattributed} unattributed (batch failures)")
+
+
+# ---------------------------------------------------------------------------
 # CLI entry points
 # ---------------------------------------------------------------------------
 
@@ -1383,6 +1534,11 @@ def main():
         help="TMDB media type (default: movie)",
     )
     s3.set_defaults(func=run_stage3)
+
+    # Stage 4
+    s4 = subparsers.add_parser("stage4", help="Attribute dialog lines to characters (speakers.json)")
+    s4.add_argument("output_dir", help="Output directory from stage 3")
+    s4.set_defaults(func=run_stage4)
 
     args = parser.parse_args()
     load_env()

@@ -860,3 +860,70 @@ class SpeechStrategy:
         except Exception as e:
             print(f"  Error generating speech {clip_name}: {e}")
             return None
+
+
+class KokoroSpeechStrategy:
+    """TTS via Kokoro (open-weight, local, zero API cost).
+
+    Same interface as SpeechStrategy so decode.py's speech loop can swap
+    between the two without special-casing either. Voice names are Kokoro's
+    own (e.g. "af_heart", "am_adam") rather than ElevenLabs names — a
+    per-character voice_map.json cast for one strategy is not portable to
+    the other.
+
+    Not a declared project dependency (its transitive deps are heavy and this
+    is an untried, optional trial per the task notes) -- install manually
+    before using this strategy:
+        uv add kokoro kokoro-onnx soundfile
+    """
+
+    COST_PER_1K_CHARS = 0.0
+
+    def __init__(self, voice: str = "af_heart"):
+        self.voice = voice
+        self._pipeline = None
+
+    def _get_pipeline(self):
+        if self._pipeline is None:
+            try:
+                from kokoro import KPipeline
+            except ImportError as e:
+                raise RuntimeError(
+                    "Kokoro not installed. Run: uv add --optional kokoro "
+                    "kokoro-onnx soundfile"
+                ) from e
+            self._pipeline = KPipeline(lang_code="a")
+        return self._pipeline
+
+    def generate(
+        self,
+        text: str,
+        speech_dir: str,
+        shot_index: int,
+        line_index: int,
+        offset_s: float,
+    ) -> SpeechClipResult | None:
+        """Generate a single TTS clip for one dialogue line, locally."""
+        import soundfile as sf
+
+        clip_name = manifest.speech_clip_filename(shot_index, line_index)
+        clip_path = os.path.join(speech_dir, clip_name)
+
+        try:
+            pipeline = self._get_pipeline()
+            audio_chunks = [audio for _, _, audio in pipeline(text, voice=self.voice)]
+            import numpy as np
+            audio = np.concatenate(audio_chunks) if len(audio_chunks) > 1 else audio_chunks[0]
+            sample_rate = 24000
+            sf.write(clip_path, audio, sample_rate)
+            duration = len(audio) / sample_rate
+
+            return SpeechClipResult(
+                path=clip_path,
+                duration_s=duration,
+                offset_s=offset_s,
+                cost=0.0,
+            )
+        except Exception as e:
+            print(f"  Error generating speech {clip_name}: {e}")
+            return None

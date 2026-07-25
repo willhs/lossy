@@ -9,6 +9,8 @@ import pytest
 
 import manifest
 from encode import (
+    _build_shot_character_map,
+    _candidate_characters_for_line,
     _normalize_character_name,
     _refine_shot_assignments,
     _run_supervised_stage3,
@@ -23,6 +25,7 @@ from encode import (
     generate_temporal_segments,
     parse_srt,
     run_stage3,
+    run_stage4,
 )
 
 
@@ -1370,3 +1373,116 @@ class TestGeneratePromptsPreviousShotContext:
         assert mock_client.models.generate_content.call_count == 1
         call = mock_client.models.generate_content.call_args_list[0]
         assert "R2-D2 beeps in the corridor." in self._user_text(call)
+
+
+# ---------------------------------------------------------------------------
+# Stage 4: speaker attribution
+# ---------------------------------------------------------------------------
+
+
+CHARACTERS = [
+    {"name": "luke", "display_name": "Luke Skywalker",
+     "description": "Young man, blond hair.", "shots": [0, 1]},
+    {"name": "leia", "display_name": "Princess Leia",
+     "description": "Young woman, hologram.", "shots": [2]},
+]
+
+SHOTS = [
+    {"index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0},
+    {"index": 1, "start_s": 5.0, "end_s": 10.0, "duration_s": 5.0},
+    {"index": 2, "start_s": 10.0, "end_s": 15.0, "duration_s": 5.0},
+]
+
+
+class TestBuildShotCharacterMap:
+    def test_reverses_shots_lists(self):
+        shot_map = _build_shot_character_map(CHARACTERS)
+        assert shot_map[0] == ["luke"]
+        assert shot_map[1] == ["luke"]
+        assert shot_map[2] == ["leia"]
+
+    def test_empty_characters(self):
+        assert _build_shot_character_map([]) == {}
+
+
+class TestCandidateCharactersForLine:
+    def test_line_within_one_shot(self):
+        shot_map = _build_shot_character_map(CHARACTERS)
+        line = {"start_s": 1.0, "end_s": 2.0}
+        assert _candidate_characters_for_line(line, SHOTS, shot_map) == ["luke"]
+
+    def test_line_spanning_two_shots_unions_candidates(self):
+        shot_map = _build_shot_character_map(CHARACTERS)
+        line = {"start_s": 9.0, "end_s": 11.0}
+        assert _candidate_characters_for_line(line, SHOTS, shot_map) == ["luke", "leia"]
+
+    def test_no_overlapping_shot_returns_empty(self):
+        shot_map = _build_shot_character_map(CHARACTERS)
+        line = {"start_s": 100.0, "end_s": 101.0}
+        assert _candidate_characters_for_line(line, SHOTS, shot_map) == []
+
+
+class TestRunStage4:
+    def _write_inputs(self, tmp_path):
+        manifest.save_shots(
+            str(tmp_path),
+            SHOTS,
+            [
+                {"text": "Help me.", "start_s": 1.0, "end_s": 2.0},
+                {"text": "You're my only hope.", "start_s": 11.0, "end_s": 12.0},
+            ],
+        )
+        (tmp_path / "characters.json").write_text(
+            json.dumps({"characters": CHARACTERS})
+        )
+
+    def test_writes_speakers_json_gated_to_registry(self, tmp_path, monkeypatch):
+        self._write_inputs(tmp_path)
+        gemini_response = {
+            "assignments": [
+                {"line": 0, "character": "luke", "confidence": 0.9},
+                {"line": 1, "character": "leia", "confidence": 0.8},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(gemini_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        run_stage4(args)
+
+        speakers = manifest.load_speakers(str(tmp_path))
+        assert speakers[0] == "luke"
+        assert speakers[1] == "leia"
+
+    def test_unregistered_name_falls_back_to_narrator(self, tmp_path, monkeypatch):
+        self._write_inputs(tmp_path)
+        gemini_response = {
+            "assignments": [
+                {"line": 0, "character": "obi_wan", "confidence": 0.5},
+                {"line": 1, "character": "leia", "confidence": 0.9},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(
+            text=json.dumps(gemini_response)
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        run_stage4(args)
+
+        speakers = manifest.load_speakers(str(tmp_path))
+        assert speakers[0] == "narrator"
+        assert speakers[1] == "leia"
+
+    def test_missing_characters_json_exits(self, tmp_path, monkeypatch, capsys):
+        manifest.save_shots(str(tmp_path), SHOTS, [{"text": "hi", "start_s": 0.0, "end_s": 1.0}])
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        args = argparse.Namespace(output_dir=str(tmp_path))
+        with pytest.raises(SystemExit):
+            run_stage4(args)

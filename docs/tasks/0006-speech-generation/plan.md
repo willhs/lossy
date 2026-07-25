@@ -56,7 +56,9 @@ python pipeline.py media/film.mp4 -o output/film --strategy fal-seedance --audio
 
 ## What We're NOT Doing
 
-- Multi-voice support (different speakers mapped to different voices)
+- Multi-voice support (different speakers mapped to different voices) — since
+  addressed by `encode.py stage4` (speaker attribution) + `voice_casting.py`
+  (voice map proposal); see `docs/research/experiments/0006-kokoro-vs-elevenlabs-tts.md`.
 - Speaker diarization in the encoder
 - Speech rate/pacing adjustment to match original timing
 - Lip-sync in generated video

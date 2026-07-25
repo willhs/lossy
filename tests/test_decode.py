@@ -1594,3 +1594,99 @@ class TestRunSpeechV2:
         # Only line 1 should be generated (line 0 was already done)
         assert mock_strategy.generate.call_count == 1
 
+
+
+class TestRunSpeechVoiceMapping:
+    """Per-character voice selection via speakers.json / voice_map.json."""
+
+    def _make_args(self, output_dir, start_index=None, limit=None):
+        return argparse.Namespace(
+            output_dir=output_dir,
+            start_index=start_index,
+            limit=limit,
+        )
+
+    def _make_prompts_v2(self, shots, dialog):
+        return {"format": "v2", "shots": shots, "dialog": dialog}
+
+    def test_attributed_line_uses_mapped_voice(self, tmp_path, monkeypatch):
+        dialog = [
+            {"text": "Line by luke", "start_s": 1.0, "end_s": 2.0},
+            {"text": "Unattributed line", "start_s": 3.0, "end_s": 4.0},
+        ]
+        shots = [{"index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0}]
+        (tmp_path / "shots.json").write_text(json.dumps(self._make_prompts_v2(shots, dialog)))
+        (tmp_path / "speakers.json").write_text(json.dumps({
+            "format": "v1",
+            "assignments": {"0": {"character": "luke", "confidence": 0.9}},
+        }))
+        (tmp_path / "voice_map.json").write_text(json.dumps({"luke": "Charlie"}))
+        (tmp_path / "speech").mkdir()
+
+        calls = []
+
+        def fake_generate(self, text, speech_dir, shot_index, line_index, offset_s):
+            calls.append((self.voice, text))
+            path = os.path.join(speech_dir, f"{shot_index:04d}-{line_index:02d}.mp3")
+            return SpeechClipResult(path=path, duration_s=1.0, offset_s=offset_s, cost=0.001)
+
+        monkeypatch.setattr(SpeechStrategy, "generate", fake_generate)
+
+        default_strategy = SpeechStrategy(voice="Roger")
+        run_speech(self._make_args(str(tmp_path)), default_strategy)
+
+        assert ("Charlie", "Line by luke") in calls
+        assert ("Roger", "Unattributed line") in calls
+
+    def test_no_speakers_file_falls_back_to_default_voice(self, tmp_path, monkeypatch):
+        """Backward compatibility: no speakers.json/voice_map.json -> old behavior."""
+        dialog = [{"text": "Hi", "start_s": 0.5, "end_s": 1.5}]
+        shots = [{"index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0}]
+        (tmp_path / "shots.json").write_text(json.dumps(self._make_prompts_v2(shots, dialog)))
+        (tmp_path / "speech").mkdir()
+
+        calls = []
+
+        def fake_generate(self, text, speech_dir, shot_index, line_index, offset_s):
+            calls.append(self.voice)
+            path = os.path.join(speech_dir, f"{shot_index:04d}-{line_index:02d}.mp3")
+            return SpeechClipResult(path=path, duration_s=1.0, offset_s=offset_s, cost=0.001)
+
+        monkeypatch.setattr(SpeechStrategy, "generate", fake_generate)
+
+        default_strategy = SpeechStrategy(voice="Roger")
+        run_speech(self._make_args(str(tmp_path)), default_strategy)
+
+        assert calls == ["Roger"]
+
+
+class TestRunSpeechWindowing:
+    """--start-index/--limit restrict which dialog lines get generated."""
+
+    def test_limit_restricts_to_shot_window(self, tmp_path):
+        shots = [
+            {"index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0},
+            {"index": 1, "start_s": 5.0, "end_s": 10.0, "duration_s": 5.0},
+            {"index": 2, "start_s": 10.0, "end_s": 15.0, "duration_s": 5.0},
+        ]
+        dialog = [
+            {"text": "In shot 0", "start_s": 1.0, "end_s": 2.0},
+            {"text": "In shot 2", "start_s": 11.0, "end_s": 12.0},
+        ]
+        (tmp_path / "shots.json").write_text(json.dumps({
+            "format": "v2", "shots": shots, "dialog": dialog,
+        }))
+        (tmp_path / "speech").mkdir()
+
+        strategy = MagicMock()
+        strategy.voice = "Roger"
+        strategy.generate.return_value = MagicMock(
+            path=str(tmp_path / "speech" / "x.mp3"), duration_s=1.0, offset_s=1.0, cost=0.001,
+        )
+
+        args = argparse.Namespace(output_dir=str(tmp_path), start_index=0, limit=1)
+        run_speech(args, strategy)
+
+        # Only the line inside shot 0's window should be generated.
+        assert strategy.generate.call_count == 1
+        assert strategy.generate.call_args[0][0] == "In shot 0"

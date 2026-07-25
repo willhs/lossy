@@ -42,6 +42,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
 from strategies_audio import (  # noqa: E402 -- re-export for backwards compat
     AudioStrategy,
     ElevenLabsStrategy,
+    KokoroSpeechStrategy,
     MMAudioStrategy,
     RunPodMMAudioStrategy,
     ReplicateMusicGenStrategy,
@@ -370,20 +371,54 @@ def run_audio(args, strategy: AudioStrategy):
 # ---------------------------------------------------------------------------
 
 
-def run_speech(args, strategy: SpeechStrategy):
+def run_speech(args, strategy: "SpeechStrategy | KokoroSpeechStrategy"):
     """Speech generation loop: one TTS clip per global dialog line.
 
     Reads prompts.json v2 (``dialog`` is a flat subtitle timeline) and
     generates TTS for each line at its original SRT timestamp, so lines
     that span shot boundaries are spoken exactly once.
+
+    If ``speakers.json``/``voice_map.json`` exist (see ``encode.py stage4``
+    and ``voice_casting.py``), each line is voiced by its attributed
+    character's mapped voice; otherwise every line falls back to
+    ``strategy`` (the single ``--speech-voice``) unchanged from before.
     """
     output_dir = args.output_dir
 
     try:
-        _, dialog = manifest.load_shots(output_dir)
+        shots, dialog = manifest.load_shots(output_dir)
     except FileNotFoundError:
         print(f"Error: {manifest.shots_path(output_dir)} not found. Run encoder first.")
         sys.exit(1)
+
+    line_indices = range(len(dialog))
+    if getattr(args, "start_index", None) or getattr(args, "limit", None):
+        selected_shots = shots
+        if args.start_index:
+            selected_shots = [s for s in selected_shots if s["index"] >= args.start_index]
+        if args.limit:
+            selected_shots = selected_shots[:args.limit]
+        if not selected_shots:
+            print("No shots selected by --start-index/--limit; nothing to do.")
+            return
+        window_start = selected_shots[0]["start_s"]
+        window_end = selected_shots[-1]["start_s"] + selected_shots[-1]["duration_s"]
+        line_indices = [i for i, line in enumerate(dialog)
+                        if line["start_s"] < window_end and line["end_s"] > window_start]
+        print(f"Restricting speech to shots [{selected_shots[0]['index']}, "
+              f"{selected_shots[-1]['index']}] -> {len(line_indices)} dialog lines "
+              f"(of {len(dialog)})")
+
+    speakers = manifest.load_speakers(output_dir)
+    voice_map = manifest.load_voice_map(output_dir)
+    strategies_by_voice: dict[str, "SpeechStrategy | KokoroSpeechStrategy"] = {strategy.voice: strategy}
+
+    def strategy_for_line(line_idx: int) -> "SpeechStrategy | KokoroSpeechStrategy":
+        character = speakers.get(line_idx)
+        voice = voice_map.get(character, strategy.voice) if character else strategy.voice
+        if voice not in strategies_by_voice:
+            strategies_by_voice[voice] = type(strategy)(voice=voice)
+        return strategies_by_voice[voice]
 
     speech_dir = manifest.speech_dir(output_dir)
     os.makedirs(speech_dir, exist_ok=True)
@@ -401,10 +436,11 @@ def run_speech(args, strategy: SpeechStrategy):
     generated = 0
     errors = 0
 
-    print(f"Generating speech for {len(dialog)} dialog lines via ElevenLabs TTS "
+    print(f"Generating speech for {len(line_indices)} dialog lines via ElevenLabs TTS "
           f"({len(completed_set)} done)...")
 
-    for i, line in enumerate(dialog):
+    for i in line_indices:
+        line = dialog[i]
         if i in completed_set:
             continue
 
@@ -422,7 +458,8 @@ def run_speech(args, strategy: SpeechStrategy):
                 json.dump(progress, f, indent=2)
             continue
 
-        result = strategy.generate(line["text"], speech_dir, i, 0, line["start_s"])
+        line_strategy = strategy_for_line(i)
+        result = line_strategy.generate(line["text"], speech_dir, i, 0, line["start_s"])
         if result:
             progress["clips"][str(i)] = {
                 "path": os.path.basename(result.path),
@@ -479,7 +516,17 @@ def main():
     parser.add_argument("--speech", action="store_true",
                         help="Generate speech/dialogue clips (instead of video)")
     parser.add_argument("--speech-voice", default="Roger",
-                        help="ElevenLabs voice name for speech (default: Roger)")
+                        help="Fallback voice name for lines with no "
+                             "per-character voice mapping (default: Roger). If "
+                             "speakers.json/voice_map.json exist in output_dir "
+                             "(see encode.py stage4 / voice_casting.py), "
+                             "attributed lines use their mapped voice instead.")
+    parser.add_argument("--speech-strategy", choices=["elevenlabs", "kokoro"],
+                        default="elevenlabs",
+                        help="TTS backend: elevenlabs (paid, fal.ai) or "
+                             "kokoro (free, local, open-weight; requires the "
+                             "optional kokoro extra). Voice names in "
+                             "--speech-voice/voice_map.json are backend-specific.")
     parser.add_argument("--music-strategy",
                         choices=MUSIC_STRATEGIES,
                         default=None,
@@ -504,7 +551,13 @@ def main():
         audio_strategy = audio_strategies[audio_name]()
         run_audio(args, audio_strategy)
     elif args.speech:
-        speech_strategy = SpeechStrategy(voice=args.speech_voice)
+        if args.speech_strategy == "kokoro":
+            # "Roger" is an ElevenLabs name; only honor an explicit --speech-voice
+            # override, otherwise fall back to Kokoro's own default voice.
+            voice = args.speech_voice if args.speech_voice != "Roger" else "af_heart"
+            speech_strategy = KokoroSpeechStrategy(voice=voice)
+        else:
+            speech_strategy = SpeechStrategy(voice=args.speech_voice)
         run_speech(args, speech_strategy)
     else:
         strategies = {

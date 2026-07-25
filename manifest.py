@@ -57,6 +57,14 @@ def speech_progress_path(output_dir: str) -> str:
     return os.path.join(output_dir, "speech_progress.json")
 
 
+def speakers_path(output_dir: str) -> str:
+    return os.path.join(output_dir, "speakers.json")
+
+
+def voice_map_path(output_dir: str) -> str:
+    return os.path.join(output_dir, "voice_map.json")
+
+
 def reconstructed_path(output_dir: str, strategy: str, audio_strategy: str | None = None) -> str:
     """Final stitched video path, prefixed with the film name for VLC distinguishability."""
     film = os.path.basename(os.path.normpath(output_dir))
@@ -203,3 +211,40 @@ def save_shots(output_dir: str, shots: list[dict], dialog: list[dict]) -> str:
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
     return path
+
+
+# ---------------------------------------------------------------------------
+# speakers.json / voice_map.json (decode-side sidecars; shots.json stays
+# untouched). Both are optional: their loaders return {} when the file is
+# absent, which is what makes speech generation's single-voice fallback work
+# unchanged for output dirs that haven't run speaker attribution / casting.
+# ---------------------------------------------------------------------------
+
+def load_speakers(output_dir: str) -> dict[int, str | None]:
+    """Read speakers.json (encode stage4 output) as ``{line_idx: character}``.
+
+    ``character`` is a ``characters.json`` name, ``"narrator"``, or ``None``
+    for lines Gemini couldn't confidently attribute. Returns ``{}`` if the
+    file doesn't exist.
+    """
+    path = speakers_path(output_dir)
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        data = json.load(f)
+    return {
+        int(idx): entry.get("character")
+        for idx, entry in data.get("assignments", {}).items()
+    }
+
+
+def load_voice_map(output_dir: str) -> dict[str, str]:
+    """Read voice_map.json (voice_casting.py output) as ``{character: voice}``.
+
+    Returns ``{}`` if the file doesn't exist.
+    """
+    path = voice_map_path(output_dir)
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return json.load(f)
