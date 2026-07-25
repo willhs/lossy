@@ -949,6 +949,162 @@ class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
         return wf
 
 
+class RunPodLtx2Strategy(RunPodWanStrategy):
+    """RunPod self-hosted LTX-2.3 (22B, distilled FP8) via ComfyUI -- T2V only.
+
+    Spike strategy for the LTX-2 vs Wan 2.2 TI2V-5B trial (docs/tasks 2026-07).
+    Video-only: LTX-2's native synced audio path requires a much heavier
+    ComfyUI graph (AV latent concat/separate, a second sampler pass, RES4LYF
+    sampler nodes) that this spike does not attempt to run live -- see the
+    trial write-up for a desk evaluation of that path instead. Forces an
+    RTX A6000 (48GB) pod since LTX-2 needs 32GB+ VRAM even at FP8, which
+    rules out the 24GB RTX 4090 that's normally tried first.
+    """
+
+    name = "runpod-ltx2"
+    FPS = 25
+    MIN_FRAMES = 25    # 1s
+    MAX_FRAMES = 121   # ~4.8s -- LTX-2 native clip length before quality degrades
+    _supports_i2v = False
+
+    # LTX-2 needs 32GB+ VRAM at FP8 (docs.ltx.io) -- skip the 24GB RTX 4090 in
+    # the default fallback chain, it would OOM. A6000 first (cheaper), L40S as
+    # a same-VRAM-class fallback.
+    LTX_GPU_TYPES = [
+        ("NVIDIA RTX A6000", 0.33),
+        ("NVIDIA L40S", 0.54),
+    ]
+
+    CHECKPOINT_NAME = "ltx-2.3-22b-distilled-fp8.safetensors"
+    TEXT_ENCODER_NAME = "comfy_gemma_3_12B_it.safetensors"
+
+    LTX_MODELS = [
+        (
+            f"checkpoints/{CHECKPOINT_NAME}",
+            f"https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/{CHECKPOINT_NAME}",
+        ),
+        (
+            f"text_encoders/{TEXT_ENCODER_NAME}",
+            f"https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/{TEXT_ENCODER_NAME}",
+        ),
+    ]
+
+    CUSTOM_NODE_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+
+    def __init__(self, output_dir: str = "", keep_pod: bool = False):
+        # No concurrent-audio pipelining for this spike -- LTX-2's own audio
+        # path is evaluated separately (see class docstring).
+        super().__init__(output_dir, keep_pod, concurrent_audio=False)
+        from runpod_pod import RunPodSession
+        self._session = RunPodSession(output_dir, keep_pod=keep_pod, gpu_types=self.LTX_GPU_TYPES)
+
+    def format_prompt(self, entry: dict) -> str:
+        # LTX-2 takes plain natural-language prompts (no Wan-specific formatting).
+        return format_prompt(entry)
+
+    def _install_custom_nodes(self):
+        """Clone ComfyUI-LTXVideo into custom_nodes and install its requirements."""
+        from runpod_pod import COMFYUI_DIR
+        custom_nodes_dir = f"{COMFYUI_DIR}/custom_nodes"
+        check = self._session.ssh_cmd(f"[ -d {custom_nodes_dir}/ComfyUI-LTXVideo ] && echo exists || echo missing")
+        if check.returncode == 0 and "exists" in check.stdout:
+            print("  ComfyUI-LTXVideo: already installed")
+            return
+        print("  Installing ComfyUI-LTXVideo custom nodes...")
+        result = self._session.ssh_cmd(
+            f"cd {custom_nodes_dir} && git clone --depth 1 {self.CUSTOM_NODE_REPO} 2>&1 | tail -5 "
+            f"&& pip install -r ComfyUI-LTXVideo/requirements.txt 2>&1 | tail -10 && echo OK",
+            timeout=300,
+        )
+        if "OK" not in (result.stdout or ""):
+            print(f"  Warning: ComfyUI-LTXVideo install may have failed: {(result.stdout or '')[-500:]}")
+
+    def _ensure_pod(self):
+        if self._setup_done:
+            return
+        self._session.ensure_pod()
+        if self._session.ssh_host:
+            self._session.ssh_cmd('pkill -f "main.py" || true', timeout=10)
+            time.sleep(2)
+            print("  Waiting for SSH...")
+            time.sleep(10)
+            self._install_custom_nodes()
+            self._session.download_models(self.LTX_MODELS)
+            self._session.restart_comfyui()
+        else:
+            print("  Warning: No SSH access. Waiting for ComfyUI without model setup.")
+            self._session.wait_for_comfyui()
+        self._setup_done = True
+
+    def _target_frames(self, target_s: float) -> int:
+        raw = round(target_s * self.FPS)
+        return max(self.MIN_FRAMES, min(self.MAX_FRAMES, raw))
+
+    def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
+        """Build a minimal T2V-only ComfyUI API-format workflow for LTX-2.3 distilled.
+
+        No audio path, no I2V chaining -- see class docstring.
+        """
+        return {
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": self.CHECKPOINT_NAME},
+            },
+            "2": {
+                "class_type": "LTXAVTextEncoderLoader",
+                "inputs": {"text_encoder_name": self.TEXT_ENCODER_NAME},
+            },
+            "3": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["2", 0]},
+            },
+            "4": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": "worst quality, blurry, distorted, low resolution, watermark, subtitles", "clip": ["2", 0]},
+            },
+            "5": {
+                "class_type": "EmptyLTXVLatentVideo",
+                "inputs": {"width": 768, "height": 512, "length": length, "batch_size": 1},
+            },
+            "6": {
+                "class_type": "LTXVConditioning",
+                "inputs": {"positive": ["3", 0], "negative": ["4", 0], "frame_rate": self.FPS},
+            },
+            "7": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": 8,
+                    "cfg": 1.0,
+                    "sampler_name": "euler_ancestral",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["1", 0],
+                    "positive": ["6", 0],
+                    "negative": ["6", 1],
+                    "latent_image": ["5", 0],
+                },
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["7", 0], "vae": ["1", 2]},
+            },
+            "9": {
+                "class_type": "SaveWEBM",
+                "inputs": {
+                    "filename_prefix": "lossy",
+                    "fps": self.FPS,
+                    "lossless": False,
+                    "quality": 80,
+                    "method": "default",
+                    "crf": 20,
+                    "codec": "vp9",
+                    "images": ["8", 0],
+                },
+            },
+        }
+
+
 class RunPodVaceStrategy(CharacterIdentityMixin, RunPodWanStrategy):
     """RunPod self-hosted Wan 2.1 VACE-1.3B -- reference-conditioned video generation."""
 

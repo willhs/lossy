@@ -33,14 +33,18 @@ class RunPodSession:
     Handles cleanup on exit (terminate or keep-alive depending on flags).
     """
 
-    def __init__(self, output_dir: str, keep_pod: bool = False):
+    def __init__(self, output_dir: str, keep_pod: bool = False, gpu_types: list[tuple[str, float]] | None = None):
         self.output_dir = output_dir
         self.keep_pod = keep_pod
+        # Cheapest-first GPU fallback list to try when creating a pod. Defaults
+        # to the module-level GPU_TYPES; strategies with stricter VRAM needs
+        # (e.g. a model that OOMs on a 24GB card) can pass a narrower list.
+        self.gpu_types = gpu_types or GPU_TYPES
         self.pod_id: str | None = None
         self.base_url: str | None = None
         self.ssh_host: str | None = None
         self.ssh_port: int | None = None
-        self.gpu_hourly_rate: float = GPU_TYPES[0][1]
+        self.gpu_hourly_rate: float = self.gpu_types[0][1]
         self.pod_start_time: float | None = None
         self._clean_exit = False
         self._cleanup_registered = False
@@ -136,8 +140,8 @@ class RunPodSession:
             sys.exit(1)
 
         pod = None
-        gpu_rate = GPU_TYPES[0][1]
-        for gpu_type, rate in GPU_TYPES:
+        gpu_rate = self.gpu_types[0][1]
+        for gpu_type, rate in self.gpu_types:
             print(f"  Trying {gpu_type}...")
             try:
                 ssh_pubkey = ""

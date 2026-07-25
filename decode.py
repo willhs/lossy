@@ -36,6 +36,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     RunPodWan22Strategy,
     RunPodWanEnrichedStrategy,
     RunPodVaceStrategy,
+    RunPodLtx2Strategy,
 )
 
 
@@ -572,6 +573,10 @@ def main():
             "runpod-wan22": lambda: _create_wan22_strategy(args),
             "runpod-wan-enriched": lambda: _create_wan_enriched_strategy(args),
             "runpod-vace": lambda: _create_vace_strategy(args),
+            "runpod-ltx2": lambda: RunPodLtx2Strategy(
+                output_dir=args.output_dir,
+                keep_pod=getattr(args, "keep_pod", False),
+            ),
         }
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
