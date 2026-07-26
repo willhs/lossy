@@ -45,6 +45,20 @@ def load_env() -> None:
 # production shot description at encode time; EVAL_MODEL is a newer preview
 # model used only by the offline eval harness to score reconstruction
 # quality, where staying on the latest model matters more than pinning.
+#
+# ENCODE_MODEL decision (2026-07-25, see task "Sticky wrong character names"):
+# gemini-2.5-flash-lite is confirmed for the full Star Wars IV run. It matches
+# the sw_r2_leia baseline that got the Leia hologram right, and a clean A/B on
+# the BCS control clip (identical model, previous-shot-context propagation on
+# vs. off) showed the earlier naming instability (Saul Goodman/Jimmy McGill/
+# Howard Hamlin flipping across shots) was NOT caused by 2.5-flash-lite itself
+# or by context propagation — it was the describe-pass prompt inviting Gemini
+# to name characters at all. With the identity-stripped continuity context and
+# reworded system prompt (see SYSTEM_PROMPT in encode.py), both the on and off
+# runs produced zero character-name hallucinations. The star_wars_iv_v2 full
+# encode used gemini-3.1-flash-lite-preview (EVAL_MODEL) instead; it must be
+# re-encoded with ENCODE_MODEL before the real full run so the film is encoded
+# with the same model throughout.
 ENCODE_MODEL = "gemini-2.5-flash-lite"
 EVAL_MODEL = "gemini-3.1-flash-lite-preview"
 

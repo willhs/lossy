@@ -1308,9 +1308,11 @@ class TestGeneratePromptsResume:
 
 
 class TestGeneratePromptsPreviousShotContext:
-    """Each shot's Gemini call should be given the previous shot's description
-    for continuity, and a resumed run must seed that context from the last
-    already-described shot rather than starting cold.
+    """Each shot's Gemini call should be given the previous shot's setting/
+    lighting continuity fields (but NOT its subjects/action, where Gemini's
+    world-knowledge bias hallucinates character identity), and a resumed run
+    must seed that context from the last already-described shot rather than
+    starting cold.
     """
 
     def _make_scene(self, idx):
@@ -1330,14 +1332,19 @@ class TestGeneratePromptsPreviousShotContext:
         parts = contents[0].parts
         return parts[-1].text
 
-    def test_second_shot_receives_first_shots_description(self, tmp_path, monkeypatch):
+    def test_second_shot_receives_first_shots_setting_but_not_its_subjects(self, tmp_path, monkeypatch):
         for idx in (0, 1):
             self._write_keyframe(tmp_path, idx)
         scenes = [self._make_scene(0), self._make_scene(1)]
 
         mock_client = MagicMock()
         mock_client.models.generate_content.side_effect = [
-            MagicMock(text=json.dumps({"action": "Luke looks at the twin suns."}), usage_metadata=None),
+            MagicMock(text=json.dumps({
+                "action": "Luke looks at the twin suns.",
+                "subjects": "Luke Skywalker, a young man in a white tunic",
+                "setting": "Tatooine, a desert homestead at dusk",
+                "lighting": "warm orange backlight from the setting suns",
+            }), usage_metadata=None),
             MagicMock(text=json.dumps({"action": "Luke walks inside."}), usage_metadata=None),
         ]
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
@@ -1347,15 +1354,26 @@ class TestGeneratePromptsPreviousShotContext:
 
         assert mock_client.models.generate_content.call_count == 2
         first_call, second_call = mock_client.models.generate_content.call_args_list
+        second_text = self._user_text(second_call)
+        # Continuity fields (setting/lighting) should carry forward...
+        assert "Tatooine, a desert homestead at dusk" in second_text
+        assert "warm orange backlight from the setting suns" in second_text
+        # ...but identity-bearing fields (subjects/action) must not.
+        assert "Luke looks at the twin suns." not in second_text
+        assert "Luke Skywalker, a young man in a white tunic" not in second_text
         assert "Luke looks at the twin suns." not in self._user_text(first_call)
-        assert "Luke looks at the twin suns." in self._user_text(second_call)
 
     def test_resumed_run_seeds_context_from_last_existing_shot(self, tmp_path, monkeypatch):
         manifest.save_shots(
             str(tmp_path),
             [{"index": 0, "start_s": 0.0, "end_s": 1.0, "duration_s": 1.0,
               "camera_motion_detected": "static", "audio_detected": None,
-              "dialogue": None, "description": {"action": "R2-D2 beeps in the corridor."}}],
+              "dialogue": None,
+              "description": {
+                  "action": "R2-D2 beeps in the corridor.",
+                  "subjects": "R2-D2, a blue and white droid",
+                  "setting": "a dim starship corridor",
+              }}],
             [],
         )
         self._write_keyframe(tmp_path, 1)
@@ -1372,7 +1390,10 @@ class TestGeneratePromptsPreviousShotContext:
 
         assert mock_client.models.generate_content.call_count == 1
         call = mock_client.models.generate_content.call_args_list[0]
-        assert "R2-D2 beeps in the corridor." in self._user_text(call)
+        user_text = self._user_text(call)
+        assert "a dim starship corridor" in user_text
+        assert "R2-D2 beeps in the corridor." not in user_text
+        assert "R2-D2, a blue and white droid" not in user_text
 
 
 # ---------------------------------------------------------------------------
@@ -1486,3 +1507,63 @@ class TestRunStage4:
         args = argparse.Namespace(output_dir=str(tmp_path))
         with pytest.raises(SystemExit):
             run_stage4(args)
+
+class TestGeneratePromptsDoesNotPropagateHallucinatedIdentity:
+    """Regression test for the sw_r2_leia shots 6-7 incident: Gemini mislabelled
+    the Leia hologram as 'Obi-Wan Kenobi' on shot 6 (world-knowledge bias), and
+    because the full description was forwarded as context, shot 7 echoed the
+    same wrong name and came out byte-identical to shot 6. Character identity
+    must never be part of the propagated context.
+    """
+
+    def _make_scene(self, idx):
+        return {
+            "index": idx, "start_s": float(idx), "end_s": float(idx) + 1.0,
+            "duration_s": 1.0, "keyframes": [f"{idx:04d}-01.jpg"],
+        }
+
+    def _write_keyframe(self, tmp_path, idx):
+        keyframes_dir = tmp_path / "keyframes"
+        keyframes_dir.mkdir(exist_ok=True)
+        (keyframes_dir / f"{idx:04d}-01.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+
+    def _user_text(self, call_args) -> str:
+        contents = call_args.kwargs["contents"]
+        parts = contents[0].parts
+        return parts[-1].text
+
+    def test_hallucinated_name_in_shot_6_does_not_reach_shot_7_prompt(self, tmp_path, monkeypatch):
+        for idx in (6, 7):
+            self._write_keyframe(tmp_path, idx)
+        scenes = [self._make_scene(6), self._make_scene(7)]
+
+        shot6_description = {
+            "shot_type": "medium wide",
+            "camera_movement": "static",
+            "subjects": "A blue, translucent holographic figure of Obi-Wan Kenobi, wearing a hooded robe",
+            "action": "The holographic figure flickers and shifts slightly.",
+            "lighting": "dim, with the primary light source being the hologram itself",
+            "setting": "a dark chamber aboard a starship",
+            "color_palette": "blue and black",
+        }
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            MagicMock(text=json.dumps(shot6_description), usage_metadata=None),
+            MagicMock(text=json.dumps({
+                "subjects": "A blue, translucent holographic figure of a woman in a hooded robe",
+                "action": "She raises her hand slightly.",
+            }), usage_metadata=None),
+        ]
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr("google.genai.Client", lambda **kwargs: mock_client)
+
+        generate_prompts(scenes, {}, {}, {}, str(tmp_path), "gemini")
+
+        assert mock_client.models.generate_content.call_count == 2
+        _, second_call = mock_client.models.generate_content.call_args_list
+        second_text = self._user_text(second_call)
+
+        assert "Obi-Wan Kenobi" not in second_text
+        # Continuity (setting/lighting) still passed through.
+        assert "a dark chamber aboard a starship" in second_text
+        assert "dim, with the primary light source being the hologram itself" in second_text

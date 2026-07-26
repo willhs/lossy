@@ -558,7 +558,7 @@ Return a JSON object with these fields:
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame.
 
-You may also be given the previous shot's description as context. Use it only for continuity — keeping character names, setting, and lighting/style consistent across the cut. Do not carry over actions or details from the previous shot; describe only what is visible/audible in THIS shot's frames.
+You may also be given the previous shot's setting/lighting/color continuity as context. Use it only to keep the location and visual style consistent across the cut. It deliberately excludes character identity — do not infer, reuse, or guess who a person is from it. Identify who/what is in THIS shot from these frames alone; if you don't recognize someone, describe them by visible appearance rather than guessing a name.
 
 Output ONLY valid JSON, no markdown."""
 
@@ -578,7 +578,7 @@ Return a JSON object with these fields:
 
 Be specific and cinematic. Describe what changes between frames, not just what's visible in one frame.
 
-You may also be given the previous shot's description as context. Use it only for continuity — keeping character names, setting, and lighting/style consistent across the cut. Do not carry over actions or details from the previous shot; describe only what is visible/audible in THIS shot's frames.
+You may also be given the previous shot's setting/lighting/color continuity as context. Use it only to keep the location and visual style consistent across the cut. It deliberately excludes character identity — do not infer, reuse, or guess who a person is from it. Identify who/what is in THIS shot from these frames alone; if you don't recognize someone, describe them by visible appearance rather than guessing a name.
 
 Output ONLY valid JSON, no markdown."""
 
@@ -666,6 +666,20 @@ def generate_temporal_segments(
             return []
 
     return descriptions if len(descriptions) == n_segments else []
+
+
+# Fields safe to carry forward as continuity context. Deliberately excludes
+# "subjects"/"action" (and "mood"/"sound"/"music") — those are where Gemini's
+# world-knowledge bias hallucinates character identity, and once a wrong name
+# rides forward it gets echoed back as "consistent" by the next shot too.
+CONTINUITY_CONTEXT_FIELDS = ("setting", "lighting", "color_palette")
+
+
+def _continuity_context(description: dict | None) -> dict:
+    """Extract only the non-identity continuity fields from a shot description."""
+    if not description:
+        return {}
+    return {k: description[k] for k in CONTINUITY_CONTEXT_FIELDS if description.get(k)}
 
 
 def _describe_shot(client, types, idx, scene, camera, audio_labels, dialogue,
@@ -812,8 +826,9 @@ def generate_prompts(
         context_lines.append(f"These are {len(parts)} uniformly-sampled frames from the shot, in chronological order.")
         if is_music_shot and audio_parts:
             context_lines.append("The audio for this shot is also provided. Use it to fill the 'music' field.")
-        if prev_description:
-            context_lines.append(f"Previous shot's description (context only): {json.dumps(prev_description)}")
+        prev_continuity = _continuity_context(prev_description)
+        if prev_continuity:
+            context_lines.append(f"Previous shot's setting/lighting continuity (context only): {json.dumps(prev_continuity)}")
         context_lines.append("Analyze the frames and return the JSON description.")
 
         user_content = audio_parts + parts + [types.Part.from_text(text="\n".join(context_lines))]
