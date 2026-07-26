@@ -364,12 +364,15 @@ class RunPodSession:
         )
         self.wait_for_comfyui()
 
-    def download_models(self, models: list[tuple[str, str]]):
+    def download_models(self, models: list[tuple[str, str]], timeout: int = 600):
         """Download model files to ComfyUI models dir via SSH.
 
         Args:
             models: List of (relative_dest_path, url) tuples.
                     e.g. ("vae/wan_2.1_vae.safetensors", "https://...")
+            timeout: Per-file SSH command timeout in seconds. Default 600s covers
+                     the ~10GB Wan model files; larger checkpoints (e.g. LTX-2's
+                     22B FP8, ~22GB) need a longer allowance.
         """
         models_dir = f"{COMFYUI_DIR}/models"
         print(f"  Downloading models via SSH ({self.ssh_host}:{self.ssh_port})...")
@@ -387,7 +390,7 @@ class RunPodSession:
             dir_path = os.path.dirname(full_path)
             result = self.ssh_cmd(
                 f"mkdir -p {dir_path} && wget -q -O {full_path} '{url}' && echo OK",
-                timeout=600,
+                timeout=timeout,
             )
             if result.returncode == 0 and "OK" in result.stdout:
                 print(f"    {filename}: done")

@@ -950,15 +950,23 @@ class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
 
 
 class RunPodLtx2Strategy(RunPodWanStrategy):
-    """RunPod self-hosted LTX-2.3 (22B, distilled FP8) via ComfyUI -- T2V only.
+    """RunPod self-hosted LTX-2.3 (22B, distilled FP8) via ComfyUI.
 
-    Spike strategy for the LTX-2 vs Wan 2.2 TI2V-5B trial (docs/tasks 2026-07).
-    Video-only: LTX-2's native synced audio path requires a much heavier
-    ComfyUI graph (AV latent concat/separate, a second sampler pass, RES4LYF
-    sampler nodes) that this spike does not attempt to run live -- see the
-    trial write-up for a desk evaluation of that path instead. Forces an
-    RTX A6000 (48GB) pod since LTX-2 needs 32GB+ VRAM even at FP8, which
-    rules out the 24GB RTX 4090 that's normally tried first.
+    Spike strategy for the LTX-2 vs Wan 2.2 TI2V-5B trial (docs/research
+    0022-ltx2-vs-wan22-trial). Live-render verified working (all 5 shots of
+    the trial's benchmark slice generated successfully).
+
+    LTX-2's distilled-FP8 checkpoint loads as an audio-video *joint* model at
+    the architecture level (comfy/ldm/lightricks/av_model.py) -- its
+    text-conditioning path unconditionally expects an AV-shaped latent, so
+    even this video-only strategy has to build and run the audio-latent
+    scaffold (LTXVEmptyLatentAudio -> LTXVConcatAVLatent -> KSampler ->
+    LTXVSeparateAVLatent) around the sampler; the audio latent is generated
+    but never decoded or saved. See the trial write-up's "Native audio"
+    section for what it would take to actually decode and use that audio.
+
+    Forces an RTX A6000 (48GB) pod since LTX-2 needs 32GB+ VRAM even at FP8,
+    which rules out the 24GB RTX 4090 that's normally tried first.
     """
 
     name = "runpod-ltx2"
@@ -976,7 +984,10 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
     ]
 
     CHECKPOINT_NAME = "ltx-2.3-22b-distilled-fp8.safetensors"
-    TEXT_ENCODER_NAME = "comfy_gemma_3_12B_it.safetensors"
+    # fp8-scaled quantized Gemma encoder (~12GB) rather than the 24.4GB bf16
+    # full weights -- the 22B video/audio checkpoint already uses ~22GB, and
+    # a 48GB A6000 needs headroom for both loaded at once.
+    TEXT_ENCODER_NAME = "gemma_3_12B_it_fp8_scaled.safetensors"
 
     LTX_MODELS = [
         (
@@ -985,7 +996,7 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
         ),
         (
             f"text_encoders/{TEXT_ENCODER_NAME}",
-            f"https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/{TEXT_ENCODER_NAME}",
+            f"https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/{TEXT_ENCODER_NAME}",
         ),
     ]
 
@@ -1029,7 +1040,9 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
             print("  Waiting for SSH...")
             time.sleep(10)
             self._install_custom_nodes()
-            self._session.download_models(self.LTX_MODELS)
+            # The 22B FP8 checkpoint is ~22GB -- well beyond what fits in the
+            # default 600s SSH timeout on a middling connection.
+            self._session.download_models(self.LTX_MODELS, timeout=1800)
             self._session.restart_comfyui()
         else:
             print("  Warning: No SSH access. Waiting for ComfyUI without model setup.")
@@ -1041,9 +1054,18 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
         return max(self.MIN_FRAMES, min(self.MAX_FRAMES, raw))
 
     def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
-        """Build a minimal T2V-only ComfyUI API-format workflow for LTX-2.3 distilled.
+        """Build a minimal T2V ComfyUI API-format workflow for LTX-2.3 distilled.
 
-        No audio path, no I2V chaining -- see class docstring.
+        LTX-2's checkpoint is an audio-video *joint* model at the architecture
+        level (comfy/ldm/lightricks/av_model.py) -- its text-conditioning path
+        unconditionally expects an AV-shaped latent, so even a video-only
+        render has to build the audio latent and concat/separate it around
+        the sampler (LTXVEmptyLatentAudio -> LTXVConcatAVLatent -> KSampler ->
+        LTXVSeparateAVLatent). The audio latent is generated but discarded --
+        never decoded or saved -- since this trial doesn't use LTX-2 audio.
+        The text encoder must be loaded via LTXAVTextEncoderLoader (not the
+        generic CLIPLoader): it merges the standalone gemma safetensors file
+        with weights that live in the main checkpoint itself.
         """
         return {
             "1": {
@@ -1052,7 +1074,7 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
             },
             "2": {
                 "class_type": "LTXAVTextEncoderLoader",
-                "inputs": {"text_encoder_name": self.TEXT_ENCODER_NAME},
+                "inputs": {"text_encoder": self.TEXT_ENCODER_NAME, "ckpt_name": self.CHECKPOINT_NAME, "device": "default"},
             },
             "3": {
                 "class_type": "CLIPTextEncode",
@@ -1071,6 +1093,18 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
                 "inputs": {"positive": ["3", 0], "negative": ["4", 0], "frame_rate": self.FPS},
             },
             "7": {
+                "class_type": "LTXVAudioVAELoader",
+                "inputs": {"ckpt_name": self.CHECKPOINT_NAME},
+            },
+            "8": {
+                "class_type": "LTXVEmptyLatentAudio",
+                "inputs": {"frames_number": length, "frame_rate": self.FPS, "batch_size": 1, "audio_vae": ["7", 0]},
+            },
+            "9": {
+                "class_type": "LTXVConcatAVLatent",
+                "inputs": {"video_latent": ["5", 0], "audio_latent": ["8", 0]},
+            },
+            "10": {
                 "class_type": "KSampler",
                 "inputs": {
                     "seed": seed,
@@ -1082,14 +1116,18 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
                     "model": ["1", 0],
                     "positive": ["6", 0],
                     "negative": ["6", 1],
-                    "latent_image": ["5", 0],
+                    "latent_image": ["9", 0],
                 },
             },
-            "8": {
-                "class_type": "VAEDecode",
-                "inputs": {"samples": ["7", 0], "vae": ["1", 2]},
+            "11": {
+                "class_type": "LTXVSeparateAVLatent",
+                "inputs": {"av_latent": ["10", 0]},
             },
-            "9": {
+            "12": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["11", 0], "vae": ["1", 2]},
+            },
+            "13": {
                 "class_type": "SaveWEBM",
                 "inputs": {
                     "filename_prefix": "lossy",
@@ -1099,7 +1137,7 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
                     "method": "default",
                     "crf": 20,
                     "codec": "vp9",
-                    "images": ["8", 0],
+                    "images": ["12", 0],
                 },
             },
         }
