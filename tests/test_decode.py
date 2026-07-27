@@ -494,6 +494,57 @@ class TestFormatPromptSeedance:
 
 
 # ---------------------------------------------------------------------------
+# FalSeedanceStrategy.generate -- authored-manifest field tolerance
+#
+# Authored (non-source-film) manifests never populate encode-only fields
+# (camera_motion_detected, audio_detected, temporal_segments). These are
+# never read on the decode side except temporal_segments, which is
+# consulted with .get() only for split (multi-part) shots -- absence must
+# fall back to vary_prompt_for_part, not error. See docs/research/
+# 0022-authored-manifest-verification/research.md.
+# ---------------------------------------------------------------------------
+
+class TestFalSeedanceGenerateMissingEncodeFields:
+    def test_split_shot_without_temporal_segments_falls_back(self, tmp_path):
+        """entry has no temporal_segments (authored manifest) and the target
+        duration forces a multi-part split -- generate() must use
+        vary_prompt_for_part instead of KeyError/crashing."""
+        strategy = FalSeedanceStrategy()
+        entry = {"description": {"action": "A gnome walks deeper into the cave."},
+                  "duration_s": 15.0}
+        fake_video = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100
+        mock_resp = MagicMock(content=fake_video, raise_for_status=MagicMock())
+
+        with patch("fal_client.subscribe", return_value={"video": {"url": "https://example.com/c.mp4"}}):
+            with patch("httpx.get", return_value=mock_resp):
+                with patch("manifest.probe_duration", return_value=12.0):
+                    results = strategy.generate(
+                        "A gnome walks.", str(tmp_path), 0, 15.0, seed=0, entry=entry)
+
+        assert len(results) == 2  # [12, 3] split per _target_durations
+        assert (tmp_path / "0000-01.mp4").exists()
+        assert (tmp_path / "0000-02.mp4").exists()
+
+    def test_single_shot_missing_all_encode_fields(self, tmp_path):
+        """A minimal authored entry -- no camera_motion_detected, audio_detected,
+        or temporal_segments -- generates one clip without error."""
+        strategy = FalSeedanceStrategy()
+        entry = {"index": 0, "start_s": 0.0, "end_s": 3.0, "duration_s": 3.0,
+                  "description": {"action": "A gnome stands at a cave mouth."}}
+        fake_video = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100
+        mock_resp = MagicMock(content=fake_video, raise_for_status=MagicMock())
+
+        with patch("fal_client.subscribe", return_value={"video": {"url": "https://example.com/c.mp4"}}):
+            with patch("httpx.get", return_value=mock_resp):
+                with patch("manifest.probe_duration", return_value=3.0):
+                    results = strategy.generate(
+                        strategy.format_prompt(entry), str(tmp_path), 0, 3.0, seed=0, entry=entry)
+
+        assert len(results) == 1
+        assert (tmp_path / "0000.mp4").exists()
+
+
+# ---------------------------------------------------------------------------
 # ElevenLabsStrategy._target_durations
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,57 @@
+{
+  "format": "v2",
+  "shots": [
+    {
+      "index": 0,
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "duration_s": 3.0,
+      "description": {
+        "shot_type": "wide",
+        "camera_movement": "slow zoom in",
+        "subjects": "a stout blue-skinned gnome-warrior in patchwork armor",
+        "action": "the gnome stands at the mouth of a torchlit cave, gripping a short sword, breath fogging in the cold air",
+        "lighting": "warm torchlight against cold blue cave shadow",
+        "color_palette": "deep blues and amber firelight",
+        "mood": "tense, foreboding",
+        "setting": "the entrance of a vast underground cavern",
+        "sound": "distant dripping water, low wind"
+      }
+    },
+    {
+      "index": 1,
+      "start_s": 3.0,
+      "end_s": 6.5,
+      "duration_s": 3.5,
+      "description": {
+        "shot_type": "medium",
+        "camera_movement": "follows",
+        "subjects": "the same blue-skinned gnome-warrior",
+        "action": "the gnome walks deeper into the cave, torchlight flickering across jagged rock walls",
+        "lighting": "flickering torchlight, deep shadow",
+        "color_palette": "amber and near-black",
+        "mood": "uneasy anticipation",
+        "setting": "a narrow cave tunnel",
+        "sound": "footsteps on stone, crackling torch"
+      }
+    },
+    {
+      "index": 2,
+      "start_s": 6.5,
+      "end_s": 10.0,
+      "duration_s": 3.5,
+      "description": {
+        "shot_type": "close-up",
+        "camera_movement": "static",
+        "subjects": "the gnome-warrior's face",
+        "action": "the gnome's eyes widen as a faint blue glow pulses from deeper in the cavern",
+        "lighting": "cold blue glow rising against warm torchlight",
+        "color_palette": "amber fading into blue",
+        "mood": "dread",
+        "setting": "cave tunnel, blue light source off-screen",
+        "sound": "a low resonant hum"
+      }
+    }
+  ],
+  "dialog": []
+}

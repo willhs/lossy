@@ -1,0 +1,10 @@
+{
+  "characters": [
+    {
+      "name": "gnome_warrior",
+      "display_name": "Gnome-Warrior",
+      "description": "Stout blue-skinned gnome-warrior in patchwork armor, short sword, wary expression.",
+      "shots": [0, 1, 2]
+    }
+  ]
+}

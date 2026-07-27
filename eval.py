@@ -783,10 +783,21 @@ def main():
         run_audio_clip_eval(output_dir, args.strategy, prompts, args.sample, args.report_dir)
         return
 
-    # Video eval
+    # Video eval — compares against the original encode artifacts
+    # (shot_index.json, shots.json). Authored manifests never went through
+    # encode.py, so shot_index.json in particular will never exist for them;
+    # skip cleanly rather than crash on a FileNotFoundError/ValueError.
     output_dir = Path(args.output_dir)
-    shot_manifest = load_json(manifest.shot_index_path(str(output_dir)))
-    prompts, _ = manifest.load_shots(str(output_dir))
+    try:
+        shot_manifest = load_json(manifest.shot_index_path(str(output_dir)))
+        prompts, _ = manifest.load_shots(str(output_dir))
+    except (FileNotFoundError, ValueError):
+        print(
+            "No original encode artifacts found (shot_index.json/shots.json) "
+            "-- skipping eval. This is expected for an authored (non-source-film) "
+            "manifest, which has nothing to compare against."
+        )
+        sys.exit(0)
     reconstructed_path = Path(manifest.reconstructed_path(str(output_dir), args.strategy))
 
     if not reconstructed_path.exists():

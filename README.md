@@ -100,6 +100,39 @@ python tools/serve.py
 # Open http://localhost:8080/tools/compare.html
 ```
 
+### Authored manifests (no source film)
+
+Decode + stitch don't require an `encode.py` run at all -- they only need a
+`shots.json` (v2 format) and, optionally, a `characters.json` sitting in the
+output directory. This is a first-class mode, used for original films
+written from a screenplay rather than reconstructed from a source video (see
+`docs/research/0022-authored-manifest-verification/research.md` and
+[ADR-009](docs/design/adr/009-authored-manifest-retiming.md)).
+
+```bash
+mkdir -p output/my-film
+cp shots.json characters.json output/my-film/   # hand-authored, v2 format
+
+python decode.py output/my-film --strategy fal-seedance
+python decode.py output/my-film --strategy fal-seedance --stitch
+```
+
+Minimum required per shot in `shots.json`: `index`, `start_s`, `end_s`,
+`duration_s`, and a `description` object (can be `{}`, but video generation
+reads it unconditionally, so an empty dict yields an empty prompt --
+populate at least `action`). `characters.json` is optional; if present it's
+only consulted by the `runpod-wan-enriched`, `runpod-wan22`, and
+`runpod-vace` strategies for prompt enrichment. `duration_s` is honoured
+exactly -- stitch speed-adjusts each generated clip to match it, whether
+that duration was originally observed from a source film or chosen by an
+author.
+
+`eval.py video` requires the original encode artifacts (`shot_index.json`,
+`shots.json`) to compare against and has nothing to do for an authored
+manifest -- it detects their absence and skips cleanly rather than erroring.
+
+A worked example lives at `tests/fixtures/authored_example/`.
+
 ## Setup
 
 Requires Python 3.11+, FFmpeg, and [uv](https://docs.astral.sh/uv/).

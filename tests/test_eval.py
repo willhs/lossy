@@ -1,5 +1,7 @@
 """Tests for eval.py comparison logic."""
 
+import json
+
 import pytest
 from eval import (
     CATEGORICAL_FIELDS,
@@ -7,6 +9,7 @@ from eval import (
     compare_audio,
     compare_categorical,
     jaccard_similarity,
+    main,
 )
 
 
@@ -69,6 +72,48 @@ class TestCompareAudio:
     def test_one_none(self):
         result = compare_audio({"bucket": "music", "labels": []}, None)
         assert result["bucket_match"] == 0.0
+
+
+class TestVideoEvalNoOriginal:
+    """An authored (non-source-film) manifest has no shot_index.json/shots.json
+    original -- eval should skip cleanly, not crash. See docs/research/
+    0022-authored-manifest-verification/research.md."""
+
+    def test_missing_shot_index_exits_cleanly(self, tmp_path, monkeypatch, capsys):
+        # shots.json present (as decode needs it) but shot_index.json (an
+        # encode-stage1-only artifact) never existed for an authored manifest.
+        (tmp_path / "shots.json").write_text(json.dumps({
+            "format": "v2",
+            "shots": [{"index": 0, "start_s": 0.0, "end_s": 1.0, "duration_s": 1.0,
+                       "description": {}}],
+            "dialog": [],
+        }))
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["eval.py", "video", str(tmp_path), "--strategy", "fal-seedance"],
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        assert "skipping eval" in capsys.readouterr().out
+
+    def test_missing_shots_json_exits_cleanly(self, tmp_path, monkeypatch, capsys):
+        # Neither original artifact exists at all.
+        monkeypatch.setattr(
+            "sys.argv",
+            ["eval.py", "video", str(tmp_path), "--strategy", "fal-seedance"],
+        )
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 0
+        assert "skipping eval" in capsys.readouterr().out
 
 
 class TestFieldConstants:
