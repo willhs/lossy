@@ -900,9 +900,55 @@ def _normalize_character_name(name):
 
 
 def _to_name_key(display_name):
-    """Convert a character display name to a lowercase_underscore identifier."""
+    """Convert a character display name to a lowercase_underscore identifier.
+
+    This is the single source of truth for character identity. Anything that
+    stores or looks up a character by id must derive it from display_name here,
+    never trust an id supplied by the model.
+    """
     normalized = _normalize_character_name(display_name)
     return re.sub(r'[^a-z0-9]+', '_', normalized.lower()).strip('_')
+
+
+def _character_dedupe_key(name):
+    """Punctuation-insensitive identity key, for matching ids that disagree only
+    on separators.
+
+    `_to_name_key` turns "C-3PO" into `c_3po`, but the stage-3 model is asked for
+    its own short id and freely returns `c3po` for the same character. Comparing
+    those as exact strings created two registry entries for one character, each
+    with its own locked description and a disjoint half of the shots — so decode
+    rendered the droid two ways and voice casting gave it two voices. Collapsing
+    every non-alphanumeric makes both forms compare equal.
+    """
+    return re.sub(r'[^a-z0-9]', '', (name or '').lower())
+
+
+def _collapse_duplicate_characters(chars_list):
+    """Merge registry entries that describe the same character.
+
+    Two entries collide when their display names match ignoring punctuation
+    ("C-3PO" vs "C 3PO") or when one entry's id matches another's. On collision:
+    keep the canonical id derived from display_name, union the shot lists, and
+    keep the longest description. Order is preserved so output stays stable.
+    """
+    merged = {}
+    for char in chars_list:
+        display = char.get("display_name") or char.get("name", "")
+        key = _character_dedupe_key(display) or _character_dedupe_key(char.get("name", ""))
+        if not key:
+            continue
+        if key not in merged:
+            entry = dict(char)
+            entry["name"] = _to_name_key(display) or char.get("name", "")
+            entry["shots"] = sorted(set(char.get("shots", [])))
+            merged[key] = entry
+            continue
+        existing = merged[key]
+        existing["shots"] = sorted(set(existing["shots"]) | set(char.get("shots", [])))
+        if len(char.get("description", "")) > len(existing.get("description", "")):
+            existing["description"] = char["description"]
+    return list(merged.values())
 
 
 def fetch_tmdb_cast(tmdb_id, api_key, media_type="movie"):
@@ -1023,11 +1069,18 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
             continue
 
         for char in batch_data.get("characters", []):
-            key = char.get("name", "")
+            # Identity comes from display_name, not the model's own id — the id
+            # is unstable across batches ("c3po" one batch, "c_3po" the next).
+            display = char.get("display_name") or char.get("name", "")
+            key = _character_dedupe_key(display) or _character_dedupe_key(char.get("name", ""))
             if not key:
                 continue
             if key not in all_chars:
-                all_chars[key] = {**char, "shots": list(char.get("shots", []))}
+                all_chars[key] = {
+                    **char,
+                    "name": _to_name_key(display) or char.get("name", ""),
+                    "shots": list(char.get("shots", [])),
+                }
             else:
                 existing = all_chars[key]
                 existing["shots"] = sorted(set(existing["shots"]) | set(char.get("shots", [])))
@@ -1039,7 +1092,17 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
     for shot_idx, cast_matches in pre_assignments.items():
         for entry in cast_matches:
             key = entry["name_key"]
-            found = next((c for c in chars_list if c["name"] == key), None)
+            # Match on the dedupe key: the TMDB path derives `c_3po` from the
+            # credited name while the model may have registered `c3po` for the
+            # same character. An exact-string compare here silently appended a
+            # duplicate stub instead of merging.
+            dkey = _character_dedupe_key(entry["display_name"]) or _character_dedupe_key(key)
+            found = next(
+                (c for c in chars_list
+                 if _character_dedupe_key(c.get("display_name") or c["name"]) == dkey
+                 or _character_dedupe_key(c["name"]) == dkey),
+                None,
+            )
             if found:
                 if shot_idx not in found["shots"]:
                     found["shots"].append(shot_idx)
@@ -1053,7 +1116,14 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
                     "shots": [shot_idx],
                 })
 
-    # Step 4: filter to characters appearing in >= 2 shots
+    # Step 4: collapse any remaining same-character duplicates, then filter to
+    # characters appearing in >= 2 shots.
+    #
+    # The merges above should prevent duplicates, but this is the last gate
+    # before the registry becomes the locked identity source for decode and
+    # voice casting, so enforce uniqueness here rather than trusting upstream.
+    # Union the shots and keep the longest description, matching step 2's rule.
+    chars_list = _collapse_duplicate_characters(chars_list)
     chars_list = [c for c in chars_list if len(c["shots"]) >= 2]
 
     # Step 5: generate descriptions for text-match-only stubs
