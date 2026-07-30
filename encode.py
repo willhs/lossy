@@ -1159,6 +1159,7 @@ def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot)
             system_instruction=REFINE_SYSTEM_PROMPT,
             temperature=0.3,
             response_mime_type="application/json",
+            max_output_tokens=65536,
         ),
     )
 
@@ -1263,6 +1264,7 @@ def run_stage3(args):
                 system_instruction=STAGE3_SYSTEM_PROMPT,
                 temperature=0.3,
                 response_mime_type="application/json",
+                max_output_tokens=65536,
             ),
         )
 
