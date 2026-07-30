@@ -11,6 +11,8 @@ import manifest
 from encode import (
     _build_shot_character_map,
     _candidate_characters_for_line,
+    _character_dedupe_key,
+    _collapse_duplicate_characters,
     _normalize_character_name,
     _refine_shot_assignments,
     _run_supervised_stage3,
@@ -850,6 +852,17 @@ CAST_ENTRIES = [
     {"display_name": "Jawas", "actor": "", "name_key": "jawas"},
 ]
 
+DROID_CAST_ENTRIES = [
+    {"display_name": "C-3PO", "actor": "Anthony Daniels", "name_key": "c_3po"},
+]
+
+DROID_PROMPTS = [
+    {"index": 0, "description": {"subjects": "C-3PO, a tall gold protocol droid"}},
+    {"index": 1, "description": {"subjects": "A tall golden humanoid droid gesturing"}},
+    {"index": 2, "description": {"subjects": "C-3PO walking through the desert"}},
+    {"index": 3, "description": {"subjects": "A polished gold droid with a visor"}},
+]
+
 PROMPTS_WITH_SUBJECTS = [
     {"index": 0, "description": {"subjects": "Luke Skywalker, young man in white tunic"}},
     {"index": 1, "description": {"subjects": "Small hooded creatures scavenging droids"}},
@@ -858,7 +871,84 @@ PROMPTS_WITH_SUBJECTS = [
 ]
 
 
+class TestCharacterDedupeKey:
+    def test_collapses_separator_variants(self):
+        assert _character_dedupe_key("c_3po") == _character_dedupe_key("c3po")
+        assert _character_dedupe_key("C-3PO") == _character_dedupe_key("c3po")
+        assert _character_dedupe_key("r2_d2") == _character_dedupe_key("r2d2")
+
+    def test_keeps_distinct_characters_apart(self):
+        assert _character_dedupe_key("luke_skywalker") != _character_dedupe_key("han_solo")
+        # a real near-miss: don't collapse two different Red squadron pilots
+        assert _character_dedupe_key("red_leader") != _character_dedupe_key("red_two")
+
+    def test_handles_empty_and_none(self):
+        assert _character_dedupe_key("") == ""
+        assert _character_dedupe_key(None) == ""
+
+
+class TestCollapseDuplicateCharacters:
+    def test_merges_separator_variant_ids(self):
+        """The Star Wars IV regression: c3po and c_3po were two registry entries
+        for one droid, with disjoint shots and separate locked descriptions."""
+        collapsed = _collapse_duplicate_characters([
+            {"name": "c3po", "display_name": "C-3PO", "description": "short", "shots": [1, 3]},
+            {"name": "c_3po", "display_name": "C-3PO",
+             "description": "a much longer canonical appearance description", "shots": [2, 4]},
+        ])
+        assert len(collapsed) == 1
+        entry = collapsed[0]
+        # canonical id comes from display_name via _to_name_key
+        assert entry["name"] == "c_3po"
+        assert entry["shots"] == [1, 2, 3, 4], "shot lists must union, not overwrite"
+        assert entry["description"] == "a much longer canonical appearance description"
+
+    def test_leaves_distinct_characters_alone(self):
+        collapsed = _collapse_duplicate_characters([
+            {"name": "red_leader", "display_name": "Red Leader", "description": "a", "shots": [1]},
+            {"name": "red_two", "display_name": "Red Two", "description": "b", "shots": [2]},
+        ])
+        assert len(collapsed) == 2
+
+    def test_preserves_order(self):
+        collapsed = _collapse_duplicate_characters([
+            {"name": "luke_skywalker", "display_name": "Luke Skywalker", "description": "a", "shots": [1]},
+            {"name": "han_solo", "display_name": "Han Solo", "description": "b", "shots": [2]},
+        ])
+        assert [c["name"] for c in collapsed] == ["luke_skywalker", "han_solo"]
+
+
 class TestRunSupervisedStage3:
+    def test_model_id_variant_does_not_create_duplicate(self):
+        """Regression: the TMDB path derives `c_3po` from the credited name while
+        the model returns `c3po` for the same droid. An exact-string compare in
+        the pre-assignment merge appended a duplicate stub, so the droid ended up
+        with two locked descriptions and two voices."""
+        gemini_response = {
+            "characters": [
+                {
+                    "name": "c3po",  # model's own id — differs from _to_name_key("C-3PO")
+                    "display_name": "C-3PO",
+                    "description": "A tall humanoid droid with a polished gold exterior.",
+                    "shots": [1, 3],
+                }
+            ]
+        }
+        client = _make_supervised_mock_client(gemini_response)
+        subjects = [
+            "Shot 0: C-3PO, a tall gold protocol droid",
+            "Shot 1: A tall golden humanoid droid gesturing",
+            "Shot 2: C-3PO walking through the desert",
+            "Shot 3: A polished gold droid with a visor",
+        ]
+        result = _run_supervised_stage3(client, DROID_CAST_ENTRIES, subjects, DROID_PROMPTS)
+
+        droids = [c for c in result["characters"]
+                  if _character_dedupe_key(c["display_name"]) == "c3po"]
+        assert len(droids) == 1, f"expected one C-3PO entry, got {[d['name'] for d in droids]}"
+        # text-matched shots 0 and 2 merge with the model's 1 and 3
+        assert sorted(droids[0]["shots"]) == [0, 1, 2, 3]
+
     def test_gemini_results_merged_with_text_match(self):
         """Shots 0 and 2 are text-matched (Luke); shots 1 and 3 go to Gemini (Jawas)."""
         gemini_response = {
