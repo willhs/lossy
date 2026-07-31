@@ -156,10 +156,32 @@ def probe_duration(path: str) -> float:
 
 def clip_exists_for_shot(clips_dir_path: str, shot_idx: int,
                          ext: str = ".mp4") -> bool:
-    """True if either the single-part clip or the first split part exists."""
+    """True if either the single-part clip or the first split part exists.
+
+    Presence of the *first* part says nothing about the rest, so this is not
+    enough on its own to call a split shot done -- see ``existing_clip_parts``.
+    """
     primary = clip_path(clips_dir_path, shot_idx, None, ext)
     first_part = clip_path(clips_dir_path, shot_idx, 1, ext)
     return os.path.exists(primary) or os.path.exists(first_part)
+
+
+def existing_clip_parts(clips_dir_path: str, shot_idx: int,
+                        expected_parts: int, ext: str = ".mp4") -> list[str]:
+    """Paths of the clips on disk for a shot, or [] if any are missing.
+
+    A shot is only resumable when every one of its parts survived: an
+    interrupted long shot leaves the first part(s) written and the rest
+    absent, and adopting that as complete would silently truncate the film.
+    Returns paths in part order, matching how generation emits them.
+    """
+    if expected_parts <= 1:
+        primary = clip_path(clips_dir_path, shot_idx, None, ext)
+        return [primary] if os.path.exists(primary) else []
+
+    paths = [clip_path(clips_dir_path, shot_idx, p + 1, ext)
+             for p in range(expected_parts)]
+    return paths if all(os.path.exists(p) for p in paths) else []
 
 
 # ---------------------------------------------------------------------------

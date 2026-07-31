@@ -187,11 +187,23 @@ def run_decode(args, strategy: GenerationStrategy):
         if idx in completed_set:
             continue
 
-        # Skip if already generated (check for primary clip file or split parts)
-        if manifest.clip_exists_for_shot(clips_dir, idx):
+        # Adopt clips already on disk, but only when EVERY part of the shot is
+        # there. Interrupting a run mid-shot leaves a split shot with its first
+        # part(s) written and the rest missing; treating that as done both
+        # truncates the shot and -- since this path used to leave clips_meta
+        # empty -- hid the parts from the stitch's single-file fallback, which
+        # dropped the shot from the film without a word. Partial shots
+        # regenerate instead.
+        expected_parts = strategy.expected_part_count(entry["duration_s"])
+        existing = manifest.existing_clip_parts(clips_dir, idx, expected_parts)
+        if existing:
             completed_set.add(idx)
             if idx not in progress["completed"]:
                 progress["completed"].append(idx)
+            progress["clips"][str(idx)] = [
+                {"path": os.path.basename(p), "duration_s": manifest.probe_duration(p)}
+                for p in existing
+            ]
             continue
 
         prompt_text = strategy.format_prompt(entry)

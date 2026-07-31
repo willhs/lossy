@@ -44,6 +44,18 @@ class GenerationStrategy:
         """
         return format_prompt(entry)
 
+    def expected_part_count(self, target_duration_s: float) -> int:
+        """How many clip files a shot of this duration splits into.
+
+        Resume needs this to tell a finished shot from one that was cut off
+        partway through its parts. Strategies that split by a different rule
+        override ``_target_durations`` and inherit a correct count from it.
+        """
+        splitter = getattr(self, "_target_durations", None)
+        if splitter is None:
+            return 1
+        return len(splitter(target_duration_s))
+
     def finish_audio(self) -> None:
         """Flush any pipelined audio generation. No-op unless overridden."""
         pass
