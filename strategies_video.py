@@ -92,8 +92,17 @@ class CharacterIdentityMixin(GenerationStrategy):
 
     def format_prompt(self, entry: dict) -> str:
         """Prepend the locked verbatim character identity blocks, then base."""
+        return self._prepend_identity(entry, super().format_prompt(entry))
+
+    def _prepend_identity(self, entry: dict, base: str) -> str:
+        """Prepend identity blocks to an already-formatted prompt.
+
+        Split out from format_prompt so a strategy whose base prompt does not
+        come from its MRO parent (LTX-2 takes plain natural language, not the
+        Wan-specific formatting its base class would apply) can still opt into
+        identity enrichment.
+        """
         shot_idx = entry.get("index")
-        base = super().format_prompt(entry)
         if shot_idx is None:
             return base
         char_names = self._character_shot_map.get(shot_idx, [])
@@ -961,7 +970,7 @@ class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
         return wf
 
 
-class RunPodLtx2Strategy(RunPodWanStrategy):
+class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     """RunPod self-hosted LTX-2.3 (22B, distilled FP8) via ComfyUI.
 
     Spike strategy for the LTX-2 vs Wan 2.2 TI2V-5B trial (docs/research
@@ -1021,16 +1030,27 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
 
     CUSTOM_NODE_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 
-    def __init__(self, output_dir: str = "", keep_pod: bool = False):
+    def __init__(
+        self,
+        output_dir: str = "",
+        keep_pod: bool = False,
+        character_shot_map: dict | None = None,
+        characters_data: dict | None = None,
+    ):
         # No concurrent-audio pipelining for this spike -- LTX-2's own audio
         # path is evaluated separately (see class docstring).
         super().__init__(output_dir, keep_pod, concurrent_audio=False)
+        self._init_character_identity(character_shot_map, characters_data)
         from runpod_pod import RunPodSession
         self._session = RunPodSession(output_dir, keep_pod=keep_pod, gpu_types=self.LTX_GPU_TYPES)
 
     def format_prompt(self, entry: dict) -> str:
-        # LTX-2 takes plain natural-language prompts (no Wan-specific formatting).
-        return format_prompt(entry)
+        # LTX-2 takes plain natural-language prompts (no Wan-specific
+        # formatting), so build the base directly rather than through the MRO,
+        # then let the identity mixin prepend canonical character descriptions.
+        # Without this the model has no idea who anyone is: an early rehearsal
+        # pass rendered Han and Luke as generic modern men in a warehouse.
+        return self._prepend_identity(entry, format_prompt(entry))
 
     def _install_custom_nodes(self):
         """Clone ComfyUI-LTXVideo into custom_nodes and install its requirements."""

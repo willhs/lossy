@@ -1741,3 +1741,50 @@ class TestRunSpeechWindowing:
         # Only the line inside shot 0's window should be generated.
         assert strategy.generate.call_count == 1
         assert strategy.generate.call_args[0][0] == "In shot 0"
+
+
+class TestLtx2CharacterIdentity:
+    """LTX-2 must inject canonical character identity, like runpod-wan22 does.
+
+    The strategy originally shipped without the mixin, so every prompt reached
+    the model with no idea who anyone was -- a rehearsal pass rendered Han and
+    Luke as generic modern men. It also made the LTX-2 vs Wan22 quality trial
+    unfair, since Wan22 had enrichment and LTX-2 did not.
+    """
+
+    ENTRY = {
+        "index": 796,
+        "duration_s": 4.0,
+        "description": {"shot_type": "medium", "camera_movement": "static",
+                        "subjects": ["a man"], "action": "He walks."},
+    }
+    CHARACTERS = {
+        "characters": [
+            {"name": "han_solo", "display_name": "Han Solo",
+             "description": "A rugged smuggler in a tan tunic."},
+        ]
+    }
+
+    def _strategy(self, **kwargs):
+        from strategies_video import RunPodLtx2Strategy
+        return RunPodLtx2Strategy(**kwargs)
+
+    def test_prepends_identity_for_characters_in_shot(self):
+        s = self._strategy(character_shot_map={796: ["han_solo"]},
+                           characters_data=self.CHARACTERS)
+        prompt = s.format_prompt(self.ENTRY)
+        assert prompt.startswith("Han Solo: A rugged smuggler in a tan tunic.")
+
+    def test_no_identity_when_shot_has_no_characters(self):
+        from prompt_format import format_prompt
+        s = self._strategy(character_shot_map={}, characters_data=self.CHARACTERS)
+        assert s.format_prompt(self.ENTRY) == format_prompt(self.ENTRY)
+
+    def test_base_prompt_is_plain_not_wan_formatted(self):
+        # LTX-2 takes natural language; it must not inherit RunPodWanStrategy's
+        # Wan-specific formatting through the MRO now that a mixin sits above it.
+        from prompt_format import format_prompt
+        s = self._strategy(character_shot_map={796: ["han_solo"]},
+                           characters_data=self.CHARACTERS)
+        prompt = s.format_prompt(self.ENTRY)
+        assert prompt.endswith(format_prompt(self.ENTRY))
