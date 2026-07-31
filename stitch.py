@@ -706,6 +706,18 @@ def stitch_clips(args):
     start_index = getattr(args, "start_index", None)
     music_strategy = getattr(args, "music_strategy", None)
 
+    # --limit means the same thing here as it does when generating: the first N
+    # shots at or after --start-index. Without this, stitching a partial run
+    # would sweep in every clip after start_index, including ones left over
+    # from an earlier, wider run.
+    limit = getattr(args, "limit", None)
+    end_index = None
+    if limit:
+        in_range = [p for p in prompts_full
+                    if start_index is None or p["index"] >= start_index]
+        if in_range:
+            end_index = in_range[:limit][-1]["index"]
+
     # Auto-detect speech if speech_progress.json exists
     if not speech_voice:
         speech_progress = manifest.speech_progress_path(output_dir)
@@ -718,7 +730,7 @@ def stitch_clips(args):
     # Stitch the full (or --start-index filtered) video
     result = _stitch_range(
         output_dir, strategy_name, prompts_full, clips_meta, clips_dir,
-        adjusted_dir, start_index, None, output_path,
+        adjusted_dir, start_index, end_index, output_path,
         audio_strategy, speech_voice, music_strategy, label="full reconstruction",
     )
     if result is None:

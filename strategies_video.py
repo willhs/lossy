@@ -975,6 +975,13 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
     MAX_FRAMES = 121   # ~4.8s -- LTX-2 native clip length before quality degrades
     _supports_i2v = False
 
+    # Matches runpod-wan22's render size. The original trial hardcoded 768x512
+    # as a cautious placeholder while debugging the graph, which made the
+    # speed/cost comparison unfair (~2.3x fewer pixels than Wan22). Both
+    # dimensions must stay divisible by 32 for the LTX VAE.
+    WIDTH = 1280
+    HEIGHT = 704
+
     # LTX-2 needs 32GB+ VRAM at FP8 (docs.ltx.io) -- skip the 24GB RTX 4090 in
     # the default fallback chain, it would OOM. A6000 first (cheaper), L40S as
     # a same-VRAM-class fallback.
@@ -1086,7 +1093,7 @@ class RunPodLtx2Strategy(RunPodWanStrategy):
             },
             "5": {
                 "class_type": "EmptyLTXVLatentVideo",
-                "inputs": {"width": 768, "height": 512, "length": length, "batch_size": 1},
+                "inputs": {"width": self.WIDTH, "height": self.HEIGHT, "length": length, "batch_size": 1},
             },
             "6": {
                 "class_type": "LTXVConditioning",
