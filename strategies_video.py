@@ -1004,11 +1004,20 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     HEIGHT = 704
 
     # LTX-2 needs 32GB+ VRAM at FP8 (docs.ltx.io) -- skip the 24GB RTX 4090 in
-    # the default fallback chain, it would OOM. A6000 first (cheaper), L40S as
-    # a same-VRAM-class fallback.
+    # the default fallback chain, it would OOM. All of these are 48GB, ordered
+    # by price.
+    #
+    # The chain is deliberately long: a rehearsal attempt died with A6000
+    # "no longer any instances available" and L40S erroring in the same
+    # breath, which stalls a run outright when only two pools are tried. A40
+    # costs about the same as the A6000 and draws from a different pool, so
+    # widening this is nearly free insurance for a multi-hour run.
     LTX_GPU_TYPES = [
         ("NVIDIA RTX A6000", 0.33),
-        ("NVIDIA L40S", 0.54),
+        ("NVIDIA A40", 0.35),
+        ("NVIDIA L40", 0.69),
+        ("NVIDIA RTX 6000 Ada Generation", 0.74),
+        ("NVIDIA L40S", 0.79),
     ]
 
     CHECKPOINT_NAME = "ltx-2.3-22b-distilled-fp8.safetensors"
