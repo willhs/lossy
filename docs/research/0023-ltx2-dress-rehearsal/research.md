@@ -46,6 +46,37 @@ Resolution note: the 0022 trial measured LTX-2 at 768x512 and called it ~3x fast
 
    This also **retroactively undermines the 0022 model trial**: `runpod-wan22` carries the mixin and LTX-2 did not, so Wan22 was judged with identity enrichment and LTX-2 without it. The "on par at least" verdict was formed on an unfair comparison in this respect as well as on resolution.
 
+4. **No I2V chaining, so long shots jump-cut internally.** `_supports_i2v = False` meant every part of a split shot was generated from scratch. The first rehearsal pass put **172s of 328s (52% of runtime) in split shots and introduced 26 cuts the film does not have** -- worst case shot 846, a 17.7s Vader/Tarkin/Leia scene rendered as four disconnected takes. The task notes flagged the flag; nobody had measured what it cost.
+
+   Fixed with an `LTXVImgToVideo` branch (it supersedes `EmptyLTXVLatentVideo`, returning image-conditioned positive/negative *and* the latent, so conditioning flows through it before `LTXVConditioning` and the AV concat takes its latent). The base class's chaining plumbing needed no changes.
+
+   **Measured effect** (mean absolute gray difference across a part boundary, 0-255; 0 = identical):
+
+   | Shot | Un-chained | Chained |
+   |---|---|---|
+   | 846 (4 parts) | 52.9 | **2.6** |
+   | 794 (3 parts) | 51.7 | **2.1** |
+
+   A ~95% reduction, to a level consistent with ordinary frame-to-frame motion rather than a cut. Side benefit: Vader renders in correct black armour when chained, versus a grey sweatshirt un-chained -- each part inherits the previous part's appearance instead of re-rolling it, so chaining damps within-shot identity drift too.
+
+5. **GPU fallback chain was too narrow to survive capacity pressure.** A re-render attempt exited with no pod at all: RTX A6000 reported no instances available and L40S errored in the same breath, and those were the only two types tried. Widened to five 48GB types ordered by price (A6000 $0.33, A40 $0.35, L40 $0.69, RTX 6000 Ada $0.74, L40S $0.79). The very next attempt found A6000 *and* A40 both unavailable and succeeded on L40 -- it would have failed outright without the fix. Also corrected the L40S rate, hardcoded at $0.54 against an actual $0.79.
+
+### Pod reliability -- the largest open risk
+
+Across **10 pod provisioning attempts** this session:
+
+| Outcome | Count | Cost |
+|---|---|---|
+| Worked | 6 | -- |
+| **Died on CUDA init** before ComfyUI started | **3 (30%)** | $1.05, no output |
+| **No capacity at all** (every GPU type unavailable) | 1 | $0 |
+
+Every one of these required a human to notice and restart by hand -- `decode.py` exits rather than re-provisioning. A full run is ~40+ GPU-hours across many pods; at a 30% dead-on-arrival rate that is roughly one stall per hour of wall-clock, each stalling the run indefinitely until someone intervenes.
+
+**This, not cost or quality, is the thing most likely to make the full run painful.** An automatic re-provision-on-failure loop (retry N times, cycling GPU types) is the highest-value fix remaining.
+
+Capacity pressure also moves cost: the successful chained re-render landed on L40 at $0.69/hr because both cheaper pools were empty, roughly doubling that render's cost. Full-run cost therefore depends on which pool has capacity -- **$15-25 at A6000 rates, $30-40 if it runs on L40-class hardware throughout**.
+
 ### Defects found, not fixed (go/no-go list)
 
 4. **Canonical descriptions bake in one costume for the whole film.** Stage 3 derived Luke's description from all 572 of his shots, and the trench run dominated: "typically seen in an orange flight suit... yellow goggles". The mixin prepends that verbatim to every Luke shot by design, so Luke wore an X-wing pilot suit on the Death Star. **334 of his 572 shots (58%) predate Yavin**, where that is wrong.
@@ -72,7 +103,8 @@ Resolution note: the 0022 trial measured LTX-2 at 768x512 and called it ~3x fast
 
 ### What worked
 
-- **88/88 shots generated, zero failures.**
+- **88/88 shots generated, zero failures** -- twice, on both the un-chained and chained passes.
+- **Chaining holds across the whole segment**, not just the validation shot: 20 of 88 shots split (68 single-part, 15 two-part, 4 three-part, 1 four-part), and sampled boundaries sit at ~2 rather than ~52.
 - **Timeline accuracy: 328.27s output vs 328.285s expected -- 15ms drift over 5.5 minutes.** The boundary-locked retiming holds at length; per-shot deviations of +/-0.05-0.09s are corrected shot-by-shot rather than accumulating.
 - **Interrupt/resume works** (and earned its cost by exposing defect 2). Progress file stayed consistent; in-flight shots were lost cleanly rather than half-recorded.
 - **Voice map fully resolves**: all 70 lines in the window mapped, no unmapped speakers. Han and Tarkin both use George but land 37s apart in different scenes.
@@ -84,6 +116,7 @@ Resolution note: the 0022 trial measured LTX-2 at 768x512 and called it ~3x fast
 **Conditional go.** Cost is not the risk -- $15-25 against a $50-60 ceiling. The pipeline runs a contiguous segment end-to-end without errors and holds its timeline.
 
 Fix before the full run (cheap, all code-side):
+- **Automatic re-provision on pod failure** -- 30% of pods died on arrival and each one stalled the run until a human restarted it. Highest-value remaining fix.
 - **Defect 8 (idle pod)** -- the only one that costs real money, and it cost more than the rehearsal render.
 - **Defect 4 (costume in canonical descriptions)** -- currently a hand-edit in gitignored output that a re-encode silently reverts. Move it into the stage-3 prompt.
 - **Defect 9 (stale artifact contamination)** -- an encode-generation stamp, or the full run starts from a clean output dir.
@@ -96,8 +129,9 @@ Open question for Will: the segment is watchable and recognisably Star Wars in p
 
 ## Artifacts
 
-- `output/star_wars_iv_v2/star_wars_iv_v2_reconstructed_runpod-ltx2.mp4` -- the rehearsal segment (328s, 1280x704, ambience + speech)
-- `output/star_wars_iv_v2/clips/runpod-ltx2/` -- 114 clip files, 88 shots
+- `output/star_wars_iv_v2/star_wars_iv_v2_reconstructed_runpod-ltx2.mp4` -- the rehearsal segment (328s, 1280x704, chained, ambience + speech)
+- `output/star_wars_iv_v2/clips/runpod-ltx2/` -- 114 clip files, 88 shots, chained
+- `output/star_wars_iv_v2/clips/runpod-ltx2-nochain/` -- the same 88 shots without I2V chaining (before/after on the 26 spurious cuts)
 - `output/star_wars_iv_v2/clips/runpod-ltx2-noidentity/` -- 45 shots with no identity conditioning (before/after comparison)
 - `output/star_wars_iv_v2/clips/runpod-ltx2-costumebug/` -- 3 shots with the flight-suit-everywhere bug
 - `output/star_wars_iv_v2/characters.json.bak-precostume` -- descriptions before wardrobe stripping
@@ -105,6 +139,20 @@ Open question for Will: the segment is watchable and recognisably Star Wars in p
 
 ## Spend
 
-**$5.21 total this session**, against ~$3.90 spent previously on the goal (~$9.11 cumulative, ceiling $50-60).
+**$7.62 total this session**, against ~$3.90 spent previously on the goal (~$11.52 cumulative, ceiling $50-60).
 
-Of that $5.21, only ~$1.70 was useful generation: $1.02 video + $0.16 speech + $0.20 ambience, plus ~$0.30 of productive pod setup. The remainder was **$3.50 idle pod** (defect 8), **$0.25** a pod that died on CUDA init before doing any work, and **$0.16** the interrupt/resume test (which paid for itself by finding defect 2).
+| | |
+|---|---|
+| Final chained render, 88 shots (L40 @ $0.69/hr, 1.6hrs) | $1.10 |
+| First 88-shot render (A6000 @ $0.33/hr, 2.5hrs) -- superseded by chaining | $0.83 |
+| Speech, 70 lines (fal) | $0.16 |
+| Ambience, 86 shots | $0.20 |
+| Chaining validation on shot 846 | $0.31 |
+| Un-enriched + costume-bug renders (archived) | $0.46 |
+| Interrupt/resume test -- found the shot-dropping bug | $0.16 |
+| **Idle pod left running after a completed render** | **$3.40** |
+| **Three pods dead on CUDA init, no output** | **$1.05** |
+
+Useful generation was about **$2.60 of $7.62**. The rest was overhead, waste, and superseded work -- dominated by the idle pod and dead-on-arrival pods, both of which are fixable in code.
+
+Note the L40 ran the same 88 shots in 1.6hrs versus 2.5hrs on the A6000, so the pricier GPU was only ~30% more expensive in total, not 2x.
