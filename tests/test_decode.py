@@ -1912,3 +1912,34 @@ class TestSeamTrim:
         c = ClipResult(path=str(tmp_path / "x.mp4"), actual_duration_s=0.5, cost=0.0)
         s._trim_seam_frames(c, 1, 3)
         assert c.actual_duration_s == 0.5
+
+
+class TestChainUploadIsNonFatal:
+    """A failed chain-frame upload must degrade to an unchained part.
+
+    A stalled scp raised TimeoutExpired straight through the generate loop and
+    aborted a render 84 clips in. Chaining is an enhancement; losing it costs
+    one visible seam, losing the run costs hours.
+    """
+
+    def _strategy(self, tmp_path, raiser):
+        import subprocess as sp
+        from strategies_video import RunPodLtx2Strategy
+        s = RunPodLtx2Strategy.__new__(RunPodLtx2Strategy)
+
+        class Session:
+            ssh_host = "1.2.3.4"
+            def scp_to(self, *a, **kw):
+                raise raiser
+        s._session = Session()
+        s._extract_last_frame = lambda clip, out: True
+        return s
+
+    def test_timeout_returns_none_instead_of_raising(self, tmp_path):
+        import subprocess as sp
+        s = self._strategy(tmp_path, sp.TimeoutExpired(cmd="scp", timeout=60))
+        assert s._upload_start_frame("clip.mp4", 846, 3) is None
+
+    def test_unexpected_error_returns_none_instead_of_raising(self, tmp_path):
+        s = self._strategy(tmp_path, OSError("connection reset"))
+        assert s._upload_start_frame("clip.mp4", 846, 3) is None

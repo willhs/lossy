@@ -715,7 +715,18 @@ class RunPodWanStrategy(GenerationStrategy):
         local = os.path.join(tempfile.gettempdir(), name)
         if not self._extract_last_frame(clip_path, local):
             return None
-        result = self._session.scp_to([local], f"{COMFYUI_DIR}/input", timeout=30)
+        # Chaining is an enhancement, never a reason to lose a run. A stalled
+        # scp used to raise TimeoutExpired straight through the generate loop
+        # and abort the whole render 84 clips in; degrade to an unchained part
+        # (one visible seam) instead.
+        try:
+            result = self._session.scp_to([local], f"{COMFYUI_DIR}/input", timeout=60)
+        except subprocess.TimeoutExpired:
+            print("  Chain: start-frame upload timed out; generating this part unchained")
+            return None
+        except Exception as e:
+            print(f"  Chain: start-frame upload failed ({e}); generating this part unchained")
+            return None
         if result.returncode != 0:
             print(f"  Chain: failed to upload start frame: {result.stderr.strip()[:120]}")
             return None
