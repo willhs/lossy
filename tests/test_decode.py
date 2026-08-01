@@ -1843,3 +1843,72 @@ class TestLtx2Chaining:
                 for k, v in node["inputs"].items():
                     if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
                         assert v[0] in wf, f"node {nid}.{k} -> missing {v[0]}"
+
+
+class TestSeamTrim:
+    """Split parts are trimmed at internal seams to cut the motion hitch.
+
+    The model renders each part with a slow-in/slow-out envelope and sometimes
+    a frozen final frame, so a chained long shot decelerates and re-accelerates
+    at every boundary -- a rhythmic hitch through elongated scenes. Chaining
+    fixes the content jump; this fixes the motion one.
+    """
+
+    def _ltx(self):
+        from strategies_video import RunPodLtx2Strategy
+        return RunPodLtx2Strategy.__new__(RunPodLtx2Strategy)
+
+    def test_trimming_is_off_by_default_for_other_strategies(self):
+        from strategies_video import RunPodWanStrategy
+        w = RunPodWanStrategy.__new__(RunPodWanStrategy)
+        assert w.SEAM_TRIM_HEAD == 0 and w.SEAM_TRIM_TAIL == 0
+        assert w._usable_frames_per_part() == w.MAX_FRAMES
+
+    def test_ltx_usable_frames_account_for_the_trim(self):
+        s = self._ltx()
+        assert s._usable_frames_per_part() == s.MAX_FRAMES - s.SEAM_TRIM_HEAD - s.SEAM_TRIM_TAIL
+
+    def test_long_shots_split_into_more_parts_to_cover_the_trim(self):
+        s = self._ltx()
+        # a 17.7s shot at 4.84s raw parts would need 4; trimmed parts need more
+        raw_parts = -(-17.7 // (s.MAX_FRAMES / s.FPS))
+        assert len(s._target_durations(17.7)) > raw_parts
+
+    def test_short_single_part_shot_is_unaffected(self):
+        s = self._ltx()
+        assert len(s._target_durations(3.0)) == 1
+
+    def test_single_part_shot_is_never_trimmed(self, tmp_path):
+        from clip_types import ClipResult
+        s = self._ltx()
+        c = ClipResult(path=str(tmp_path / "x.mp4"), actual_duration_s=4.0, cost=0.0)
+        s._trim_seam_frames(c, 0, 1)  # no file needed -- must return before touching it
+        assert c.actual_duration_s == 4.0
+
+    def test_shot_edges_keep_their_natural_ease(self, monkeypatch, tmp_path):
+        """First part trims only its tail, last part only its head."""
+        from clip_types import ClipResult
+        s = self._ltx()
+        seen = []
+
+        def fake_run(cmd, **kw):
+            seen.append(" ".join(cmd))
+            class R:
+                returncode = 1  # bail out after recording the filter
+            return R()
+        monkeypatch.setattr("strategies_video.subprocess.run", fake_run)
+
+        c = ClipResult(path=str(tmp_path / "a.mp4"), actual_duration_s=4.84, cost=0.0)
+        s._trim_seam_frames(c, 0, 3)          # first part
+        assert "between(n\\,0\\," in seen[-1], "first part must keep its natural head"
+
+        s._trim_seam_frames(c, 2, 3)          # last part
+        assert f"between(n\\,{s.SEAM_TRIM_HEAD}\\," in seen[-1]
+        assert str(round(4.84 * s.FPS) - 1) in seen[-1], "last part must keep its natural tail"
+
+    def test_clip_too_short_to_trim_is_left_alone(self, tmp_path):
+        from clip_types import ClipResult
+        s = self._ltx()
+        c = ClipResult(path=str(tmp_path / "x.mp4"), actual_duration_s=0.5, cost=0.0)
+        s._trim_seam_frames(c, 1, 3)
+        assert c.actual_duration_s == 0.5

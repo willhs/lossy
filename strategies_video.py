@@ -330,6 +330,12 @@ class RunPodWanStrategy(GenerationStrategy):
     # T2V can't chain; RunPodWan22Strategy (TI2V-5B) overrides this to True.
     _supports_i2v = False
 
+    # Frames dropped either side of an internal seam to cut the model's
+    # slow-in/slow-out envelope. Zero disables trimming entirely, which is the
+    # default -- only strategies measured to need it opt in.
+    SEAM_TRIM_HEAD = 0
+    SEAM_TRIM_TAIL = 0
+
     def format_prompt(self, entry: dict) -> str:
         return _format_prompt_wan(entry)
 
@@ -343,8 +349,12 @@ class RunPodWanStrategy(GenerationStrategy):
 
         Returns a list of frame counts (4n+1 integers). Single-element for
         shots that fit within MAX_FRAMES; multiple elements for longer shots.
+
+        When SEAM_TRIM_* is set, each part loses frames to trimming, so parts
+        cover less screen time and a long shot needs proportionally more of
+        them -- see _usable_frames_per_part.
         """
-        max_duration = self.MAX_FRAMES / self.FPS
+        max_duration = self._usable_frames_per_part() / self.FPS
         min_duration = self.MIN_FRAMES / self.FPS
 
         if target_s <= max_duration + 0.25:  # 0.25s = half a frame-step tolerance
@@ -358,6 +368,54 @@ class RunPodWanStrategy(GenerationStrategy):
         remainder_frames = self._target_frames(max(min_duration, remaining))
         parts.append(remainder_frames)
         return parts
+
+    def _usable_frames_per_part(self) -> int:
+        """Frames a split part contributes after seam trimming.
+
+        A part is generated at MAX_FRAMES but an interior one is trimmed at
+        both ends, so only the middle survives into the film.
+        """
+        return self.MAX_FRAMES - self.SEAM_TRIM_HEAD - self.SEAM_TRIM_TAIL
+
+    def _trim_seam_frames(self, clip: ClipResult, part_idx: int, n_parts: int) -> None:
+        """Drop the eased-in/eased-out frames at an internal seam, in place.
+
+        The model renders each part with a slow-in/slow-out envelope: measured
+        over chained parts, motion runs at ~3.9 in the first frames and ~4.6 in
+        the last against ~8.2 mid-clip, and some parts end on a frozen frame.
+        Chaining removes the *content* jump at a seam but not this *motion*
+        one, so a long shot decelerates and re-accelerates every part boundary
+        -- a rhythmic hitch through any elongated scene.
+
+        Only interior edges are trimmed. The shot's true first and last frames
+        keep their natural ease, since a real cut lands there anyway.
+        """
+        if n_parts <= 1:
+            return
+        head = 0 if part_idx == 0 else self.SEAM_TRIM_HEAD
+        tail = 0 if part_idx == n_parts - 1 else self.SEAM_TRIM_TAIL
+        if not head and not tail:
+            return
+
+        total = round(clip.actual_duration_s * self.FPS)
+        keep_last = total - tail - 1
+        if keep_last <= head:
+            return  # too short to trim safely -- leave it alone
+
+        trimmed = clip.path + ".trim.mp4"
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", clip.path,
+             "-vf", f"select='between(n\\,{head}\\,{keep_last})',setpts=N/FRAME_RATE/TB",
+             "-an", trimmed],
+            capture_output=True,
+        )
+        if r.returncode != 0 or not os.path.exists(trimmed) or os.path.getsize(trimmed) == 0:
+            print(f"  Seam trim failed for {os.path.basename(clip.path)}; keeping untrimmed")
+            if os.path.exists(trimmed):
+                os.remove(trimmed)
+            return
+        os.replace(trimmed, clip.path)
+        clip.actual_duration_s = manifest.probe_duration(clip.path)
 
     def _ensure_pod(self):
         if self._setup_done:
@@ -778,6 +836,11 @@ class RunPodWanStrategy(GenerationStrategy):
             )
             if clip_result is None:
                 return []  # Fail the whole shot if any part fails
+
+            # Trim before chaining reads the last frame: conditioning the next
+            # part on a full-motion frame rather than a decelerating (sometimes
+            # frozen) one is exactly what keeps the motion continuous.
+            self._trim_seam_frames(clip_result, part_idx, len(frame_counts))
             results.append(clip_result)
 
             # Seed the next split part from this part's last frame.
@@ -1002,6 +1065,20 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     # dimensions must stay divisible by 32 for the LTX VAE.
     WIDTH = 1280
     HEIGHT = 704
+
+    # Measured over chained parts of the dress-rehearsal segment: motion sits
+    # at ~3.9 across the first frames and ~4.6 across the last, against ~8.2
+    # mid-clip, with ramps running ~18 and ~13 frames. Some parts end on a
+    # frozen frame (frame-to-frame delta 0.12 against ~5 typical), which is
+    # the most visible half of the hitch.
+    #
+    # 18/12 was chosen by sweeping 0/12/18/24 across eight real parts: it
+    # lifts both edges from ~57%/56% of mid-clip motion to ~65%/65% and
+    # removes the frozen frames outright, while keeping 3.64s of every 4.84s
+    # part. Trimming harder keeps improving the head but discards a third of
+    # each part for a smaller return.
+    SEAM_TRIM_HEAD = 18
+    SEAM_TRIM_TAIL = 12
 
     # LTX-2 needs 32GB+ VRAM at FP8 (docs.ltx.io) -- skip the 24GB RTX 4090 in
     # the default fallback chain, it would OOM. All of these are 48GB, ordered
