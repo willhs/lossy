@@ -524,8 +524,12 @@ def main():
                         choices=DECODE_AUDIO_STRATEGIES,
                         default=None,
                         help="Audio generation backend (default: auto-detect all for stitch, elevenlabs for generate)")
-    parser.add_argument("--keep-pod", action="store_true",
-                        help="Keep RunPod pod alive after decode (for subsequent audio stage)")
+    parser.add_argument("--keep-pod", nargs="?", type=int, const=True, default=False,
+                        metavar="MINUTES",
+                        help="Keep the RunPod pod alive after decode, for a subsequent audio "
+                             "stage (default 30 minutes; pass a number to change it). The pod "
+                             "terminates itself once that elapses -- it never stays up "
+                             "indefinitely, since a kept pod bills until terminated.")
     parser.add_argument("--speech", action="store_true",
                         help="Generate speech/dialogue clips (instead of video)")
     parser.add_argument("--speech-voice", default="Roger",

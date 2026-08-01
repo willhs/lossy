@@ -107,3 +107,69 @@ class TestRunPodSessionCleanup:
 
         session._cleanup()
         assert terminated == ["pod-crash"]
+
+
+class TestKeepPodTTL:
+    """A kept-alive pod must always carry a deadline.
+
+    A dress-rehearsal render finished in 2.5hrs and then billed for another
+    10.5hrs ($3.40, more than the render itself) because --keep-pod meant
+    "keep forever" and nothing local was still running to notice.
+    """
+
+    def test_keep_pod_false_has_no_ttl(self, tmp_path):
+        s = RunPodSession(str(tmp_path), keep_pod=False)
+        assert s.keep_pod is False
+        assert s.keep_pod_minutes == 0
+
+    def test_keep_pod_true_gets_the_default_ttl(self, tmp_path):
+        from runpod_pod import KEEP_POD_DEFAULT_MINUTES
+        s = RunPodSession(str(tmp_path), keep_pod=True)
+        assert s.keep_pod is True
+        assert s.keep_pod_minutes == KEEP_POD_DEFAULT_MINUTES
+        assert s.keep_pod_minutes > 0, "keeping a pod with no deadline is the bug"
+
+    def test_keep_pod_accepts_an_explicit_duration(self, tmp_path):
+        s = RunPodSession(str(tmp_path), keep_pod=90)
+        assert s.keep_pod is True
+        assert s.keep_pod_minutes == 90
+
+    def test_arm_self_destruct_uses_pod_local_id_not_an_api_key(self, tmp_path, monkeypatch):
+        # The pod must remove *itself* via the injected RUNPOD_POD_ID -- copying
+        # the account API key onto a community-cloud host is not acceptable.
+        s = RunPodSession(str(tmp_path), keep_pod=30)
+        s.ssh_host, s.ssh_port = "1.2.3.4", 22
+        sent = []
+
+        class R:
+            returncode = 0
+        monkeypatch.setattr(s, "ssh_cmd", lambda cmd, timeout=60: (sent.append(cmd), R())[1])
+
+        assert s.arm_self_destruct(30) is True
+        armed = sent[-1]
+        assert "RUNPOD_POD_ID" in armed
+        assert "runpodctl remove pod" in armed
+        assert "sleep 1800" in armed
+        assert not any("RUNPOD_API_KEY" in c for c in sent)
+
+    def test_arm_self_destruct_disarms_first_so_reapers_do_not_stack(self, tmp_path, monkeypatch):
+        s = RunPodSession(str(tmp_path), keep_pod=30)
+        s.ssh_host, s.ssh_port = "1.2.3.4", 22
+        sent = []
+
+        class R:
+            returncode = 0
+        monkeypatch.setattr(s, "ssh_cmd", lambda cmd, timeout=60: (sent.append(cmd), R())[1])
+
+        s.arm_self_destruct(30)
+        assert "kill" in sent[0], "existing reaper must be cleared before arming a new one"
+
+    def test_arm_self_destruct_without_ssh_reports_failure(self, tmp_path):
+        s = RunPodSession(str(tmp_path), keep_pod=30)
+        s.ssh_host = None
+        assert s.arm_self_destruct(30) is False
+
+    def test_zero_minutes_never_arms(self, tmp_path):
+        s = RunPodSession(str(tmp_path), keep_pod=30)
+        s.ssh_host, s.ssh_port = "1.2.3.4", 22
+        assert s.arm_self_destruct(0) is False

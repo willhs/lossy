@@ -25,6 +25,16 @@ POD_READY_TIMEOUT = 600
 COMFYUI_READY_TIMEOUT = 600
 COMFYUI_DIR = "/workspace/runpod-slim/ComfyUI"
 
+# How long a kept-alive pod survives with nobody using it. A pod bills until
+# it is explicitly terminated, and once the local process exits there is
+# nothing of ours left running to notice it went idle -- a dress-rehearsal
+# render finished in 2.5hrs and then billed for another 10.5hrs ($3.40, more
+# than the render) purely because the next stage was never started. So the
+# deadline is armed *on the pod itself*, where it survives the process
+# exiting, the session ending, and the machine sleeping.
+KEEP_POD_DEFAULT_MINUTES = 30
+REAPER_PID_FILE = "/workspace/.lossy_reaper.pid"
+
 
 class RunPodSession:
     """Manages a RunPod ComfyUI pod with state file persistence.
@@ -33,9 +43,17 @@ class RunPodSession:
     Handles cleanup on exit (terminate or keep-alive depending on flags).
     """
 
-    def __init__(self, output_dir: str, keep_pod: bool = False, gpu_types: list[tuple[str, float]] | None = None):
+    def __init__(self, output_dir: str, keep_pod: bool | int = False,
+                 gpu_types: list[tuple[str, float]] | None = None):
         self.output_dir = output_dir
-        self.keep_pod = keep_pod
+        # keep_pod is a duration, not a switch: True means the default TTL,
+        # an int means that many minutes. There is deliberately no way to say
+        # "keep forever" -- that contract is what produced a 10.5hr idle bill.
+        self.keep_pod = bool(keep_pod)
+        self.keep_pod_minutes = (
+            KEEP_POD_DEFAULT_MINUTES if keep_pod is True
+            else int(keep_pod) if keep_pod else 0
+        )
         # Cheapest-first GPU fallback list to try when creating a pod. Defaults
         # to the module-level GPU_TYPES; strategies with stricter VRAM needs
         # (e.g. a model that OOMs on a 24GB card) can pass a narrower list.
@@ -77,9 +95,14 @@ class RunPodSession:
         if self.pod_id is None:
             return
         if self.keep_pod and self._clean_exit:
-            # Normal exit with --keep-pod: write state file, don't terminate
+            # Normal exit with --keep-pod: write state file, don't terminate --
+            # but arm a self-destruct on the pod first so "kept alive" cannot
+            # silently mean "billing all night".
             self.write_state()
-            print(f"  Pod {self.pod_id} kept alive (state written to {self.state_path})")
+            armed = self.arm_self_destruct(self.keep_pod_minutes)
+            note = (f"self-destructs in {self.keep_pod_minutes}min" if armed
+                    else "WARNING: self-destruct could NOT be armed -- terminate it yourself")
+            print(f"  Pod {self.pod_id} kept alive ({note}); state at {self.state_path}")
         else:
             self.terminate()
 
@@ -237,7 +260,54 @@ class RunPodSession:
             return False
 
         print(f"  Reconnected: {self.base_url}")
+        # This pod was left alive with a deadline armed; clear it so it does
+        # not terminate underneath the run that just picked it up.
+        self.disarm_self_destruct()
         return True
+
+    def arm_self_destruct(self, minutes: int) -> bool:
+        """Schedule the pod to terminate itself after `minutes`. Returns success.
+
+        Runs entirely on the pod: a detached sleep-then-terminate, using the
+        RUNPOD_POD_ID that RunPod injects, so the pod removes only itself and
+        no account API key is ever copied onto a community-cloud host we do
+        not control.
+
+        This is the only cleanup that survives the local process exiting, so
+        it is the backstop for every other mechanism -- atexit handlers,
+        signal handlers and session watchdogs all die with their process.
+        """
+        if not self.ssh_host or minutes <= 0:
+            return False
+        self.disarm_self_destruct()  # never stack two reapers
+        script = (
+            f"nohup setsid sh -c 'sleep {minutes * 60}; "
+            f"runpodctl remove pod $RUNPOD_POD_ID' "
+            f">/tmp/lossy_reaper.log 2>&1 & echo $! > {REAPER_PID_FILE}"
+        )
+        try:
+            r = self.ssh_cmd(script, timeout=30)
+            return r.returncode == 0
+        except Exception as e:
+            print(f"  Failed to arm pod self-destruct: {e}")
+            return False
+
+    def disarm_self_destruct(self) -> None:
+        """Cancel a pending self-destruct, e.g. because a new run reconnected.
+
+        Without this, resuming onto a kept-alive pod would inherit the old
+        deadline and the pod would vanish mid-render.
+        """
+        if not self.ssh_host:
+            return
+        try:
+            self.ssh_cmd(
+                f"[ -f {REAPER_PID_FILE} ] && kill $(cat {REAPER_PID_FILE}) 2>/dev/null; "
+                f"rm -f {REAPER_PID_FILE}; true",
+                timeout=30,
+            )
+        except Exception:
+            pass  # a stale reaper is worth a warning, not a crash
 
     def ensure_pod(self):
         """Reconnect to existing pod or create a new one."""

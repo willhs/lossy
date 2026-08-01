@@ -308,7 +308,7 @@ class RunPodWanStrategy(GenerationStrategy):
         ),
     ]
 
-    def __init__(self, output_dir: str = "", keep_pod: bool = False, concurrent_audio: bool = False):
+    def __init__(self, output_dir: str = "", keep_pod: bool | int = False, concurrent_audio: bool = False):
         from runpod_pod import RunPodSession
         self._session = RunPodSession(output_dir, keep_pod=keep_pod)
         self._setup_done = False
@@ -816,7 +816,7 @@ class RunPodWanEnrichedStrategy(CharacterIdentityMixin, RunPodWanStrategy):
     def __init__(
         self,
         output_dir: str = "",
-        keep_pod: bool = False,
+        keep_pod: bool | int = False,
         concurrent_audio: bool = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
@@ -859,7 +859,7 @@ class RunPodWan22Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     def __init__(
         self,
         output_dir: str = "",
-        keep_pod: bool = False,
+        keep_pod: bool | int = False,
         concurrent_audio: bool = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
@@ -1042,7 +1042,7 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     def __init__(
         self,
         output_dir: str = "",
-        keep_pod: bool = False,
+        keep_pod: bool | int = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
     ):
@@ -1250,7 +1250,7 @@ class RunPodVaceStrategy(CharacterIdentityMixin, RunPodWanStrategy):
     def __init__(
         self,
         output_dir: str = "",
-        keep_pod: bool = False,
+        keep_pod: bool | int = False,
         concurrent_audio: bool = False,
         portraits: dict | None = None,
         character_shot_map: dict | None = None,
