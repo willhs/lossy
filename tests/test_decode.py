@@ -1788,3 +1788,58 @@ class TestLtx2CharacterIdentity:
                            characters_data=self.CHARACTERS)
         prompt = s.format_prompt(self.ENTRY)
         assert prompt.endswith(format_prompt(self.ENTRY))
+
+
+class TestLtx2Chaining:
+    """LTX-2 must chain split parts via I2V, or long shots jump-cut internally.
+
+    The spike shipped _supports_i2v = False, so a 17.7s shot rendered as four
+    disconnected takes. In the first dress rehearsal 52% of the segment's
+    runtime sat in split shots, adding 26 cuts the film does not have.
+    """
+
+    def _wf(self, start_image=None, length=121):
+        from strategies_video import RunPodLtx2Strategy
+        s = RunPodLtx2Strategy.__new__(RunPodLtx2Strategy)
+        return s._build_workflow("prompt", seed=1, length=length, start_image=start_image)
+
+    def test_strategy_declares_i2v_support(self):
+        from strategies_video import RunPodLtx2Strategy
+        assert RunPodLtx2Strategy._supports_i2v is True
+
+    def test_t2v_uses_empty_latent(self):
+        wf = self._wf()
+        assert wf["9"]["inputs"]["video_latent"] == ["5", 0]
+        assert wf["6"]["inputs"]["positive"] == ["3", 0]
+        assert "14" not in wf and "15" not in wf
+
+    def test_i2v_routes_latent_and_conditioning_through_img_to_video(self):
+        wf = self._wf(start_image="chain_0846_00.png")
+        assert wf["15"]["class_type"] == "LTXVImgToVideo"
+        assert wf["14"]["inputs"]["image"] == "chain_0846_00.png"
+        # conditioning must flow through the image node, not straight from the
+        # text encoders, or the start frame is ignored
+        assert wf["6"]["inputs"]["positive"] == ["15", 0]
+        assert wf["6"]["inputs"]["negative"] == ["15", 1]
+        # the AV concat must take the conditioned latent
+        assert wf["9"]["inputs"]["video_latent"] == ["15", 2]
+
+    def test_i2v_supersedes_the_empty_latent(self):
+        wf = self._wf(start_image="chain_0846_00.png")
+        refs = [(n, k) for n, node in wf.items()
+                for k, v in node["inputs"].items()
+                if isinstance(v, list) and len(v) == 2 and v[0] == "5"]
+        assert refs == [], f"empty latent still feeds {refs}"
+
+    def test_i2v_length_and_resolution_match_the_video_latent(self):
+        wf = self._wf(start_image="x.png", length=97)
+        assert wf["15"]["inputs"]["length"] == 97
+        assert wf["15"]["inputs"]["width"] == wf["5"]["inputs"]["width"]
+        assert wf["15"]["inputs"]["height"] == wf["5"]["inputs"]["height"]
+
+    def test_all_node_references_resolve(self):
+        for wf in (self._wf(), self._wf(start_image="x.png")):
+            for nid, node in wf.items():
+                for k, v in node["inputs"].items():
+                    if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
+                        assert v[0] in wf, f"node {nid}.{k} -> missing {v[0]}"

@@ -994,7 +994,7 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     FPS = 25
     MIN_FRAMES = 25    # 1s
     MAX_FRAMES = 121   # ~4.8s -- LTX-2 native clip length before quality degrades
-    _supports_i2v = False
+    _supports_i2v = True  # accepts a start_image via LTXVImgToVideo -- chains split parts
 
     # Matches runpod-wan22's render size. The original trial hardcoded 768x512
     # as a cautious placeholder while debugging the graph, which made the
@@ -1106,7 +1106,7 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
         generic CLIPLoader): it merges the standalone gemma safetensors file
         with weights that live in the main checkpoint itself.
         """
-        return {
+        wf = {
             "1": {
                 "class_type": "CheckpointLoaderSimple",
                 "inputs": {"ckpt_name": self.CHECKPOINT_NAME},
@@ -1131,6 +1131,7 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
                 "class_type": "LTXVConditioning",
                 "inputs": {"positive": ["3", 0], "negative": ["4", 0], "frame_rate": self.FPS},
             },
+            # Nodes 14/15 replace node 5 when chaining -- see the tail of this method.
             "7": {
                 "class_type": "LTXVAudioVAELoader",
                 "inputs": {"ckpt_name": self.CHECKPOINT_NAME},
@@ -1180,6 +1181,36 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
                 },
             },
         }
+        if start_image:
+            # I2V chaining for split parts: condition this part's first frame on
+            # the previous part's last frame, so a long shot stays continuous
+            # instead of jump-cutting every ~4.8s. Without this, 52% of a
+            # typical segment's runtime sits in split shots that re-roll the
+            # scene at every part boundary (see research/0023).
+            #
+            # LTXVImgToVideo supersedes EmptyLTXVLatentVideo: it returns the
+            # image-conditioned positive/negative AND the latent, so the
+            # conditioning has to flow through it before LTXVConditioning
+            # stamps the frame rate, and the audio concat takes its latent.
+            wf["14"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
+            wf["15"] = {
+                "class_type": "LTXVImgToVideo",
+                "inputs": {
+                    "positive": ["3", 0],
+                    "negative": ["4", 0],
+                    "vae": ["1", 2],
+                    "image": ["14", 0],
+                    "width": self.WIDTH,
+                    "height": self.HEIGHT,
+                    "length": length,
+                    "batch_size": 1,
+                    "strength": 1.0,
+                },
+            }
+            wf["6"]["inputs"]["positive"] = ["15", 0]
+            wf["6"]["inputs"]["negative"] = ["15", 1]
+            wf["9"]["inputs"]["video_latent"] = ["15", 2]
+        return wf
 
 
 class RunPodVaceStrategy(CharacterIdentityMixin, RunPodWanStrategy):
