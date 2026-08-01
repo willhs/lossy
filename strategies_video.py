@@ -1083,12 +1083,14 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     # frozen frame (frame-to-frame delta 0.12 against ~5 typical), which is
     # the most visible half of the hitch.
     #
-    # 18/12 was chosen by sweeping 0/12/18/24 across eight real parts: it
-    # lifts both edges from ~57%/56% of mid-clip motion to ~65%/65% and
-    # removes the frozen frames outright, while keeping 3.64s of every 4.84s
-    # part. Trimming harder keeps improving the head but discards a third of
-    # each part for a smaller return.
-    SEAM_TRIM_HEAD = 18
+    # HEAD MUST STAY 0 WHILE CHAINING. Continuity lives in the first frames --
+    # they are the ones conditioned on the previous part's last frame. A
+    # rehearsal render with an 18-frame head trim measured seam jumps of 25-43
+    # against 2.6 untrimmed: cutting the head discards precisely the matched
+    # frames and exposes a seam that has already drifted 18 frames of motion.
+    # The slow start that remains is the cost of easing out of a still
+    # conditioning frame, and it is a better trade than a visible jump.
+    SEAM_TRIM_HEAD = 0
     SEAM_TRIM_TAIL = 12
 
     # LTX-2 needs 32GB+ VRAM at FP8 (docs.ltx.io) -- skip the 24GB RTX 4090 in

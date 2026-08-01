@@ -1886,7 +1886,7 @@ class TestSeamTrim:
         assert c.actual_duration_s == 4.0
 
     def test_shot_edges_keep_their_natural_ease(self, monkeypatch, tmp_path):
-        """First part trims only its tail, last part only its head."""
+        """The first part trims its tail; the shot's final tail is left alone."""
         from clip_types import ClipResult
         s = self._ltx()
         seen = []
@@ -1899,12 +1899,15 @@ class TestSeamTrim:
         monkeypatch.setattr("strategies_video.subprocess.run", fake_run)
 
         c = ClipResult(path=str(tmp_path / "a.mp4"), actual_duration_s=4.84, cost=0.0)
-        s._trim_seam_frames(c, 0, 3)          # first part
-        assert "between(n\\,0\\," in seen[-1], "first part must keep its natural head"
+        s._trim_seam_frames(c, 0, 3)          # first part: tail trimmed
+        assert len(seen) == 1
+        assert "between(n\\,0\\," in seen[-1], "head is never trimmed while chaining"
+        assert str(round(4.84 * s.FPS) - s.SEAM_TRIM_TAIL - 1) in seen[-1]
 
-        s._trim_seam_frames(c, 2, 3)          # last part
-        assert f"between(n\\,{s.SEAM_TRIM_HEAD}\\," in seen[-1]
-        assert str(round(4.84 * s.FPS) - 1) in seen[-1], "last part must keep its natural tail"
+        # last part: nothing to trim (head is 0, and its tail is the shot's own end)
+        before = len(seen)
+        s._trim_seam_frames(c, 2, 3)
+        assert len(seen) == before, "the shot's final tail must keep its natural ease"
 
     def test_clip_too_short_to_trim_is_left_alone(self, tmp_path):
         from clip_types import ClipResult
@@ -1943,3 +1946,24 @@ class TestChainUploadIsNonFatal:
     def test_unexpected_error_returns_none_instead_of_raising(self, tmp_path):
         s = self._strategy(tmp_path, OSError("connection reset"))
         assert s._upload_start_frame("clip.mp4", 846, 3) is None
+
+
+class TestHeadTrimMustNotBreakChaining:
+    """Trimming a chained part's head throws away the frames that make it continuous.
+
+    Continuity lives in the first frames -- they are the ones conditioned on
+    the previous part's last frame. A rehearsal render with an 18-frame head
+    trim measured seam jumps of 25-43 against 2.6 untrimmed.
+    """
+
+    def test_ltx_does_not_trim_the_head_while_chaining(self):
+        from strategies_video import RunPodLtx2Strategy
+        s = RunPodLtx2Strategy
+        if s._supports_i2v:
+            assert s.SEAM_TRIM_HEAD == 0, (
+                "head trimming discards the conditioned frames and reopens the seam"
+            )
+
+    def test_tail_is_still_trimmed(self):
+        from strategies_video import RunPodLtx2Strategy
+        assert RunPodLtx2Strategy.SEAM_TRIM_TAIL > 0
