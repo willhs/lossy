@@ -46,6 +46,8 @@ Resolution note: the 0022 trial measured LTX-2 at 768x512 and called it ~3x fast
 
    This also **retroactively undermines the 0022 model trial**: `runpod-wan22` carries the mixin and LTX-2 did not, so Wan22 was judged with identity enrichment and LTX-2 without it. The "on par at least" verdict was formed on an unfair comparison in this respect as well as on resolution.
 
+3b. **A failed chain-frame upload aborted the whole render.** A stalled `scp` of the I2V conditioning frame raised `TimeoutExpired` straight through the generate loop and killed a render 84 clips in. Chaining is an enhancement -- losing it for one part costs one seam -- so it now degrades to an unchained part, with the timeout raised to 60s.
+
 4. **No I2V chaining, so long shots jump-cut internally.** `_supports_i2v = False` meant every part of a split shot was generated from scratch. The first rehearsal pass put **172s of 328s (52% of runtime) in split shots and introduced 26 cuts the film does not have** -- worst case shot 846, a 17.7s Vader/Tarkin/Leia scene rendered as four disconnected takes. The task notes flagged the flag; nobody had measured what it cost.
 
    Fixed with an `LTXVImgToVideo` branch (it supersedes `EmptyLTXVLatentVideo`, returning image-conditioned positive/negative *and* the latent, so conditioning flows through it before `LTXVConditioning` and the AV concat takes its latent). The base class's chaining plumbing needed no changes.
@@ -57,7 +59,19 @@ Resolution note: the 0022 trial measured LTX-2 at 768x512 and called it ~3x fast
    | 846 (4 parts) | 52.9 | **2.6** |
    | 794 (3 parts) | 51.7 | **2.1** |
 
-   A ~95% reduction, to a level consistent with ordinary frame-to-frame motion rather than a cut. Side benefit: Vader renders in correct black armour when chained, versus a grey sweatshirt un-chained -- each part inherits the previous part's appearance instead of re-rolling it, so chaining damps within-shot identity drift too.
+   **Those two figures are wrong** -- they were measured with `-sseof`, which samples ~0.2s before the end rather than the true final frame. Surveyed properly across every multi-part shot, comparing the actual boundary frames against normal frame-to-frame motion:
+
+   | | seam | normal motion | ratio |
+   |---|---|---|---|
+   | unchained | 44.6 | 5.24 | **8.5x** |
+   | chained | 10.4 | 4.67 | **2.2x** |
+   | chained + tail-trim | 11.5 | 5.12 | 2.2x |
+
+   So chaining takes a seam from 8.5x a normal frame step down to 2.2x -- a large, genuine win, but not the near-seamless continuity the flawed measurement suggested. **The residual 2.2x is still visible as a hitch in elongated scenes, and Will flagged it on viewing.**
+
+   Trimming the eased frames at seams was tried against it and **measured no benefit** (11.5 vs 10.4), so it is disabled. Two things were learned in the attempt: a head trim is actively harmful (seams of 25-43) because continuity lives in the conditioned first frames, and a trim retrofitted onto already-generated clips is equally harmful (23.1) because it breaks the correspondence with the frame the next part was conditioned on. Any future attempt must trim before `_upload_start_frame` and never touch the head.
+
+   Side benefit of chaining: Vader renders in correct black armour when chained versus a grey sweatshirt un-chained -- each part inherits the previous part's appearance instead of re-rolling it, so chaining damps within-shot identity drift too.
 
 5. **GPU fallback chain was too narrow to survive capacity pressure.** A re-render attempt exited with no pod at all: RTX A6000 reported no instances available and L40S errored in the same breath, and those were the only two types tried. Widened to five 48GB types ordered by price (A6000 $0.33, A40 $0.35, L40 $0.69, RTX 6000 Ada $0.74, L40S $0.79). The very next attempt found A6000 *and* A40 both unavailable and succeeded on L40 -- it would have failed outright without the fix. Also corrected the L40S rate, hardcoded at $0.54 against an actual $0.79.
 
@@ -115,11 +129,11 @@ Capacity pressure also moves cost: the successful chained re-render landed on L4
 
 **Conditional go.** Cost is not the risk -- $15-25 against a $50-60 ceiling. The pipeline runs a contiguous segment end-to-end without errors and holds its timeline.
 
-Fix before the full run (cheap, all code-side):
-- **Automatic re-provision on pod failure** -- 30% of pods died on arrival and each one stalled the run until a human restarted it. Highest-value remaining fix.
-- **Defect 8 (idle pod)** -- the only one that costs real money, and it cost more than the rehearsal render.
-- **Defect 4 (costume in canonical descriptions)** -- currently a hand-edit in gitignored output that a re-encode silently reverts. Move it into the stage-3 prompt.
-- **Defect 9 (stale artifact contamination)** -- an encode-generation stamp, or the full run starts from a clean output dir.
+**All four blocking items are now fixed** (2026-08-02):
+- **Automatic re-provision on pod failure** -- the three host-level failures raise a retryable `PodSetupError` and `RunPodSession.with_setup_retry` re-runs setup on a fresh pod up to four times, clearing stale state between attempts. Every RunPod strategy inherits it.
+- **Defect 8 (idle pod)** -- `--keep-pod` takes a duration (default 30 min) and the pod arms its own `runpodctl remove pod $RUNPOD_POD_ID` before the local process exits. "Forever" is no longer expressible. *Not yet exercised against a live pod.*
+- **Defect 4 (costume in canonical descriptions)** -- all three stage-3 description prompts now ask for stable identity and forbid clothing for human characters, keeping the carve-out for characters whose costume or shell *is* their identity. This replaces the gitignored hand-edit.
+- **Defect 9 (stale artifact contamination)** -- `manifest.encode_fingerprint` hashes the shot boundaries and `check_encode_fingerprint` refuses progress files from a different encode, with an mtime fallback that catches legacy unstamped files. Wired into video, audio and speech resume.
 
 Worth fixing, quality-visible:
 - **Defect 5** (cap identity blocks at 2) and **defect 6** (reword non-humanoid descriptions) -- together these cover the worst visual failures.
@@ -139,20 +153,22 @@ Open question for Will: the segment is watchable and recognisably Star Wars in p
 
 ## Spend
 
-**$7.62 total this session**, against ~$3.90 spent previously on the goal (~$11.52 cumulative, ceiling $50-60).
+**~$12.30 total this session**, against ~$3.90 spent previously on the goal (~$16.20 cumulative, ceiling $50-60).
 
 | | |
 |---|---|
-| Final chained render, 88 shots (L40 @ $0.69/hr, 1.6hrs) | $1.10 |
+| Final render, 88 shots chained (A6000, 2.0hrs) | $1.35 |
+| Earlier chained render (L40 @ $0.69/hr, 1.6hrs) | $1.10 |
+| Abandoned head-trim render + its crash restart | $1.25 |
+| Chaining validation on one shot | $0.31 |
 | First 88-shot render (A6000 @ $0.33/hr, 2.5hrs) -- superseded by chaining | $0.83 |
 | Speech, 70 lines (fal) | $0.16 |
 | Ambience, 86 shots | $0.20 |
-| Chaining validation on shot 846 | $0.31 |
 | Un-enriched + costume-bug renders (archived) | $0.46 |
 | Interrupt/resume test -- found the shot-dropping bug | $0.16 |
 | **Idle pod left running after a completed render** | **$3.40** |
 | **Three pods dead on CUDA init, no output** | **$1.05** |
 
-Useful generation was about **$2.60 of $7.62**. The rest was overhead, waste, and superseded work -- dominated by the idle pod and dead-on-arrival pods, both of which are fixable in code.
+Useful generation was about **$2.60 of ~$12.30**. The rest was overhead, waste, and superseded work -- dominated by the idle pod and dead-on-arrival pods, both of which are fixable in code.
 
 Note the L40 ran the same 88 shots in 1.6hrs versus 2.5hrs on the A6000, so the pricier GPU was only ~30% more expensive in total, not 2x.
