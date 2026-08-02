@@ -360,6 +360,12 @@ class RunPodMMAudioStrategy(AudioStrategy):
         return _split_duration(target_s, self.MIN_DURATION, self.MAX_DURATION)
 
     def _ensure_pod(self):
+        """Bring a working pod up, re-provisioning if one fails to come alive."""
+        if self._setup_done:
+            return
+        self._session.with_setup_retry(self._setup_pod_once)
+
+    def _setup_pod_once(self):
         """Connect to existing pod or create new one, install MMAudio."""
         if self._setup_done:
             return
@@ -642,6 +648,12 @@ class RunPodMusicGenStrategy(AudioStrategy):
         return _split_duration(target_s, self.MIN_DURATION, self.MAX_DURATION)
 
     def _ensure_pod(self):
+        """Bring a working pod up, re-provisioning if one fails to come alive."""
+        if self._setup_done:
+            return
+        self._session.with_setup_retry(self._setup_pod_once)
+
+    def _setup_pod_once(self):
         if self._setup_done:
             return
         self._session.ensure_pod()

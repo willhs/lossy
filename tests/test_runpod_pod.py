@@ -173,3 +173,73 @@ class TestKeepPodTTL:
         s = RunPodSession(str(tmp_path), keep_pod=30)
         s.ssh_host, s.ssh_port = "1.2.3.4", 22
         assert s.arm_self_destruct(0) is False
+
+
+class TestPodSetupRetry:
+    """Pod provisioning must re-provision on failure, not stall the run.
+
+    Across ten attempts in one rehearsal session, three pods died on CUDA init
+    before ComfyUI started and one attempt found no capacity on any GPU type.
+    Each stalled the run until a human reissued the command.
+    """
+
+    def test_succeeds_first_time_without_retrying(self, tmp_path):
+        s = RunPodSession(str(tmp_path))
+        calls = []
+        s.with_setup_retry(lambda: calls.append(1))
+        assert calls == [1]
+
+    def test_retries_on_pod_setup_error_then_succeeds(self, tmp_path, monkeypatch):
+        import runpod_pod
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda *_: None)
+        s = RunPodSession(str(tmp_path))
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            if len(calls) < 3:
+                raise runpod_pod.PodSetupError("CUDA unknown error")
+        s.with_setup_retry(flaky)
+        assert len(calls) == 3, "should retry until a healthy pod comes up"
+
+    def test_clears_stale_pod_state_between_attempts(self, tmp_path, monkeypatch):
+        import runpod_pod
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda *_: None)
+        s = RunPodSession(str(tmp_path))
+        seen_ids = []
+
+        def flaky():
+            seen_ids.append(s.pod_id)
+            if len(seen_ids) < 2:
+                s.pod_id = "dead-pod"
+                raise runpod_pod.PodSetupError("ComfyUI did not come up")
+        s.with_setup_retry(flaky)
+        # the retry must not inherit the dead pod's id, or it would try to
+        # reconnect to a terminated pod instead of provisioning a new one
+        assert seen_ids[1] is None
+
+    def test_gives_up_after_the_attempt_limit(self, tmp_path, monkeypatch):
+        import runpod_pod
+        import pytest
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda *_: None)
+        s = RunPodSession(str(tmp_path))
+        calls = []
+
+        def always_fails():
+            calls.append(1)
+            raise runpod_pod.PodSetupError("no capacity")
+        with pytest.raises(runpod_pod.PodSetupError):
+            s.with_setup_retry(always_fails, attempts=3)
+        assert len(calls) == 3
+
+    def test_non_setup_errors_are_not_retried(self, tmp_path):
+        import pytest
+        s = RunPodSession(str(tmp_path))
+        calls = []
+
+        def bug():
+            calls.append(1)
+            raise ValueError("a real bug, not a flaky host")
+        with pytest.raises(ValueError):
+            s.with_setup_retry(bug)
+        assert len(calls) == 1, "retrying a genuine bug just wastes pods"

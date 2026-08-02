@@ -418,6 +418,17 @@ class RunPodWanStrategy(GenerationStrategy):
         clip.actual_duration_s = manifest.probe_duration(clip.path)
 
     def _ensure_pod(self):
+        """Bring a working pod up, re-provisioning if one fails to come alive.
+
+        Inherited by every RunPod video strategy: setup is the fragile part
+        (bad hosts, no capacity), and without a retry each failure stalls the
+        run until a human notices.
+        """
+        if self._setup_done:
+            return
+        self._session.with_setup_retry(self._setup_pod_once)
+
+    def _setup_pod_once(self):
         if self._setup_done:
             return
         self._session.ensure_pod()
@@ -1180,7 +1191,7 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
         if "OK" not in (result.stdout or ""):
             print(f"  Warning: ComfyUI-LTXVideo install may have failed: {(result.stdout or '')[-500:]}")
 
-    def _ensure_pod(self):
+    def _setup_pod_once(self):
         if self._setup_done:
             return
         self._session.ensure_pod()
@@ -1363,7 +1374,7 @@ class RunPodVaceStrategy(CharacterIdentityMixin, RunPodWanStrategy):
         self._uploaded_portraits: dict = {}  # name -> remote filename
         self._init_character_identity(character_shot_map, characters_data)
 
-    def _ensure_pod(self):
+    def _setup_pod_once(self):
         if self._setup_done:
             return
         self._session.ensure_pod()

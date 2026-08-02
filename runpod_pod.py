@@ -35,6 +35,17 @@ COMFYUI_DIR = "/workspace/runpod-slim/ComfyUI"
 KEEP_POD_DEFAULT_MINUTES = 30
 REAPER_PID_FILE = "/workspace/.lossy_reaper.pid"
 
+# Pod provisioning fails often enough that a long run cannot treat it as
+# fatal. Across ten attempts in one rehearsal session, three pods died on
+# CUDA init before ComfyUI started and one found no capacity on any GPU type
+# -- each stalled the run until a human reissued the command.
+POD_SETUP_ATTEMPTS = 4
+POD_SETUP_BACKOFF_S = 30
+
+
+class PodSetupError(RuntimeError):
+    """A pod could not be provisioned or brought up. Retryable on a new pod."""
+
 
 class RunPodSession:
     """Manages a RunPod ComfyUI pod with state file persistence.
@@ -195,8 +206,9 @@ class RunPodSession:
                 continue
 
         if pod is None:
-            print("Error: No GPU available. Try again later.")
-            sys.exit(1)
+            raise PodSetupError(
+                f"no capacity on any of {len(self.gpu_types)} GPU types"
+            )
 
         self.pod_id = pod["id"]
         self.gpu_hourly_rate = gpu_rate
@@ -219,7 +231,9 @@ class RunPodSession:
         else:
             print(f"  Error: Pod did not start within {POD_READY_TIMEOUT}s")
             self.terminate()
-            sys.exit(1)
+            # Retryable: a host that never comes up is the same class of
+            # problem as one whose CUDA fails -- a fresh pod usually works.
+            raise PodSetupError(f"pod did not start within {POD_READY_TIMEOUT}s")
 
         self.base_url = f"https://{self.pod_id}-{COMFYUI_PORT}.proxy.runpod.net"
         print(f"  Pod ready: {self.base_url}")
@@ -264,6 +278,38 @@ class RunPodSession:
         # not terminate underneath the run that just picked it up.
         self.disarm_self_destruct()
         return True
+
+    def with_setup_retry(self, setup_fn, attempts: int = POD_SETUP_ATTEMPTS) -> None:
+        """Run a pod-setup routine, re-provisioning onto a fresh pod on failure.
+
+        Provisioning is unreliable enough that a long run cannot treat it as
+        fatal: in one rehearsal session three of ten pods died on CUDA init
+        before ComfyUI started and one attempt found no capacity at all, and
+        every one of them stalled the run until a human reissued the command.
+
+        Each retry starts from scratch -- the failed pod is already terminated
+        by the time PodSetupError is raised, and the stale state file is
+        cleared so the next attempt provisions rather than reconnects.
+        """
+        last: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                setup_fn()
+                return
+            except PodSetupError as e:
+                last = e
+                self.pod_id = None
+                self.base_url = None
+                self.ssh_host = None
+                self.remove_state()
+                if attempt < attempts:
+                    wait = POD_SETUP_BACKOFF_S * attempt
+                    print(f"  Pod setup failed ({e}). "
+                          f"Retrying on a fresh pod in {wait}s "
+                          f"[attempt {attempt + 1}/{attempts}]...")
+                    time.sleep(wait)
+        print(f"Error: pod setup failed {attempts} times; giving up.")
+        raise last if last else PodSetupError("pod setup failed")
 
     def arm_self_destruct(self, minutes: int) -> bool:
         """Schedule the pod to terminate itself after `minutes`. Returns success.
@@ -413,7 +459,9 @@ class RunPodSession:
             except Exception:
                 pass
         self.terminate()
-        sys.exit(1)
+        # Retryable: this is overwhelmingly a bad host (CUDA failing to
+        # initialise before ComfyUI starts), and a fresh pod usually works.
+        raise PodSetupError("ComfyUI did not come up on this pod")
 
     def restart_comfyui(self):
         """Stop ComfyUI, then start it again. Used after installing custom nodes."""
