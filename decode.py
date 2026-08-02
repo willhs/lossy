@@ -167,6 +167,10 @@ def run_decode(args, strategy: GenerationStrategy):
     if os.path.exists(progress_path):
         with open(progress_path) as f:
             progress = json.load(f)
+        progress["_mtime"] = os.path.getmtime(progress_path)
+        if not manifest.check_encode_fingerprint(progress, output_dir, f"decode progress for {strategy.name}"):
+            sys.exit(1)
+        progress.pop("_mtime", None)
     else:
         progress = {"completed": [], "failed": [], "total_cost_estimate": 0.0}
 
@@ -303,6 +307,10 @@ def run_audio(args, strategy: AudioStrategy):
     if os.path.exists(progress_path):
         with open(progress_path) as f:
             progress = json.load(f)
+        progress["_mtime"] = os.path.getmtime(progress_path)
+        if not manifest.check_encode_fingerprint(progress, output_dir, f"audio progress for {strategy.name}"):
+            sys.exit(1)
+        progress.pop("_mtime", None)
     else:
         progress = {"completed": [], "failed": [], "skipped": [], "total_cost_estimate": 0.0, "clips": {}}
 
@@ -443,6 +451,13 @@ def run_speech(args, strategy: "SpeechStrategy | KokoroSpeechStrategy"):
         with open(progress_path) as f:
             loaded = json.load(f)
         if loaded.get("format") == "v2":
+            # Speech clips are keyed by dialog-line index, which a re-encode
+            # renumbers just as it renumbers shots -- reusing them would put
+            # the wrong words on the wrong moments.
+            loaded["_mtime"] = os.path.getmtime(progress_path)
+            if not manifest.check_encode_fingerprint(loaded, output_dir, "speech progress"):
+                sys.exit(1)
+            loaded.pop("_mtime", None)
             progress = loaded
 
     completed_set = set(progress["completed"])

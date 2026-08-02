@@ -236,6 +236,67 @@ def save_shots(output_dir: str, shots: list[dict], dialog: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Encode fingerprint
+# ---------------------------------------------------------------------------
+#
+# Clips, audio and speech are all keyed by shot (or dialog-line) index, and
+# nothing in those filenames says which *encode* produced them. Re-encoding a
+# film renumbers shots -- a July re-encode of Star Wars IV shifted 1618 of
+# 2069 -- so March audio for "shot 794" silently became audio for entirely
+# different footage. A stitch happily muxed it and reported no error.
+#
+# The fingerprint pins a set of generated artifacts to the shot list they were
+# made from, so that mismatch becomes an error instead of a wrong soundtrack.
+
+
+def encode_fingerprint(output_dir: str) -> str:
+    """Short stable hash of the current shot list's identity.
+
+    Derived from the shot boundaries rather than stored in the file, so it
+    works retroactively on output dirs encoded before this existed. Any
+    re-encode that changes shot count, ordering or timings changes the hash.
+    """
+    import hashlib
+
+    shots, dialog = load_shots(output_dir)
+    h = hashlib.sha1()
+    h.update(f"{len(shots)}|{len(dialog)}".encode())
+    for s in shots:
+        h.update(f"{s['index']}:{s['start_s']:.3f}:{s['end_s']:.3f};".encode())
+    return h.hexdigest()[:12]
+
+
+def check_encode_fingerprint(progress: dict, output_dir: str, label: str) -> bool:
+    """True if `progress` belongs to the current shot list.
+
+    Stamps the fingerprint when absent so existing progress files become
+    protected from here on. Legacy files that predate stamping cannot be
+    verified by hash, so they are also checked by mtime: a shots.json newer
+    than the progress file means the encode moved on without it.
+    """
+    current = encode_fingerprint(output_dir)
+    stored = progress.get("encode_fingerprint")
+
+    if stored is None:
+        shots_mtime = os.path.getmtime(shots_path(output_dir))
+        progress["encode_fingerprint"] = current
+        stale_by_time = progress.get("_mtime") and progress["_mtime"] < shots_mtime
+        if stale_by_time:
+            print(f"  Warning: {label} predates the current shots.json and cannot be "
+                  f"verified; treat its contents as suspect.")
+            return False
+        return True
+
+    if stored != current:
+        print(f"  Error: {label} was generated from a different encode "
+              f"({stored} != {current}).")
+        print("  Its shot indices refer to different footage. Archive or delete it "
+              "before regenerating, or the output will silently mix two encodes.")
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # speakers.json / voice_map.json (decode-side sidecars; shots.json stays
 # untouched). Both are optional: their loaders return {} when the file is
 # absent, which is what makes speech generation's single-voice fallback work

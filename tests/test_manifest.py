@@ -1,6 +1,7 @@
 """Tests for manifest.py's speakers.json / voice_map.json sidecar helpers."""
 
 import json
+import os
 
 import manifest
 
@@ -77,3 +78,58 @@ class TestExistingClipParts:
         self._touch(tmp_path, "0846-01.mp4")
         self._touch(tmp_path, "0846-03.mp4")
         assert manifest.existing_clip_parts(str(tmp_path), 846, 3) == []
+
+
+class TestEncodeFingerprint:
+    """Generated artifacts must be pinned to the encode that produced them.
+
+    Clips, audio and speech are keyed by shot (or dialog-line) index, and
+    nothing in those filenames says which encode they came from. A re-encode
+    of Star Wars IV renumbered 1618 of 2069 shots, so March audio for "shot
+    794" silently became audio for different footage -- and a stitch muxed it
+    with no error.
+    """
+
+    def _write_shots(self, tmp_path, n=3, offset=0.0):
+        shots = [{"index": i, "start_s": i * 2.0 + offset, "end_s": i * 2.0 + 2.0 + offset,
+                  "duration_s": 2.0, "description": {}} for i in range(n)]
+        manifest.save_shots(str(tmp_path), shots, [])
+
+    def test_fingerprint_is_stable_for_the_same_shot_list(self, tmp_path):
+        self._write_shots(tmp_path)
+        assert manifest.encode_fingerprint(str(tmp_path)) == manifest.encode_fingerprint(str(tmp_path))
+
+    def test_fingerprint_changes_when_shots_are_renumbered(self, tmp_path):
+        self._write_shots(tmp_path, n=3)
+        before = manifest.encode_fingerprint(str(tmp_path))
+        self._write_shots(tmp_path, n=4)          # a re-encode finding another shot
+        assert manifest.encode_fingerprint(str(tmp_path)) != before
+
+    def test_fingerprint_changes_when_boundaries_shift(self, tmp_path):
+        self._write_shots(tmp_path)
+        before = manifest.encode_fingerprint(str(tmp_path))
+        self._write_shots(tmp_path, offset=0.5)   # same count, different timings
+        assert manifest.encode_fingerprint(str(tmp_path)) != before
+
+    def test_matching_progress_is_accepted(self, tmp_path):
+        self._write_shots(tmp_path)
+        prog = {"encode_fingerprint": manifest.encode_fingerprint(str(tmp_path))}
+        assert manifest.check_encode_fingerprint(prog, str(tmp_path), "test") is True
+
+    def test_progress_from_a_different_encode_is_rejected(self, tmp_path):
+        self._write_shots(tmp_path)
+        prog = {"encode_fingerprint": "deadbeef1234"}
+        assert manifest.check_encode_fingerprint(prog, str(tmp_path), "test") is False
+
+    def test_unstamped_progress_gets_stamped(self, tmp_path):
+        self._write_shots(tmp_path)
+        prog = {}
+        assert manifest.check_encode_fingerprint(prog, str(tmp_path), "test") is True
+        assert prog["encode_fingerprint"] == manifest.encode_fingerprint(str(tmp_path))
+
+    def test_unstamped_progress_older_than_the_encode_is_rejected(self, tmp_path):
+        """The retroactive check: the March-audio-vs-July-encode case."""
+        self._write_shots(tmp_path)
+        shots_mtime = os.path.getmtime(manifest.shots_path(str(tmp_path)))
+        prog = {"_mtime": shots_mtime - 3600}     # progress written an hour earlier
+        assert manifest.check_encode_fingerprint(prog, str(tmp_path), "test") is False
