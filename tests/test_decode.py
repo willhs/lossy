@@ -2021,3 +2021,45 @@ class TestCrossfadeJoins:
         # first join at 4.0 - 0.5; second at (4.0 + 4.0 - 0.5) - 0.5
         assert "offset=3.5" in fc
         assert "offset=7.0" in fc
+
+
+class TestChainConditioningFrame:
+    """The frame handed to the next part must be the clip's LAST frame.
+
+    `-sseof -N -frames:v 1` takes the FIRST frame of the trailing window, not
+    the last -- with -0.2 that is ~5 frames early at 25fps. Every chained part
+    therefore restarted 4 frames back and replayed them, undoing motion at each
+    join: measured across four joins, the next part's first frame best-matched
+    the frame 4 before the end (diff ~2.5) against 8-19 for the true last one.
+    """
+
+    def _cmd_for(self, monkeypatch):
+        import strategies_video
+        from strategies_video import RunPodLtx2Strategy
+        seen = {}
+
+        class R:
+            returncode = 0
+        monkeypatch.setattr(strategies_video.subprocess, "run",
+                            lambda cmd, **kw: (seen.setdefault("cmd", cmd), R())[1])
+        monkeypatch.setattr(strategies_video.os.path, "exists", lambda p: True)
+        monkeypatch.setattr(strategies_video.os.path, "getsize", lambda p: 100)
+        s = RunPodLtx2Strategy.__new__(RunPodLtx2Strategy)
+        s._extract_last_frame("clip.mp4", "out.png")
+        return seen["cmd"]
+
+    def test_does_not_take_the_first_frame_of_the_window(self, monkeypatch):
+        cmd = self._cmd_for(monkeypatch)
+        assert "-frames:v" not in cmd, (
+            "-frames:v 1 grabs the first frame after the seek, which is several "
+            "frames before the end -- that is the motion-rewind bug"
+        )
+
+    def test_uses_update_so_the_last_frame_wins(self, monkeypatch):
+        cmd = self._cmd_for(monkeypatch)
+        assert "-update" in cmd, "every frame must overwrite so the final one remains"
+
+    def test_seeks_from_the_end(self, monkeypatch):
+        cmd = self._cmd_for(monkeypatch)
+        assert "-sseof" in cmd
+        assert float(cmd[cmd.index("-sseof") + 1]) < 0

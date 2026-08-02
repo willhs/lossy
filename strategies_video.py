@@ -708,10 +708,23 @@ class RunPodWanStrategy(GenerationStrategy):
         }
 
     def _extract_last_frame(self, clip_path: str, out_path: str) -> bool:
-        """Write a clip's final frame to out_path (PNG). Returns success."""
+        """Write a clip's final frame to out_path (PNG). Returns success.
+
+        `-sseof -N -frames:v 1` looks right but takes the FIRST frame in the
+        trailing window, not the last -- with -0.2 that is ~5 frames early at
+        25fps. Handing the model that frame as "continue from here" made every
+        chained part restart 4 frames back and replay them: motion visibly
+        undone at each join, measured across four joins as a best match 4
+        frames before the end (diff ~2.5) against 8-19 for the true final
+        frame.
+
+        Dropping -frames:v 1 and keeping -update 1 writes every frame in the
+        window, each overwriting the last, so the file ends up holding the
+        clip's actual final frame.
+        """
         r = subprocess.run(
-            ["ffmpeg", "-y", "-sseof", "-0.2", "-i", clip_path,
-             "-frames:v", "1", "-update", "1", out_path],
+            ["ffmpeg", "-y", "-sseof", "-0.5", "-i", clip_path,
+             "-update", "1", out_path],
             capture_output=True,
         )
         return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0
