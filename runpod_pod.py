@@ -17,7 +17,12 @@ GPU_TYPES = [
     ("NVIDIA RTX 4000 Ada Generation", 0.34),
 ]
 
-CLOUD_TYPE = "COMMUNITY"  # set to "SECURE" for guaranteed (pricier) datacenter availability
+# Community cloud is cheapest but its stock genuinely runs out -- a rehearsal
+# slice found no capacity across all five 48GB types for ~15 minutes. Secure
+# cloud is RunPod's own datacentres: pricier, far more reliably available. Try
+# community first and fall back rather than failing the run.
+CLOUD_TYPES = [t for t in os.environ.get("LOSSY_RUNPOD_CLOUD", "COMMUNITY,SECURE").split(",") if t]
+CLOUD_TYPE = CLOUD_TYPES[0]  # back-compat for anything reading the old name
 DOCKER_IMAGE = "runpod/comfyui:latest"
 CONTAINER_DISK_GB = 50
 COMFYUI_PORT = 8188
@@ -175,8 +180,12 @@ class RunPodSession:
 
         pod = None
         gpu_rate = self.gpu_types[0][1]
-        for gpu_type, rate in self.gpu_types:
-            print(f"  Trying {gpu_type}...")
+        # Cheapest cloud first, then each GPU within it; only escalate to the
+        # pricier cloud once the cheap one is genuinely out of everything.
+        attempts = [(c, g, r) for c in CLOUD_TYPES for g, r in self.gpu_types]
+        for cloud_type, gpu_type, rate in attempts:
+            label = gpu_type if cloud_type == CLOUD_TYPES[0] else f"{gpu_type} [{cloud_type}]"
+            print(f"  Trying {label}...")
             try:
                 ssh_pubkey = ""
                 pubkey_path = os.path.expanduser("~/.ssh/id_ed25519.pub")
@@ -190,7 +199,7 @@ class RunPodSession:
                     name="lossy-comfyui",
                     image_name=DOCKER_IMAGE,
                     gpu_type_id=gpu_type,
-                    cloud_type=CLOUD_TYPE,
+                    cloud_type=cloud_type,
                     gpu_count=1,
                     container_disk_in_gb=CONTAINER_DISK_GB,
                     ports=f"{COMFYUI_PORT}/http,22/tcp",
@@ -202,12 +211,13 @@ class RunPodSession:
                 print(f"  Got {gpu_type} @ ${rate}/hr")
                 break
             except Exception as e:
-                print(f"  {gpu_type} unavailable: {e}")
+                print(f"  {label} unavailable: {e}")
                 continue
 
         if pod is None:
             raise PodSetupError(
-                f"no capacity on any of {len(self.gpu_types)} GPU types"
+                f"no capacity on any of {len(self.gpu_types)} GPU types "
+                f"across {len(CLOUD_TYPES)} cloud(s)"
             )
 
         self.pod_id = pod["id"]

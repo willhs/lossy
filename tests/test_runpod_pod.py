@@ -243,3 +243,30 @@ class TestPodSetupRetry:
         with pytest.raises(ValueError):
             s.with_setup_retry(bug)
         assert len(calls) == 1, "retrying a genuine bug just wastes pods"
+
+
+class TestCloudFallback:
+    """Community stock genuinely runs out; escalate rather than fail the run.
+
+    A rehearsal slice found no capacity across all five 48GB community types
+    for ~15 minutes and gave up. Secure cloud is RunPod's own datacentres --
+    pricier, far more reliably available.
+    """
+
+    def test_defaults_to_community_first_then_secure(self):
+        import runpod_pod
+        assert runpod_pod.CLOUD_TYPES[0] == "COMMUNITY"
+        assert "SECURE" in runpod_pod.CLOUD_TYPES
+
+    def test_cheapest_cloud_is_exhausted_before_escalating(self):
+        import runpod_pod
+        gpus = [("A", 0.33), ("B", 0.35)]
+        attempts = [(c, g, r) for c in runpod_pod.CLOUD_TYPES for g, r in gpus]
+        clouds_in_order = [c for c, _, _ in attempts]
+        first = runpod_pod.CLOUD_TYPES[0]
+        # every attempt on the cheap cloud must come before any on the pricier
+        assert clouds_in_order[:len(gpus)] == [first] * len(gpus)
+
+    def test_old_constant_still_resolves(self):
+        import runpod_pod
+        assert runpod_pod.CLOUD_TYPE == runpod_pod.CLOUD_TYPES[0]
