@@ -1021,7 +1021,12 @@ def _make_supervised_system_prompt(cast_entries):
         "Return a JSON object with a \"characters\" array. Each entry has:\n"
         "- \"name\": lowercase identifier matching the cast list (e.g., \"luke_skywalker\") — underscores, no spaces\n"
         "- \"display_name\": character's name as listed in credits\n"
-        "- \"description\": canonical appearance description (~50-80 words): age, gender, skin tone, hair, eyes, costume\n"
+        "- \"description\": canonical IDENTITY description (~50-80 words): age range, gender, "
+        "skin tone, hair colour and style, eye colour, build, distinctive facial features and bearing. "
+        "Do NOT describe clothing or costume for human characters — this one description is prepended "
+        "to every shot they appear in, so a costume named here is wrong everywhere they wear something "
+        "else. Exception: when the costume or shell IS the character and never changes (droids, masked "
+        "or armoured figures, non-human creatures), describe it.\n"
         "- \"shots\": list of shot indices (integers) where this character appears\n\n"
         "Rules:\n"
         "- Only match subjects to the provided cast list — do not invent unlisted characters\n"
@@ -1144,8 +1149,13 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
             desc_prompt = (
                 f"Character: {stub['display_name']}\n"
                 f"Appears in these shots:\n" + "\n".join(shot_subjects[:20]) + "\n\n"
-                "Write a canonical appearance description (~50-80 words): "
-                "age, gender, skin tone, hair, eyes, costume."
+                "Write a canonical IDENTITY description (~50-80 words): age range, gender, "
+                "skin tone, hair colour and style, eye colour, build, distinctive facial "
+                "features and bearing. Do NOT describe clothing or costume for a human "
+                "character — this description is prepended to every shot they appear in, so "
+                "a costume named here is wrong everywhere they wear something else. "
+                "Exception: when the costume or shell IS the character and never changes "
+                "(droids, masked or armoured figures, non-human creatures), describe it."
             )
             resp = client.models.generate_content(
                 model=ENCODE_MODEL,
@@ -1162,7 +1172,7 @@ STAGE3_SYSTEM_PROMPT = """You are a film analysis expert. Given a list of subjec
 Return a JSON object with a "characters" array. Each character entry has:
 - "name": a short identifier (e.g., "luke", "han_solo", "vader") — lowercase, underscores, no spaces
 - "display_name": the character's name as it would appear in credits (e.g., "Luke Skywalker")
-- "description": a canonical appearance description — specific enough to generate a consistent portrait. Include: age range, gender, ethnicity/skin tone, hair color/style, eye color, facial features, typical clothing/costume. ~50-80 words.
+- "description": a canonical IDENTITY description — specific enough to generate a consistent portrait. Include: age range, gender, ethnicity/skin tone, hair color/style, eye color, build, distinctive facial features and bearing. ~50-80 words. Do NOT describe clothing or costume for human characters: this one description is prepended to every shot the character appears in, so a costume named here is wrong everywhere they wear something else. Exception: when the costume or shell IS the character and never changes (droids, masked or armoured figures, non-human creatures), describe it.
 - "shots": list of shot indices (integers) where this character appears
 
 Rules:

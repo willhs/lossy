@@ -1657,3 +1657,39 @@ class TestGeneratePromptsDoesNotPropagateHallucinatedIdentity:
         # Continuity (setting/lighting) still passed through.
         assert "a dark chamber aboard a starship" in second_text
         assert "dim, with the primary light source being the hologram itself" in second_text
+
+
+class TestCanonicalDescriptionsExcludeWardrobe:
+    """Canonical character descriptions must carry identity, not costume.
+
+    Stage 3 derives one description per character from all their shots and the
+    decoder prepends it verbatim to every shot they appear in. When it named a
+    costume, that costume followed the character through the whole film: Luke's
+    description said "typically seen in an orange flight suit... yellow
+    goggles" (derived from the trench run), so he wore X-wing pilot gear on
+    Tatooine and the Death Star -- wrong in 334 of his 572 shots.
+
+    Wardrobe belongs in the per-shot description, which is already accurate.
+    """
+
+    def _prompts(self):
+        import encode, inspect
+        src = inspect.getsource(encode)
+        return src
+
+    def test_stage3_prompts_forbid_costume_for_humans(self):
+        src = self._prompts()
+        # every place that asks for a canonical description must also forbid
+        # clothing for human characters
+        assert src.count("Do NOT describe clothing or costume") >= 3
+
+    def test_stage3_prompts_keep_the_costume_is_identity_exception(self):
+        # droids, masked and armoured figures never change, and stripping
+        # their shell would strip their identity (C-3PO becomes a man)
+        src = self._prompts()
+        assert src.count("costume or shell IS the character") >= 3
+
+    def test_stage3_prompts_still_ask_for_stable_identity_traits(self):
+        src = self._prompts()
+        for trait in ("age range", "hair colour", "bearing"):
+            assert trait in src or trait.replace("colour", "color") in src
