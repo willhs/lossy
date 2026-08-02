@@ -1868,11 +1868,12 @@ class TestSeamTrim:
         s = self._ltx()
         assert s._usable_frames_per_part() == s.MAX_FRAMES - s.SEAM_TRIM_HEAD - s.SEAM_TRIM_TAIL
 
-    def test_long_shots_split_into_more_parts_to_cover_the_trim(self):
+    def test_part_planning_accounts_for_whatever_trim_is_configured(self):
+        """With trimming off, parts cover the full clip; with it on, more parts."""
         s = self._ltx()
-        # a 17.7s shot at 4.84s raw parts would need 4; trimmed parts need more
-        raw_parts = -(-17.7 // (s.MAX_FRAMES / s.FPS))
-        assert len(s._target_durations(17.7)) > raw_parts
+        baseline = len(s._target_durations(17.7))
+        s.SEAM_TRIM_HEAD, s.SEAM_TRIM_TAIL = 0, 12
+        assert len(s._target_durations(17.7)) > baseline
 
     def test_short_single_part_shot_is_unaffected(self):
         s = self._ltx()
@@ -1898,6 +1899,7 @@ class TestSeamTrim:
             return R()
         monkeypatch.setattr("strategies_video.subprocess.run", fake_run)
 
+        s.SEAM_TRIM_TAIL = 12  # mechanism is currently disabled; exercise it directly
         c = ClipResult(path=str(tmp_path / "a.mp4"), actual_duration_s=4.84, cost=0.0)
         s._trim_seam_frames(c, 0, 3)          # first part: tail trimmed
         assert len(seen) == 1
@@ -1964,6 +1966,10 @@ class TestHeadTrimMustNotBreakChaining:
                 "head trimming discards the conditioned frames and reopens the seam"
             )
 
-    def test_tail_is_still_trimmed(self):
+    def test_trimming_is_disabled_after_measuring_no_benefit(self):
+        # Surveyed across every multi-part shot: chaining takes the seam from
+        # 44.6 to 10.4, and a 12-frame tail trim moved it to 11.5 -- no gain,
+        # at the cost of frames and extra parts. The mechanism stays for a
+        # future attempt; the constants are zero.
         from strategies_video import RunPodLtx2Strategy
-        assert RunPodLtx2Strategy.SEAM_TRIM_TAIL > 0
+        assert RunPodLtx2Strategy.SEAM_TRIM_TAIL == 0

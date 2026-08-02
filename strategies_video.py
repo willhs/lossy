@@ -1083,15 +1083,27 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
     # frozen frame (frame-to-frame delta 0.12 against ~5 typical), which is
     # the most visible half of the hitch.
     #
-    # HEAD MUST STAY 0 WHILE CHAINING. Continuity lives in the first frames --
-    # they are the ones conditioned on the previous part's last frame. A
-    # rehearsal render with an 18-frame head trim measured seam jumps of 25-43
-    # against 2.6 untrimmed: cutting the head discards precisely the matched
-    # frames and exposes a seam that has already drifted 18 frames of motion.
-    # The slow start that remains is the cost of easing out of a still
-    # conditioning frame, and it is a better trade than a visible jump.
+    # Seam trimming is DISABLED: it was tried against the residual hitch at
+    # part boundaries and measured no benefit. Surveyed across every
+    # multi-part shot of the rehearsal segment (seam = mean abs frame delta
+    # across the boundary, against normal frame-to-frame motion):
+    #
+    #   unchained            seam 44.6   motion 5.24   8.5x
+    #   chained              seam 10.4   motion 4.67   2.2x
+    #   chained + tail-trim  seam 11.5   motion 5.12   2.2x
+    #
+    # Chaining does the work; trimming 12 frames off the tail left the seam
+    # fractionally worse and still produced near-frozen final frames (4/34
+    # vs 5/26), while costing frames and forcing extra parts per shot.
+    #
+    # If this is revisited: HEAD MUST STAY 0 while chaining. Continuity lives
+    # in the first frames -- they are the ones conditioned on the previous
+    # part's last frame -- and an 18-frame head trim measured seams of 25-43,
+    # undoing chaining entirely. Any trim must also run before
+    # _upload_start_frame; retrofitting one onto generated clips breaks the
+    # correspondence and measured 23.1.
     SEAM_TRIM_HEAD = 0
-    SEAM_TRIM_TAIL = 12
+    SEAM_TRIM_TAIL = 0
 
     # LTX-2 needs 32GB+ VRAM at FP8 (docs.ltx.io) -- skip the 24GB RTX 4090 in
     # the default fallback chain, it would OOM. All of these are 48GB, ordered
