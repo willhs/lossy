@@ -556,12 +556,22 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
         for path in concat_list:
             f.write(f"file '{os.path.abspath(path)}'\n")
 
-    # Concatenate video
+    # Concatenate video.
+    #
+    # Re-encode rather than stream-copy. Retiming leaves every clip at its own
+    # effective frame rate (setpts changes timing, not frame count) and the
+    # crossfaded shots come back at a normalised 25fps, so a copy-concat mixes
+    # timebases and emits colliding timestamps -- ffmpeg reports "non
+    # monotonically increasing dts" and the result plays choppy with black
+    # flashes at shot boundaries. One uniform encode costs a couple of minutes
+    # of local CPU and no GPU time.
     _run_ffmpeg(
         [
             "ffmpeg", "-f", "concat", "-safe", "0",
             "-i", concat_file,
-            "-c", "copy", "-y", output_path,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-r", str(XFADE_FPS),
+            "-fps_mode", "cfr", "-y", output_path,
         ],
         f"video concat for {label}",
     )
