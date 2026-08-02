@@ -1973,3 +1973,51 @@ class TestHeadTrimMustNotBreakChaining:
         # future attempt; the constants are zero.
         from strategies_video import RunPodLtx2Strategy
         assert RunPodLtx2Strategy.SEAM_TRIM_TAIL == 0
+
+
+class TestCrossfadeJoins:
+    """Chained parts are dissolved together so the join stops reading as a hitch.
+
+    Chaining takes a join from ~8.5x a normal frame step to ~2.2x, but the
+    residual is still visible and there are ~617 joins across the film -- one
+    every ~12s. The two sides of a chained join are already visually close,
+    which is the condition a short dissolve hides well.
+    """
+
+    def test_crossfade_is_on_by_default(self):
+        import stitch
+        assert stitch.CROSSFADE_S > 0
+
+    def test_parts_shorter_than_the_dissolve_are_not_merged(self, tmp_path, monkeypatch):
+        import stitch
+        monkeypatch.setattr(stitch, "_probe_duration", lambda p: 0.1)
+        out = str(tmp_path / "m.mp4")
+        assert stitch._crossfade_parts(["a.mp4", "b.mp4"], out, 0.24) is None
+
+    def test_filter_chain_normalises_frame_rate_before_dissolving(self, tmp_path, monkeypatch):
+        """Retiming leaves parts at differing rates and xfade rejects those."""
+        import stitch
+        seen = {}
+        monkeypatch.setattr(stitch, "_probe_duration", lambda p: 4.0)
+        monkeypatch.setattr(stitch, "_run_ffmpeg",
+                            lambda cmd, label: seen.setdefault("cmd", cmd))
+        monkeypatch.setattr(stitch.os.path, "exists", lambda p: True)
+        monkeypatch.setattr(stitch.os.path, "getsize", lambda p: 100)
+        stitch._crossfade_parts(["a.mp4", "b.mp4", "c.mp4"], str(tmp_path / "m.mp4"), 0.24)
+        fc = seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
+        assert fc.count(f"fps={stitch.XFADE_FPS}") == 3, "every part must be normalised"
+        assert fc.count("xfade") == 2, "two joins for three parts"
+
+    def test_dissolve_offsets_account_for_earlier_fades(self, tmp_path, monkeypatch):
+        import stitch
+        seen = {}
+        monkeypatch.setattr(stitch, "_probe_duration", lambda p: 4.0)
+        monkeypatch.setattr(stitch, "_run_ffmpeg",
+                            lambda cmd, label: seen.setdefault("cmd", cmd))
+        monkeypatch.setattr(stitch.os.path, "exists", lambda p: True)
+        monkeypatch.setattr(stitch.os.path, "getsize", lambda p: 100)
+        stitch._crossfade_parts(["a.mp4", "b.mp4", "c.mp4"], str(tmp_path / "m.mp4"), 0.5)
+        fc = seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
+        # first join at 4.0 - 0.5; second at (4.0 + 4.0 - 0.5) - 0.5
+        assert "offset=3.5" in fc
+        assert "offset=7.0" in fc

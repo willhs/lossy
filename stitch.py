@@ -318,6 +318,59 @@ def _retime_clip(clip_path: str, adjusted_path: str, target_duration: float,
         )
 
 
+# Seconds of dissolve used to hide the join between chained parts of one
+# shot. I2V chaining takes the join from ~8.5x a normal frame step down to
+# ~2.2x, but the residual is still visible as a hitch -- and with ~617 joins
+# across the film, roughly one every 12s, it reads as a rhythm. The two sides
+# of a chained join are already visually close, which is exactly the condition
+# a short dissolve hides well. Set LOSSY_CROSSFADE=0 to disable.
+CROSSFADE_S = float(os.environ.get("LOSSY_CROSSFADE", "0.24"))
+XFADE_FPS = 25  # common rate the parts are normalised onto before dissolving
+
+
+def _crossfade_parts(part_paths: list[str], out_path: str, fade_s: float) -> str | None:
+    """Merge one shot's parts into a single clip, dissolving at each join.
+
+    Returns the merged path, or None if ffmpeg could not do it (in which case
+    the caller keeps the un-merged parts and the join stays visible).
+    """
+    durations = [_probe_duration(p) for p in part_paths]
+    if any(d <= fade_s for d in durations):
+        return None  # a part shorter than the dissolve cannot host it
+
+    inputs = []
+    for p in part_paths:
+        inputs += ["-i", p]
+
+    # Retiming leaves each part at its own effective frame rate (setpts changes
+    # the timing, not the count), and xfade refuses inputs whose rates differ.
+    # Normalise every part onto a common rate and timebase first.
+    filters = [f"[{i}:v]fps={XFADE_FPS},settb=AVTB,format=yuv420p[n{i}]"
+               for i in range(len(part_paths))]
+
+    # Chain the dissolves: each xfade consumes the running result and the next
+    # part, and its offset is where the outgoing clip should start fading.
+    label = "n0"
+    running = durations[0]
+    for i in range(1, len(part_paths)):
+        out_label = f"v{i}"
+        offset = running - fade_s
+        filters.append(
+            f"[{label}][n{i}]xfade=transition=fade:duration={fade_s}:offset={offset}[{out_label}]"
+        )
+        running += durations[i] - fade_s
+        label = out_label
+
+    _run_ffmpeg(
+        ["ffmpeg", *inputs, "-filter_complex", ";".join(filters),
+         "-map", f"[{label}]", "-an", "-y", out_path],
+        f"crossfade join for {os.path.basename(out_path)}",
+    )
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        return out_path
+    return None
+
+
 def _retime_shot_clips(clip_paths: list[str], original_duration: float,
                        adjusted_dir: str) -> list[str]:
     """Produce this shot's adjusted clip(s), matching original_duration.
@@ -468,11 +521,31 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
 
     concat_list = []
     running_pos = shot_groups[0][0]["start_s"]
+    faded = 0
     for entry, clip_paths in shot_groups:
         target_duration = entry["end_s"] - running_pos
-        adjusted_paths = _retime_shot_clips(clip_paths, target_duration, adjusted_dir)
+
+        # A dissolve overlaps its two sides, so the shot would come up short
+        # by fade x (parts - 1). Ask the retimer for that much extra and the
+        # merged result lands back on the boundary-locked target.
+        n_joins = len(clip_paths) - 1
+        fade = CROSSFADE_S if n_joins > 0 else 0.0
+        adjusted_paths = _retime_shot_clips(
+            clip_paths, target_duration + fade * n_joins, adjusted_dir)
+
+        if fade and len(adjusted_paths) > 1:
+            merged_path = os.path.join(
+                adjusted_dir,
+                f"{os.path.splitext(os.path.basename(adjusted_paths[0]))[0]}_xf.mp4")
+            merged = _crossfade_parts(adjusted_paths, merged_path, fade)
+            if merged:
+                adjusted_paths = [merged]
+                faded += n_joins
+
         concat_list.extend(adjusted_paths)
         running_pos += sum(_probe_duration(p) for p in adjusted_paths)
+    if faded:
+        print(f"  Crossfaded {faded} internal joins ({CROSSFADE_S:.2f}s each)")
 
     # Write range-specific concat file
     range_suffix = ""
