@@ -1984,9 +1984,11 @@ class TestCrossfadeJoins:
     which is the condition a short dissolve hides well.
     """
 
-    def test_crossfade_is_on_by_default(self):
+    def test_crossfade_is_off_by_default(self):
+        # It masked a join hitch that turned out to be the 4-frame rewind bug.
+        # With that fixed the dissolve only costs a doubled-edge artifact.
         import stitch
-        assert stitch.CROSSFADE_S > 0
+        assert stitch.CROSSFADE_S == 0
 
     def test_parts_shorter_than_the_dissolve_are_not_merged(self, tmp_path, monkeypatch):
         import stitch

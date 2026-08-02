@@ -318,13 +318,19 @@ def _retime_clip(clip_path: str, adjusted_path: str, target_duration: float,
         )
 
 
-# Seconds of dissolve used to hide the join between chained parts of one
-# shot. I2V chaining takes the join from ~8.5x a normal frame step down to
-# ~2.2x, but the residual is still visible as a hitch -- and with ~617 joins
-# across the film, roughly one every 12s, it reads as a rhythm. The two sides
-# of a chained join are already visually close, which is exactly the condition
-# a short dissolve hides well. Set LOSSY_CROSSFADE=0 to disable.
-CROSSFADE_S = float(os.environ.get("LOSSY_CROSSFADE", "0.24"))
+# Seconds of dissolve over the join between chained parts of one shot.
+#
+# OFF by default. It was added to hide a visible hitch at each join, but that
+# hitch turned out to be a bug: the conditioning frame handed to the next part
+# was ~4 frames before the end of the previous one, so every part rewound and
+# replayed those frames. With that fixed the join discontinuity fell from 14.4
+# to 2.3 and the dissolve has nothing left to hide -- while costing a visible
+# doubled-edge artifact, since blending two moments of a moving subject shows
+# both positions at once.
+#
+# Kept because it is the right tool if a join ever needs masking again; set
+# LOSSY_CROSSFADE=0.24 to switch it back on.
+CROSSFADE_S = float(os.environ.get("LOSSY_CROSSFADE", "0"))
 XFADE_FPS = 25  # common rate the parts are normalised onto before dissolving
 
 
