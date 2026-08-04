@@ -37,6 +37,12 @@ __pycache__/
 media/
 output/
 
+# Scene renders: the spec and the scripts are the source, the media is output.
+# A single scene is ~60MB of mp4s and intermediates, and git keeps blobs forever.
+scenes/**/*.mp4
+scenes/**/*.jpg
+scenes/**/*.mp3
+
 # Worktrees
 .worktrees/
 weights/
