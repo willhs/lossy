@@ -2147,3 +2147,42 @@ class TestClipRetry:
         strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7, start_image="http://f.jpg")
 
         assert seen == ["http://f.jpg"] * strategy.CLIP_ATTEMPTS
+
+
+from decode import _record_success  # noqa: E402
+
+
+class TestRecordSuccessClearsFailures:
+    """A shot that succeeds must stop being reported as failed.
+
+    Only the in-run retry path used to clear the failed list, so a *resumed*
+    run left shots sitting in `completed` and `failed` at once. The full run's
+    first checkpoint showed exactly that for shots 10-14, which makes the
+    failed list useless as a QC signal across 2069 shots.
+    """
+
+    def _result(self, path="0010.mp4"):
+        return ClipResult(path=path, cost=0.01, actual_duration_s=2.0)
+
+    def test_a_shot_failed_on_an_earlier_run_is_cleared_on_success(self):
+        progress = {"completed": [], "failed": [10, 11], "total_cost_estimate": 0.0, "clips": {}}
+
+        _record_success(progress, set(), 10, [self._result()])
+
+        assert progress["failed"] == [11]
+        assert progress["completed"] == [10]
+
+    def test_other_shots_failures_are_left_alone(self):
+        progress = {"completed": [], "failed": [7, 8, 9], "total_cost_estimate": 0.0, "clips": {}}
+
+        _record_success(progress, set(), 42, [self._result("0042.mp4")])
+
+        assert progress["failed"] == [7, 8, 9]
+
+    def test_cost_and_clips_are_still_recorded(self):
+        progress = {"completed": [], "failed": [10], "total_cost_estimate": 1.5, "clips": {}}
+
+        _record_success(progress, set(), 10, [self._result(), self._result("0010-02.mp4")])
+
+        assert progress["total_cost_estimate"] == pytest.approx(1.52)
+        assert [c["path"] for c in progress["clips"]["10"]] == ["0010.mp4", "0010-02.mp4"]

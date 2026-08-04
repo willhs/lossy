@@ -128,6 +128,13 @@ def _record_success(progress: dict, completed_set: set, idx: int, results: list)
     """Record a successful generation (first attempt or retry) in the progress dict."""
     progress["completed"].append(idx)
     completed_set.add(idx)
+    # A shot that failed on an *earlier* run and succeeds on this one must stop
+    # being reported as failed. Only the in-run retry path used to clear this,
+    # so a resumed run accumulated shots sitting in both lists at once -- the
+    # full run's first checkpoint showed shots 10-14 completed and failed
+    # simultaneously, which makes the failed list useless as a QC signal over
+    # 2069 shots. Clearing it here covers every success path.
+    progress["failed"] = [f for f in progress["failed"] if f != idx]
     progress["total_cost_estimate"] += sum(r.cost for r in results)
     progress["clips"][str(idx)] = [
         {"path": os.path.basename(r.path), "duration_s": r.actual_duration_s}
@@ -228,7 +235,6 @@ def run_decode(args, strategy: GenerationStrategy):
             if results:
                 generated += 1
                 _record_success(progress, completed_set, idx, results)
-                progress["failed"] = [f for f in progress["failed"] if f != idx]
 
         # Save progress every 5 clips
         if generated % 5 == 0:
@@ -365,7 +371,6 @@ def run_audio(args, strategy: AudioStrategy):
             if results:
                 generated += 1
                 _record_success(progress, completed_set, idx, results)
-                progress["failed"] = [f for f in progress["failed"] if f != idx]
 
         # Save progress every 5 clips
         if generated % 5 == 0:
