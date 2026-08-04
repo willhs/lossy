@@ -124,9 +124,11 @@ class TestCharacterIdentityMixin:
         result0 = strategy.format_prompt(entry0)
         result5 = strategy.format_prompt(entry5)
 
-        prefix = "Luke Skywalker: A young man in a beige tunic with sandy blond hair."
+        # The description is the identity; the name is deliberately not in it.
+        prefix = "A young man in a beige tunic with sandy blond hair."
         assert result0.startswith(prefix)
         assert result5.startswith(prefix)
+        assert "Luke" not in result0 and "Luke" not in result5
         # Only the base shot text should differ -- the identity block is byte-identical.
         assert result0[: len(prefix)] == result5[: len(prefix)]
 
@@ -1404,8 +1406,13 @@ class TestVacePromptEnrichment:
     """SPEC-220: Prompt enrichment with character identity (REQ-020 to REQ-021)."""
 
     @pytest.mark.req("SPEC-220/REQ-020")
-    def test_prompt_includes_character_name(self):
-        """REQ-020: Prompt shall include the character's canonical name."""
+    def test_prompt_excludes_character_name(self):
+        """REQ-020 (reversed 2026-08-05): the prompt shall NOT include the name.
+
+        Naming a character lets the model reconstruct it from world knowledge
+        instead of from the compressed description -- research 0021. The
+        description still carries the identity, per REQ-021.
+        """
         characters_data = {
             "characters": [
                 {"name": "luke", "display_name": "Luke Skywalker",
@@ -1419,8 +1426,6 @@ class TestVacePromptEnrichment:
         )
         strategy._uploaded_portraits = {"luke": "luke.png"}
 
-        # Simulate what the generate method would produce as the prompt
-        # The prompt should contain the character name when a character is in the shot
         entry = {
             "index": 5,
             "description": {
@@ -1433,7 +1438,9 @@ class TestVacePromptEnrichment:
         }
 
         prompt = strategy.format_prompt(entry)
-        assert "Luke Skywalker" in prompt or "luke" in prompt.lower()
+        assert "Luke Skywalker" not in prompt
+        assert "Luke" not in prompt
+        assert "sandy blond hair" in prompt  # the description still arrives
 
     @pytest.mark.req("SPEC-220/REQ-021")
     def test_prompt_includes_character_description(self):
@@ -1773,7 +1780,9 @@ class TestLtx2CharacterIdentity:
         s = self._strategy(character_shot_map={796: ["han_solo"]},
                            characters_data=self.CHARACTERS)
         prompt = s.format_prompt(self.ENTRY)
-        assert prompt.startswith("Han Solo: A rugged smuggler in a tan tunic.")
+        # The description leads; the name is stripped before the model sees it.
+        assert prompt.startswith("A rugged smuggler in a tan tunic.")
+        assert "Han Solo" not in prompt
 
     def test_no_identity_when_shot_has_no_characters(self):
         from prompt_format import format_prompt
@@ -2298,3 +2307,104 @@ class TestLetterboxStripping:
         monkeypatch.setattr(stitch, "_strip_letterbox", boom)
         src = str(tmp_path / "0058.mp4")
         assert stitch._strip_letterbox_group([src], str(tmp_path / "work")) == [src]
+
+
+from prompt_format import strip_character_names  # noqa: E402
+
+
+class TestStripCharacterNames:
+    """Names are kept in the encode for stage 3, and removed before the model.
+
+    Naming a character lets the model reconstruct it from world knowledge
+    rather than from the compressed description (research 0021). The names
+    cannot simply be banned at encode time: `_text_match_cast` matches the
+    TMDB cast against the `subjects` text to work out who is in each shot.
+    So they survive in shots.json and die here.
+    """
+
+    NAMES = ["C-3PO", "R2-D2", "Luke Skywalker", "Luke", "Darth Vader", "Vader", "Han"]
+
+    def strip(self, text):
+        return strip_character_names(text, self.NAMES)
+
+    def test_a_parenthetical_gloss_is_dropped_whole(self):
+        assert self.strip(
+            "A golden humanoid droid (C-3PO) and a blue astromech droid (R2-D2) wait."
+        ) == "A golden humanoid droid and a blue astromech droid wait."
+
+    def test_a_comma_appositive_loses_both_commas(self):
+        """'a droid, C-3PO, stands' must not become 'a droid, stands'."""
+        assert self.strip("A golden humanoid droid, C-3PO, stands center frame.") \
+            == "A golden humanoid droid stands center frame."
+
+    def test_a_bare_name_after_a_noun_just_goes(self):
+        assert self.strip("The droid R2-D2 is in the foreground.") \
+            == "The droid is in the foreground."
+
+    def test_a_governing_preposition_goes_with_it(self):
+        """Otherwise 'similar in appearance to C-3PO but silver' strands 'to'."""
+        assert self.strip("A droid, similar in appearance to C-3PO but silver, waits.") \
+            == "A droid, similar in appearance but silver, waits."
+
+    def test_a_stranded_copula_is_repaired_and_recapitalised(self):
+        """Canonical descriptions read 'C-3PO is a tall golden droid'."""
+        assert self.strip("C-3PO is a tall, golden humanoid droid.") \
+            == "A tall, golden humanoid droid."
+
+    def test_the_identity_block_label_is_removed(self):
+        assert self.strip("C-3PO: a tall golden droid. Cinematic wide shot.") \
+            == "A tall golden droid. Cinematic wide shot."
+
+    def test_a_full_name_is_preferred_over_its_parts(self):
+        """Stripping 'Luke' first would strand 'Skywalker'."""
+        assert "Skywalker" not in self.strip("Luke Skywalker walks into the hangar.")
+
+    def test_text_with_no_names_is_untouched(self):
+        text = "A corridor with no characters at all."
+        assert self.strip(text) == text
+
+    def test_an_empty_name_list_changes_nothing(self):
+        text = "C-3PO and R2-D2 wait."
+        assert strip_character_names(text, []) == text
+
+    def test_empty_text_is_survivable(self):
+        assert strip_character_names("", self.NAMES) == ""
+
+
+class TestIdentityBlockCarriesNoName:
+    """The identity block used to prepend '<display_name>: <description>'.
+
+    That put a character name in front of 1828 of 2069 shots (88.4%) -- far
+    more exposure than the 389 whose `subjects` text names anyone.
+    """
+
+    def _strategy(self):
+        from strategies_video import CharacterIdentityMixin
+
+        s = CharacterIdentityMixin.__new__(CharacterIdentityMixin)
+        s._init_character_identity(
+            {7: ["c_3po"]},
+            {"characters": [{
+                "name": "c_3po",
+                "display_name": "C-3PO",
+                "description": "C-3PO is a tall, golden humanoid droid.",
+                "shots": [7],
+            }]},
+        )
+        return s
+
+    def test_the_description_arrives_without_the_name(self):
+        out = self._strategy()._prepend_identity({"index": 7}, "Cinematic wide shot.")
+        assert "C-3PO" not in out
+        assert "tall, golden humanoid droid" in out
+        assert out.startswith("A tall")  # copula repaired, not left as "is a tall"
+
+    def test_a_shot_with_no_identity_block_is_still_stripped(self):
+        """Returning early here leaked Greedo in 757 and Vader in 1977."""
+        out = self._strategy()._prepend_identity(
+            {"index": 999}, "A protocol droid, C-3PO, waits.")
+        assert "C-3PO" not in out
+
+    def test_a_shot_with_no_index_is_still_stripped(self):
+        out = self._strategy()._prepend_identity({}, "C-3PO waits.")
+        assert "C-3PO" not in out

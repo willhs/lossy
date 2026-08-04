@@ -201,3 +201,75 @@ def _format_prompt_seedance(entry: dict) -> str:
         parts.append(mood.split(",")[0].strip())
 
     return " ".join(parts)
+
+
+# Character names must not reach the video model.
+#
+# Naming a character invites the model to reconstruct it from world knowledge
+# instead of from the compressed description -- the effect research 0021
+# documents, and the one that undermines the reconstruction claim on a film
+# this heavily memorised. The names are kept in the *encode* (shots.json
+# `subjects`) on purpose, because stage 3 text-matches the TMDB cast against
+# that text to work out who is in each shot. They are stripped here instead,
+# at the last moment before the prompt goes to the model, so character
+# assignment keeps working and the model still never sees a name.
+#
+# Measured on the star_wars_iv_v2 encode: 389 of 2069 shots (18.8%) name a
+# character in `subjects`, but 1828 (88.4%) had a name reaching the model,
+# because the identity block prepended "<display_name>: <description>" to
+# every shot with a mapped character.
+
+def strip_character_names(text: str, names) -> str:
+    """Remove character names from a composed prompt, keeping it readable.
+
+    Handles the three forms the encode actually produces:
+      "A golden humanoid droid (C-3PO) and..."  -> parenthetical gloss
+      "A golden humanoid droid, C-3PO, stands"  -> comma appositive
+      "the golden droid C-3PO is visible"       -> bare, after a noun
+
+    The description around the name is what carries the identity, so deleting
+    the name leaves the shot fully specified.
+    """
+    import re
+
+    if not text:
+        return text
+    # Longest first, so "Luke Skywalker" goes before "Luke" and never strands
+    # a surname.
+    ordered = sorted({n for n in names if n}, key=len, reverse=True)
+    if not ordered:
+        return text
+    alt = "|".join(re.escape(n) for n in ordered)
+    # Nothing to do -- and importantly, no tidying either. The cleanup below
+    # would otherwise recapitalise and reflow prompts that never contained a
+    # name, silently changing text it has no business touching.
+    if not re.search(rf"\b(?:{alt})\b", text):
+        return text
+
+    # A parenthetical that is only a name is a gloss -- drop it whole.
+    text = re.sub(rf"\s*\(\s*(?:{alt})\s*\)", "", text)
+    # Comma appositive: drop the name and both its commas, so "a droid,
+    # C-3PO, stands" reads "a droid stands" rather than "a droid, stands".
+    # This also collapses list items cleanly.
+    text = re.sub(rf",\s*(?:{alt})\s*,", " ", text)
+    # A name governed by a preposition would otherwise strand it, leaving
+    # "similar in appearance to but silver".
+    text = re.sub(rf"\b(?:to|like|as|of|beside|behind|near)\s+(?:{alt})\b", "", text)
+    # The identity block's "<name>: <description>" label.
+    text = re.sub(rf"\b(?:{alt})\s*:\s*", "", text)
+    # Anything left over.
+    text = re.sub(rf"\b(?:{alt})\b", "", text)
+
+    # Tidy the seams the deletions leave behind.
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"([,;:])\1+", r"\1", text)
+    text = re.sub(r"\(\s*\)", "", text)
+    text = re.sub(r"^\s*[:,;]\s*", "", text)
+    # Canonical descriptions are written "C-3PO is a tall golden droid", so
+    # removing the name strands the copula. Drop it at any sentence start and
+    # recapitalise, turning "is a tall golden droid" into "A tall golden droid".
+    text = re.sub(r"(^|(?<=\. ))\s*(?:is|are|was|were)\s+", "", text)
+    text = re.sub(r"(^|(?<=\. ))([a-z])",
+                  lambda m: m.group(1) + m.group(2).upper(), text)
+    return text.strip().strip(",").strip()

@@ -13,7 +13,8 @@ import time
 
 import manifest
 from clip_types import AudioClipResult, ClipResult
-from prompt_format import _format_prompt_wan, _format_prompt_seedance, format_prompt, vary_prompt_for_part
+from prompt_format import (_format_prompt_wan, _format_prompt_seedance, format_prompt,
+                           strip_character_names, vary_prompt_for_part)
 
 
 class GenerationStrategy:
@@ -102,20 +103,40 @@ class CharacterIdentityMixin(GenerationStrategy):
         Wan-specific formatting its base class would apply) can still opt into
         identity enrichment.
         """
-        shot_idx = entry.get("index")
-        if shot_idx is None:
-            return base
-        char_names = self._character_shot_map.get(shot_idx, [])
-        if not char_names:
-            return base
         identity_parts = []
-        for name in char_names:
-            char = self._characters_by_name.get(name)
-            if char:
-                identity_parts.append(f"{char['display_name']}: {char['description']}")
-        if not identity_parts:
-            return base
-        return " ".join(identity_parts) + " " + base
+        shot_idx = entry.get("index")
+        if shot_idx is not None:
+            for name in self._character_shot_map.get(shot_idx, []):
+                char = self._characters_by_name.get(name)
+                if char:
+                    # The description alone carries the identity. The display
+                    # name used to be prepended as a label, which put a
+                    # character name in front of 1828 of 2069 shots (88.4%) --
+                    # far more exposure than the 389 shots whose `subjects`
+                    # text names anyone -- and naming is exactly what lets the
+                    # model reconstruct from memory rather than from the
+                    # description (research 0021).
+                    identity_parts.append(char["description"])
+
+        composed = " ".join(identity_parts + [base]) if identity_parts else base
+        # Strip on every path, including shots with no identity block at all.
+        # Returning those early leaked a name whenever the describe pass named
+        # someone the shot map had not assigned to that shot -- Greedo in 757,
+        # Vader in 1977.
+        return strip_character_names(composed, self._all_character_names())
+
+    def _all_character_names(self) -> set:
+        """Every name a character might be referred to by, for stripping."""
+        names = set()
+        for key, char in self._characters_by_name.items():
+            names.add(key)
+            display = char.get("display_name")
+            if display:
+                names.add(display)
+                # Credited names are routinely shortened in descriptions --
+                # "Luke Skywalker" written as "Luke", "Han Solo" as "Han".
+                names.update(part for part in display.split() if len(part) > 2)
+        return names
 
 
 class ReplicateWanStrategy(GenerationStrategy):
