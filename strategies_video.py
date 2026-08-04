@@ -344,7 +344,12 @@ class RunPodWanStrategy(GenerationStrategy):
     # sampleable, and there is a window between the two. One retry after a
     # short delay clears it; without it generate() discards an entire shot on
     # a pod that is already paid for and about to work.
-    CLIP_ATTEMPTS = 2
+    # A third attempt, and a delay that grows with each one, because not every
+    # failure is the pod's. The full run's checkpoint lost shot 56 outright to
+    # `[Errno 49] Can't assign requested address` -- local socket exhaustion,
+    # which two attempts 20s apart cannot outlast. Backing off 20s then 40s
+    # gives that kind of transient room to clear.
+    CLIP_ATTEMPTS = 3
     CLIP_RETRY_DELAY_S = 20
 
     def format_prompt(self, entry: dict) -> str:
@@ -791,10 +796,11 @@ class RunPodWanStrategy(GenerationStrategy):
             if result is not None:
                 return result
             if attempt < self.CLIP_ATTEMPTS:
+                delay = self.CLIP_RETRY_DELAY_S * attempt
                 print(f"  {clip_name}: attempt {attempt} failed, "
-                      f"retrying in {self.CLIP_RETRY_DELAY_S}s "
+                      f"retrying in {delay}s "
                       f"[attempt {attempt + 1}/{self.CLIP_ATTEMPTS}]...")
-                time.sleep(self.CLIP_RETRY_DELAY_S)
+                time.sleep(delay)
         return None
 
     def _attempt_one_clip(

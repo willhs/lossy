@@ -111,10 +111,11 @@ The likely mechanism is connection churn: **every** ComfyUI call opens a fresh T
 
 **Observed loss: 1 shot in 50 (2%).** If that rate holds, roughly **40 shots go missing across the full run**, each a silent gap, recorded only in the `failed` list.
 
-Recommended before the full run (all cheap):
-- Reuse a single `httpx.Client` in `RunPodSession` — removes ~48,000 connection setups and most of the exposure.
-- Lengthen the retry backoff; 20s/10s is too short for socket-level pressure.
-- Add a re-sweep pass at the end of a run that retries everything in `failed`.
+**Both fixed after the checkpoint** (2026-08-04):
+- `RunPodSession.http` is now one pooled `httpx.Client` (8 connections, 4 keepalive), shared by all five ComfyUI call sites and closed on cleanup. This collapses ~48,000 connection setups to a handful held open per host.
+- `CLIP_ATTEMPTS` is 3 with an escalating backoff (20s then 40s), so a transient local failure has room to clear instead of burning four attempts inside 40s.
+
+Still worth doing: a re-sweep pass at the end of a run that retries everything in `failed`.
 
 ### Fixed here: the `failed` list was untrustworthy across resumes
 
@@ -162,8 +163,8 @@ The genuinely awkward finding is not a defect at all: the film is being rendered
 Ordered by what has to be decided before more GPU time is spent.
 
 1. **[HUMAN] Decide the re-encode before resuming.** Re-encoding invalidates all clips by fingerprint. Doing it now costs 50 shots and $0.33; doing it after the full run costs ~40 GPU-hours. Given 0021's argument, my recommendation is to **re-encode now** (~$1.30) and restart the run from shot 0.
-2. **Pool the HTTP connections** (single `httpx.Client` in `RunPodSession`) and lengthen the retry backoff, before committing 40 GPU-hours to a path that loses ~2% of shots. Cheap, and the loss is otherwise silent.
-3. **Add an end-of-run retry sweep** over the `failed` list, now that the list is trustworthy.
+2. ~~Pool the HTTP connections and lengthen the retry backoff~~ — **done**, see above. Untested against a live pod; the next run exercises it.
+3. **Add an end-of-run retry sweep** over the `failed` list, now that the list is trustworthy. Not done.
 4. **Decide the letterbox policy** — crop-and-fill in the stitch is the cheapest fix and needs no re-render. This is a judgement call about how the film should look, so it is Will's, not mine.
 5. Optional: reap the orphaned `sleep` in `disarm_self_destruct`. Cosmetic.
 

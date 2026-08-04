@@ -2186,3 +2186,30 @@ class TestRecordSuccessClearsFailures:
 
         assert progress["total_cost_estimate"] == pytest.approx(1.52)
         assert [c["path"] for c in progress["clips"]["10"]] == ["0010.mp4", "0010-02.mp4"]
+
+
+class TestClipRetryBackoffGrows:
+    """A retry delay that grows, because not every failure is the pod's.
+
+    The full run's checkpoint lost shot 56 to `[Errno 49] Can't assign
+    requested address` -- local socket exhaustion. Two attempts 20s apart
+    could not outlast it; the shot was abandoned and the run moved on.
+    """
+
+    def _strategy(self, monkeypatch):
+        s = RunPodWanStrategy.__new__(RunPodWanStrategy)
+        return s
+
+    def test_the_delay_grows_with_each_attempt(self, monkeypatch, tmp_path):
+        s = self._strategy(monkeypatch)
+        slept = []
+        monkeypatch.setattr("strategies_video.time.sleep", lambda d: slept.append(d))
+        monkeypatch.setattr(s, "_attempt_one_clip",
+                            lambda *a, **k: None)
+
+        assert s._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7) is None
+        assert slept == [s.CLIP_RETRY_DELAY_S * n for n in range(1, s.CLIP_ATTEMPTS)]
+        assert slept == sorted(slept) and len(set(slept)) == len(slept)
+
+    def test_there_are_at_least_three_attempts(self):
+        assert RunPodWanStrategy.CLIP_ATTEMPTS >= 3

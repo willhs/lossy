@@ -474,3 +474,48 @@ class TestStrayPodSweep:
         session._cleanup()
         session._cleanup()
         assert fake.terminated == ["pod-drifted"]
+
+
+class TestPooledHttpClient:
+    """Every ComfyUI call shares one pooled client.
+
+    Each call used to be a bare `httpx.get`/`httpx.post`, opening and dropping
+    a fresh TCP+TLS connection. Generation polls /history every ~2s, so the
+    full run's first 50 shots opened 1,249 connections -- ~48,000 extrapolated
+    across 2069 -- and that churn exhausted the local ephemeral port range,
+    losing shot 56 to `[Errno 49] Can't assign requested address`.
+    """
+
+    def test_the_same_client_is_handed_out_every_time(self, tmp_path):
+        session = RunPodSession(str(tmp_path))
+        assert session.http is session.http
+
+    def test_the_client_pools_and_keeps_connections_alive(self, tmp_path):
+        session = RunPodSession(str(tmp_path))
+        pool = session.http._transport._pool
+        # Keepalive is the whole point: without it every request still costs a
+        # fresh connection even though the client is shared.
+        assert pool._max_keepalive_connections > 0
+        assert pool._max_connections > 0
+
+    def test_closing_releases_the_client(self, tmp_path):
+        session = RunPodSession(str(tmp_path))
+        first = session.http
+        session.close_http()
+        assert first.is_closed
+        assert session.http is not first  # a later call rebuilds rather than reusing a closed one
+
+    def test_closing_twice_is_harmless(self, tmp_path):
+        session = RunPodSession(str(tmp_path))
+        _ = session.http
+        session.close_http()
+        session.close_http()
+
+    def test_closing_without_ever_making_one_is_harmless(self, tmp_path):
+        RunPodSession(str(tmp_path)).close_http()
+
+    def test_cleanup_releases_the_pool(self, tmp_path):
+        session = RunPodSession(str(tmp_path))
+        client = session.http
+        session._cleanup()  # no pod_id, so this is the pure teardown path
+        assert client.is_closed
