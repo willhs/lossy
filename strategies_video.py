@@ -336,6 +336,17 @@ class RunPodWanStrategy(GenerationStrategy):
     SEAM_TRIM_HEAD = 0
     SEAM_TRIM_TAIL = 0
 
+    # A failed clip is retried rather than failing its whole shot. The first
+    # submission after a fresh pod boot has been observed to fail (ComfyUI
+    # rejecting the workflow, or a 404 with no body) even though
+    # wait_for_comfyui()'s /system_stats probe already returned 200 -- that
+    # probe proves the server is up, not that the model is loaded and
+    # sampleable, and there is a window between the two. One retry after a
+    # short delay clears it; without it generate() discards an entire shot on
+    # a pod that is already paid for and about to work.
+    CLIP_ATTEMPTS = 2
+    CLIP_RETRY_DELAY_S = 20
+
     def format_prompt(self, entry: dict) -> str:
         return _format_prompt_wan(entry)
 
@@ -768,7 +779,29 @@ class RunPodWanStrategy(GenerationStrategy):
         self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
         start_image: str | None = None,
     ) -> ClipResult | None:
-        """Generate a single clip with the given frame count."""
+        """Generate a single clip, retrying a failed attempt (see CLIP_ATTEMPTS).
+
+        The seed is held constant across attempts: a retry is meant to be the
+        same clip generated again, not a different one, so a run that resumes
+        after a failure lands on the same footage it would have had.
+        """
+        for attempt in range(1, self.CLIP_ATTEMPTS + 1):
+            result = self._attempt_one_clip(
+                prompt, clips_dir, clip_name, frames, seed, start_image=start_image)
+            if result is not None:
+                return result
+            if attempt < self.CLIP_ATTEMPTS:
+                print(f"  {clip_name}: attempt {attempt} failed, "
+                      f"retrying in {self.CLIP_RETRY_DELAY_S}s "
+                      f"[attempt {attempt + 1}/{self.CLIP_ATTEMPTS}]...")
+                time.sleep(self.CLIP_RETRY_DELAY_S)
+        return None
+
+    def _attempt_one_clip(
+        self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
+        start_image: str | None = None,
+    ) -> ClipResult | None:
+        """Generate a single clip with the given frame count. One attempt."""
         clip_path = os.path.join(clips_dir, clip_name)
 
         try:

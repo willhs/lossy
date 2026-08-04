@@ -2065,3 +2065,85 @@ class TestChainConditioningFrame:
         cmd = self._cmd_for(monkeypatch)
         assert "-sseof" in cmd
         assert float(cmd[cmd.index("-sseof") + 1]) < 0
+
+
+class TestClipRetry:
+    """A failed clip is retried rather than failing its whole shot.
+
+    The first submission after a fresh pod boot has been observed to fail even
+    though wait_for_comfyui()'s /system_stats probe already returned 200 --
+    that probe proves the server is up, not that the model is loaded. Before
+    the retry, generate() dropped an entire shot on a pod already paid for.
+    """
+
+    def _strategy(self, monkeypatch):
+        monkeypatch.setattr("strategies_video.time.sleep", lambda s: None)
+        return RunPodWanStrategy()
+
+    def test_a_failed_attempt_is_retried(self, monkeypatch, tmp_path):
+        strategy = self._strategy(monkeypatch)
+        calls = []
+
+        def fake_attempt(prompt, clips_dir, clip_name, frames, seed, start_image=None):
+            calls.append(seed)
+            return None if len(calls) == 1 else "clip"
+
+        monkeypatch.setattr(strategy, "_attempt_one_clip", fake_attempt)
+        result = strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7)
+
+        assert result == "clip"
+        assert len(calls) == 2
+
+    def test_the_retry_reuses_the_same_seed(self, monkeypatch, tmp_path):
+        """A retry is the same clip again, not a different one."""
+        strategy = self._strategy(monkeypatch)
+        seeds = []
+
+        def fake_attempt(prompt, clips_dir, clip_name, frames, seed, start_image=None):
+            seeds.append(seed)
+            return None
+
+        monkeypatch.setattr(strategy, "_attempt_one_clip", fake_attempt)
+        strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7)
+
+        assert seeds == [7] * strategy.CLIP_ATTEMPTS
+
+    def test_it_gives_up_after_the_attempt_limit(self, monkeypatch, tmp_path):
+        strategy = self._strategy(monkeypatch)
+        calls = []
+
+        def fake_attempt(prompt, clips_dir, clip_name, frames, seed, start_image=None):
+            calls.append(seed)
+            return None
+
+        monkeypatch.setattr(strategy, "_attempt_one_clip", fake_attempt)
+        result = strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7)
+
+        assert result is None
+        assert len(calls) == strategy.CLIP_ATTEMPTS
+
+    def test_a_first_time_success_does_not_retry(self, monkeypatch, tmp_path):
+        strategy = self._strategy(monkeypatch)
+        calls = []
+
+        def fake_attempt(prompt, clips_dir, clip_name, frames, seed, start_image=None):
+            calls.append(seed)
+            return "clip"
+
+        monkeypatch.setattr(strategy, "_attempt_one_clip", fake_attempt)
+        assert strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7) == "clip"
+        assert len(calls) == 1
+
+    def test_the_start_image_is_carried_into_the_retry(self, monkeypatch, tmp_path):
+        """Chained parts must stay conditioned on the previous part's frame."""
+        strategy = self._strategy(monkeypatch)
+        seen = []
+
+        def fake_attempt(prompt, clips_dir, clip_name, frames, seed, start_image=None):
+            seen.append(start_image)
+            return None
+
+        monkeypatch.setattr(strategy, "_attempt_one_clip", fake_attempt)
+        strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7, start_image="http://f.jpg")
+
+        assert seen == ["http://f.jpg"] * strategy.CLIP_ATTEMPTS

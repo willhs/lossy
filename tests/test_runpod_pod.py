@@ -270,3 +270,207 @@ class TestCloudFallback:
     def test_old_constant_still_resolves(self):
         import runpod_pod
         assert runpod_pod.CLOUD_TYPE == runpod_pod.CLOUD_TYPES[0]
+
+
+class TestUniquePodNaming:
+    """Each session names its pod uniquely so a sweep can tell whose is whose.
+
+    Without a unique suffix every lossy pod is called the same thing, and
+    "terminate the leftover named lossy-comfyui" would take down a concurrent
+    run's active render.
+    """
+
+    def test_each_session_gets_its_own_name(self, tmp_path):
+        import runpod_pod
+        a = RunPodSession(str(tmp_path))
+        b = RunPodSession(str(tmp_path))
+        assert a.pod_name != b.pod_name
+        assert a.pod_name.startswith(runpod_pod.POD_NAME_PREFIX)
+        assert b.pod_name.startswith(runpod_pod.POD_NAME_PREFIX)
+
+    def test_name_survives_a_state_round_trip(self, tmp_path):
+        session = RunPodSession(str(tmp_path))
+        session.pod_id = "pod-1"
+        session.base_url = "https://pod-1-8188.proxy.runpod.net"
+        original = session.pod_name
+        session.write_state()
+
+        resumed = RunPodSession(str(tmp_path))
+        assert resumed.read_state() is True
+        assert resumed.pod_name == original
+
+    def test_state_without_a_name_falls_back_to_the_bare_prefix(self, tmp_path):
+        """Pods created before unique naming were all called just the prefix."""
+        import runpod_pod
+        legacy = {"pod_id": "pod-old", "base_url": "https://x", "ssh_host": None,
+                  "ssh_port": None, "gpu_hourly_rate": 0.34, "start_time": 1.0}
+        state_path = tmp_path / "runpod_pod.json"
+        state_path.write_text(json.dumps(legacy))
+
+        session = RunPodSession(str(tmp_path))
+        assert session.read_state() is True
+        assert session.pod_name == runpod_pod.POD_NAME_PREFIX
+
+
+class _FakeRunpod:
+    """Stand-in for the runpod module, recording what got terminated."""
+
+    def __init__(self, pods):
+        self._pods = pods
+        self.api_key = None
+        self.terminated = []
+
+    def get_pods(self):
+        return self._pods
+
+    def terminate_pod(self, pod_id):
+        self.terminated.append(pod_id)
+
+
+@pytest.fixture
+def fake_runpod(monkeypatch):
+    """Install a fake runpod module and an API key, and hand back a factory."""
+    import sys
+    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+
+    def install(pods):
+        fake = _FakeRunpod(pods)
+        monkeypatch.setitem(sys.modules, "runpod", fake)
+        return fake
+    return install
+
+
+class TestStrayPodSweep:
+    """A pod bills until something terminates it, so verify what's left running.
+
+    terminate() removes the id it recorded and only warns when that fails. A
+    run was observed reporting "pod not found to terminate" while a pod under
+    a different id was still up and billing -- nothing noticed, because once
+    the process exits there is nobody left to look.
+    """
+
+    def _session(self, tmp_path, owned="pod-ours"):
+        session = RunPodSession(str(tmp_path))
+        session._owned_pod_ids.add(owned)
+        return session
+
+    def test_terminates_our_pod_when_the_recorded_id_went_stale(self, tmp_path, fake_runpod):
+        """The whole point: identify by name, because the id is what drifted."""
+        session = self._session(tmp_path)
+        fake = fake_runpod([{"id": "pod-drifted", "name": session.pod_name,
+                             "desiredStatus": "RUNNING"}])
+
+        session.sweep_stray_pods()
+        assert fake.terminated == ["pod-drifted"]
+
+    def test_terminates_a_pod_we_own_by_id(self, tmp_path, fake_runpod):
+        import runpod_pod
+        session = self._session(tmp_path)
+        fake = fake_runpod([{"id": "pod-ours", "name": runpod_pod.POD_NAME_PREFIX,
+                             "desiredStatus": "RUNNING"}])
+
+        session.sweep_stray_pods()
+        assert fake.terminated == ["pod-ours"]
+
+    def test_leaves_a_concurrent_runs_pod_alone(self, tmp_path, fake_runpod):
+        import runpod_pod
+        session = self._session(tmp_path)
+        other = f"{runpod_pod.POD_NAME_PREFIX}-deadbeef"
+        fake = fake_runpod([{"id": "pod-theirs", "name": other, "desiredStatus": "RUNNING"}])
+
+        found = session.sweep_stray_pods()
+        assert fake.terminated == []
+        assert found == ["pod-theirs"]  # reported, not killed
+
+    def test_opt_in_terminates_everyone_elses_too(self, tmp_path, fake_runpod, monkeypatch):
+        import runpod_pod
+        session = self._session(tmp_path)
+        other = f"{runpod_pod.POD_NAME_PREFIX}-deadbeef"
+        fake = fake_runpod([{"id": "pod-theirs", "name": other, "desiredStatus": "RUNNING"}])
+        monkeypatch.setenv("LOSSY_RUNPOD_SWEEP", "1")
+
+        session.sweep_stray_pods()
+        assert fake.terminated == ["pod-theirs"]
+
+    def test_ignores_pods_that_are_not_ours_by_name_at_all(self, tmp_path, fake_runpod):
+        session = self._session(tmp_path)
+        fake = fake_runpod([{"id": "pod-unrelated", "name": "someone-elses-thing",
+                             "desiredStatus": "RUNNING"}])
+
+        assert session.sweep_stray_pods() == []
+        assert fake.terminated == []
+
+    def test_ignores_already_exited_pods(self, tmp_path, fake_runpod):
+        session = self._session(tmp_path)
+        fake = fake_runpod([{"id": "pod-gone", "name": session.pod_name,
+                             "desiredStatus": "EXITED"}])
+
+        assert session.sweep_stray_pods() == []
+        assert fake.terminated == []
+
+    def test_a_session_that_never_provisioned_does_not_call_the_api(self, tmp_path, fake_runpod):
+        """Nothing was created, so nothing can have escaped -- and no network."""
+        session = RunPodSession(str(tmp_path))
+        fake = fake_runpod([{"id": "pod-x", "name": session.pod_name,
+                             "desiredStatus": "RUNNING"}])
+
+        assert session.sweep_stray_pods() == []
+        assert fake.terminated == []
+
+    def test_an_api_failure_is_reported_not_raised(self, tmp_path, monkeypatch):
+        import sys
+
+        class _Broken:
+            api_key = None
+            def get_pods(self):
+                raise RuntimeError("network down")
+
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.setitem(sys.modules, "runpod", _Broken())
+        session = self._session(tmp_path)
+
+        assert session.sweep_stray_pods() == []  # cleanup must not crash the run
+
+    def test_cleanup_sweeps_after_terminating(self, tmp_path, fake_runpod, monkeypatch):
+        session = RunPodSession(str(tmp_path), keep_pod=False)
+        session.pod_id = "pod-recorded"
+        session._owned_pod_ids.add("pod-recorded")
+        session.pod_start_time = 1000000.0
+        fake = fake_runpod([{"id": "pod-drifted", "name": session.pod_name,
+                             "desiredStatus": "RUNNING"}])
+
+        def mock_terminate(self_inner):
+            self_inner.pod_id = None
+        monkeypatch.setattr(RunPodSession, "terminate", mock_terminate)
+
+        session._cleanup()
+        assert fake.terminated == ["pod-drifted"]
+
+    def test_a_deliberately_kept_pod_is_not_swept_away(self, tmp_path, fake_runpod, monkeypatch):
+        session = RunPodSession(str(tmp_path), keep_pod=True)
+        session.pod_id = "pod-keep"
+        session._owned_pod_ids.add("pod-keep")
+        session.pod_start_time = 1000000.0
+        session._clean_exit = True
+        monkeypatch.setattr(RunPodSession, "arm_self_destruct", lambda self, m: True)
+        fake = fake_runpod([{"id": "pod-keep", "name": session.pod_name,
+                             "desiredStatus": "RUNNING"}])
+
+        session._cleanup()
+        assert fake.terminated == []
+
+    def test_cleanup_only_sweeps_once(self, tmp_path, fake_runpod, monkeypatch):
+        """atexit and the signal handler both call _cleanup."""
+        session = RunPodSession(str(tmp_path), keep_pod=False)
+        session.pod_id = "pod-recorded"
+        session._owned_pod_ids.add("pod-recorded")
+        session.pod_start_time = 1000000.0
+        fake = fake_runpod([{"id": "pod-drifted", "name": session.pod_name,
+                             "desiredStatus": "RUNNING"}])
+        monkeypatch.setattr(RunPodSession, "terminate",
+                            lambda self_inner: setattr(self_inner, "pod_id", None))
+
+        session._cleanup()
+        session._cleanup()
+        assert fake.terminated == ["pod-drifted"]

@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 
 
 # Default GPU preferences (cheapest first, with VRAM headroom preference)
@@ -24,6 +25,14 @@ GPU_TYPES = [
 CLOUD_TYPES = [t for t in os.environ.get("LOSSY_RUNPOD_CLOUD", "COMMUNITY,SECURE").split(",") if t]
 CLOUD_TYPE = CLOUD_TYPES[0]  # back-compat for anything reading the old name
 DOCKER_IMAGE = "runpod/comfyui:latest"
+
+# Every pod this project creates is named POD_NAME_PREFIX + "-" + a unique
+# suffix. The prefix makes lossy's pods findable; the suffix makes *this
+# session's* pod distinguishable from a concurrent run's, which is what lets
+# the stray sweep below terminate its own leftovers without shooting down
+# somebody else's render. Pods created before unique naming are all called
+# exactly POD_NAME_PREFIX -- matched, but never claimed as ours.
+POD_NAME_PREFIX = "lossy-comfyui"
 CONTAINER_DISK_GB = 50
 COMFYUI_PORT = 8188
 POD_READY_TIMEOUT = 600
@@ -74,6 +83,9 @@ class RunPodSession:
         # to the module-level GPU_TYPES; strategies with stricter VRAM needs
         # (e.g. a model that OOMs on a 24GB card) can pass a narrower list.
         self.gpu_types = gpu_types or GPU_TYPES
+        # Unique per session, decided up front so it is stable across a
+        # create/terminate cycle and recorded in the state file for reconnects.
+        self.pod_name = f"{POD_NAME_PREFIX}-{uuid.uuid4().hex[:8]}"
         self.pod_id: str | None = None
         self.base_url: str | None = None
         self.ssh_host: str | None = None
@@ -82,6 +94,11 @@ class RunPodSession:
         self.pod_start_time: float | None = None
         self._clean_exit = False
         self._cleanup_registered = False
+        self._swept = False
+        # Pod ids this session provisioned or adopted. Belt-and-braces
+        # alongside the name check: either one identifying a pod as ours is
+        # enough to terminate it.
+        self._owned_pod_ids: set[str] = set()
 
     def _register_cleanup(self):
         """Register atexit and signal handlers to terminate pod on exit."""
@@ -108,19 +125,26 @@ class RunPodSession:
 
     def _cleanup(self):
         """Terminate or preserve pod depending on keep_pod flag and exit status."""
-        if self.pod_id is None:
+        keeping = bool(self.keep_pod and self._clean_exit and self.pod_id is not None)
+
+        if self.pod_id is not None:
+            if keeping:
+                # Normal exit with --keep-pod: write state file, don't terminate --
+                # but arm a self-destruct on the pod first so "kept alive" cannot
+                # silently mean "billing all night".
+                self.write_state()
+                armed = self.arm_self_destruct(self.keep_pod_minutes)
+                note = (f"self-destructs in {self.keep_pod_minutes}min" if armed
+                        else "WARNING: self-destruct could NOT be armed -- terminate it yourself")
+                print(f"  Pod {self.pod_id} kept alive ({note}); state at {self.state_path}")
+            else:
+                self.terminate()
+
+        # A deliberately kept-alive pod is not a stray -- don't sweep it away.
+        if keeping or self._swept:
             return
-        if self.keep_pod and self._clean_exit:
-            # Normal exit with --keep-pod: write state file, don't terminate --
-            # but arm a self-destruct on the pod first so "kept alive" cannot
-            # silently mean "billing all night".
-            self.write_state()
-            armed = self.arm_self_destruct(self.keep_pod_minutes)
-            note = (f"self-destructs in {self.keep_pod_minutes}min" if armed
-                    else "WARNING: self-destruct could NOT be armed -- terminate it yourself")
-            print(f"  Pod {self.pod_id} kept alive ({note}); state at {self.state_path}")
-        else:
-            self.terminate()
+        self._swept = True
+        self.sweep_stray_pods()
 
     @property
     def state_path(self) -> str:
@@ -136,6 +160,7 @@ class RunPodSession:
         """Write pod connection info to state file (atomic)."""
         state = {
             "pod_id": self.pod_id,
+            "pod_name": self.pod_name,
             "base_url": self.base_url,
             "ssh_host": self.ssh_host,
             "ssh_port": self.ssh_port,
@@ -155,6 +180,9 @@ class RunPodSession:
         with open(self.state_path) as f:
             state = json.load(f)
         self.pod_id = state["pod_id"]
+        # Pods created before unique naming have no name in their state file;
+        # fall back to the bare prefix they were actually created with.
+        self.pod_name = state.get("pod_name") or POD_NAME_PREFIX
         self.base_url = state["base_url"]
         self.ssh_host = state.get("ssh_host")
         self.ssh_port = state.get("ssh_port")
@@ -196,7 +224,7 @@ class RunPodSession:
                         ssh_pubkey = f.read().strip()
 
                 pod = runpod.create_pod(
-                    name="lossy-comfyui",
+                    name=self.pod_name,
                     image_name=DOCKER_IMAGE,
                     gpu_type_id=gpu_type,
                     cloud_type=cloud_type,
@@ -220,7 +248,9 @@ class RunPodSession:
                 f"across {len(CLOUD_TYPES)} cloud(s)"
             )
 
-        self.pod_id = pod["id"]
+        pod_id = str(pod["id"])
+        self.pod_id = pod_id
+        self._owned_pod_ids.add(pod_id)
         self.gpu_hourly_rate = gpu_rate
         self.pod_start_time = time.time()
         self._register_cleanup()
@@ -284,6 +314,8 @@ class RunPodSession:
             return False
 
         print(f"  Reconnected: {self.base_url}")
+        if self.pod_id:
+            self._owned_pod_ids.add(self.pod_id)
         # This pod was left alive with a deadline armed; clear it so it does
         # not terminate underneath the run that just picked it up.
         self.disarm_self_destruct()
@@ -371,6 +403,76 @@ class RunPodSession:
             return
         if not self.reconnect():
             self.create_pod()
+
+    def _is_ours(self, pod: dict) -> bool:
+        """Whether a pod belongs to this session.
+
+        The name is the load-bearing test, not the id: the failure this whole
+        sweep exists for is precisely the recorded id going stale, so an
+        id-only check would miss the case it is meant to catch.
+        """
+        return pod.get("name") == self.pod_name or pod.get("id") in self._owned_pod_ids
+
+    def sweep_stray_pods(self) -> list[str]:
+        """Terminate this session's leftover pods; report anyone else's.
+
+        terminate() removes the pod id it recorded and warns if that call
+        fails -- but a run has been observed reporting "pod not found to
+        terminate" while a pod under a *different* id was still up and
+        billing. Nothing catches that today: a pod bills until something
+        explicitly removes it, and once this process exits there is nobody
+        left to notice. So before exiting, ask what is actually still running.
+
+        Pods whose name matches this session are terminated outright. Anything
+        else carrying the lossy prefix is another run's (or an older orphan's)
+        and is only reported -- killing it would take down a render that is
+        very likely someone's active work. Set LOSSY_RUNPOD_SWEEP=1 to
+        terminate those too.
+
+        Returns the ids of the stray pods found, for tests and callers.
+        """
+        if not self._owned_pod_ids:
+            return []  # never provisioned anything, so nothing can have escaped
+        if not os.environ.get("RUNPOD_API_KEY"):
+            return []
+
+        try:
+            import runpod
+            runpod.api_key = os.environ["RUNPOD_API_KEY"]
+            pods = runpod.get_pods() or []
+        except Exception as e:
+            print(f"  Stray-pod check failed ({e}) -- "
+                  f"verify at https://www.runpod.io/console/pods")
+            return []
+
+        strays = [
+            p for p in pods
+            if str(p.get("name", "")).startswith(POD_NAME_PREFIX)
+            and p.get("desiredStatus", "RUNNING") != "EXITED"
+            and p.get("id")
+        ]
+        if not strays:
+            return []
+
+        force = os.environ.get("LOSSY_RUNPOD_SWEEP", "").lower() in ("1", "true", "yes")
+        for pod in strays:
+            pod_id = pod["id"]
+            ours = self._is_ours(pod)
+            if ours or force:
+                why = "ours" if ours else "LOSSY_RUNPOD_SWEEP=1"
+                print(f"  Sweep: terminating stray pod {pod_id} ({why})")
+                try:
+                    runpod.terminate_pod(pod_id)
+                except Exception as e:
+                    print(f"  Sweep: FAILED to terminate {pod_id} ({e}) -- "
+                          f"terminate it at https://www.runpod.io/console/pods")
+            else:
+                print(f"  NOTE: pod {pod_id} ({pod.get('name')}) is still running and "
+                      f"billing, but is not this session's.")
+                print(f"        Probably a concurrent run. If it is orphaned, terminate it "
+                      f"at https://www.runpod.io/console/pods (or re-run with "
+                      f"LOSSY_RUNPOD_SWEEP=1).")
+        return [p["id"] for p in strays]
 
     def terminate(self):
         """Terminate the pod and remove state file."""
