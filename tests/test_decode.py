@@ -2213,3 +2213,88 @@ class TestClipRetryBackoffGrows:
 
     def test_there_are_at_least_three_attempts(self):
         assert RunPodWanStrategy.CLIP_ATTEMPTS >= 3
+
+
+class TestLetterboxStripping:
+    """Baked-in mattes are cropped at stitch time, not re-rendered.
+
+    13 of the full run's first 50 shots (26%) came back with ~23% of frame
+    height as black bars, scattered rather than clustered, so the film jumped
+    aspect ratio at the cut. The bars are in the pixels, so only a crop
+    removes them.
+    """
+
+    def _detect(self, monkeypatch, crop_line, size="1280x704"):
+        import stitch
+
+        def fake_ffmpeg(cmd, context):
+            out = MagicMock()
+            out.stdout = size if cmd[0] == "ffprobe" else ""
+            out.stderr = crop_line
+            return out
+
+        monkeypatch.setattr(stitch, "_run_ffmpeg", fake_ffmpeg)
+        return stitch._detect_letterbox("clip.mp4")
+
+    def test_a_real_matte_is_detected(self, monkeypatch):
+        # what cropdetect actually reported for shot 0058
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:534:0:86") \
+            == (1280, 534, 0, 86)
+
+    def test_a_full_frame_clip_is_left_alone(self, monkeypatch):
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:704:0:0") is None
+
+    def test_a_few_dark_rows_are_not_a_matte(self, monkeypatch):
+        """Night skies and shadowed ceilings must not zoom the shot."""
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:690:0:7") is None
+
+    def test_an_implausibly_deep_crop_is_refused(self, monkeypatch):
+        """Past a point it is a dark shot, not a matte."""
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:200:0:252") is None
+
+    def test_pillarboxing_is_out_of_scope(self, monkeypatch):
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=900:704:190:0") is None
+
+    def test_unparseable_output_is_survivable(self, monkeypatch):
+        assert self._detect(monkeypatch, "no crop here at all") is None
+
+    def test_every_part_of_a_shot_shares_one_crop(self, monkeypatch, tmp_path):
+        """Per-part detection would move the jump into the middle of a shot."""
+        import stitch
+
+        boxes = []
+        monkeypatch.setattr(stitch, "_detect_letterbox", lambda p: (1280, 534, 0, 86))
+
+        def fake_strip(src, dst, box=None):
+            boxes.append(box)
+            open(dst, "w").close()
+            return True
+
+        monkeypatch.setattr(stitch, "_strip_letterbox", fake_strip)
+        parts = []
+        for n in (1, 2, 3):
+            p = tmp_path / f"0846-0{n}.mp4"
+            p.write_text("x")
+            parts.append(str(p))
+
+        out = stitch._strip_letterbox_group(parts, str(tmp_path / "work"))
+        assert len(out) == 3
+        assert boxes == [(1280, 534, 0, 86)] * 3  # detected once, applied to all
+
+    def test_a_clean_shot_passes_through_untouched(self, monkeypatch, tmp_path):
+        import stitch
+        monkeypatch.setattr(stitch, "_detect_letterbox", lambda p: None)
+        parts = [str(tmp_path / "0011.mp4")]
+        assert stitch._strip_letterbox_group(parts, str(tmp_path / "work")) == parts
+
+    def test_a_failed_crop_keeps_the_original_rather_than_losing_the_shot(
+            self, monkeypatch, tmp_path):
+        import stitch
+        monkeypatch.setattr(stitch, "_detect_letterbox", lambda p: (1280, 534, 0, 86))
+
+        def boom(src, dst, box=None):
+            raise RuntimeError("ffmpeg fell over")
+
+        monkeypatch.setattr(stitch, "_strip_letterbox", boom)
+        src = str(tmp_path / "0058.mp4")
+        assert stitch._strip_letterbox_group([src], str(tmp_path / "work")) == [src]

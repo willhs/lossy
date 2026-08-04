@@ -318,6 +318,146 @@ def _retime_clip(clip_path: str, adjusted_path: str, target_duration: float,
         )
 
 
+# Letterbox bars the model bakes into the picture.
+#
+# The full run's first 50 shots came back with 13 of them (26%) carrying ~23%
+# of frame height as black bars top and bottom -- baked into the pixels, not
+# container metadata. They are scattered rather than clustered, so consecutive
+# shots flip between ~2.35:1 and the native 1.82:1 and the film visibly jumps
+# aspect ratio at the cut. No prompt token predicts which shots get them; it
+# reads as the model associating "cinematic wide shot" with a widescreen
+# matte, and it hits vistas and corridors that the interior-only dress
+# rehearsal never exercised.
+#
+# So the bars are removed at stitch time rather than by re-rendering: detect
+# them, crop them off, and scale back to the clip's own dimensions so every
+# shot reaches the concat at one consistent size.
+#
+# Only bars thicker than this fraction of height are treated as a matte. A
+# couple of dark rows are ordinary picture content (a night sky, a shadowed
+# ceiling) and cropping those would zoom the shot for no reason.
+LETTERBOX_MIN_FRACTION = 0.06
+LETTERBOX_MAX_FRACTION = 0.40   # beyond this it is not a matte, it is a dark shot
+LETTERBOX_LUMA_LIMIT = 24       # cropdetect's black threshold
+
+# On by default -- the flicker is a defect, not a look. Set LOSSY_STRIP_LETTERBOX=0
+# to keep the mattes, e.g. to compare a stitch before and after.
+STRIP_LETTERBOX = os.environ.get("LOSSY_STRIP_LETTERBOX", "1") not in ("0", "false", "no")
+
+
+def _detect_letterbox(clip_path: str) -> tuple[int, int, int, int] | None:
+    """Detect baked-in letterbox bars. Returns (w, h, x, y) to keep, or None.
+
+    Uses ffmpeg's own cropdetect over a sample of frames rather than a
+    hand-rolled luminance scan, so a single bright frame cannot talk the
+    whole clip out of a crop it needs.
+    """
+    try:
+        probe = _run_ffmpeg(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", clip_path],
+            f"probe size for {clip_path}",
+        )
+        width, height = (int(v) for v in probe.stdout.strip().split("x")[:2])
+    except (RuntimeError, ValueError):
+        return None
+
+    # cropdetect reports on stderr; a non-zero exit here is not fatal to the
+    # stitch, it just means we leave the clip alone.
+    try:
+        result = _run_ffmpeg(
+            ["ffmpeg", "-i", clip_path,
+             "-vf", f"cropdetect=limit={LETTERBOX_LUMA_LIMIT}:round=2:reset=0",
+             "-frames:v", "60", "-f", "null", "-"],
+            f"cropdetect for {clip_path}",
+        )
+    except RuntimeError:
+        return None
+
+    crop = None
+    for line in result.stderr.splitlines():
+        marker = line.rfind("crop=")
+        if marker != -1:
+            crop = line[marker + len("crop="):].strip()
+    if not crop:
+        return None
+
+    try:
+        cw, ch, cx, cy = (int(v) for v in crop.split(":")[:4])
+    except ValueError:
+        return None
+    if cw <= 0 or ch <= 0 or ch > height:
+        return None
+
+    trimmed = (height - ch) / height
+    if not (LETTERBOX_MIN_FRACTION <= trimmed <= LETTERBOX_MAX_FRACTION):
+        return None
+    # Only vertical mattes are in scope; a horizontal crop here would be
+    # pillarboxing, which this run has never produced.
+    if cw != width:
+        return None
+    return cw, ch, cx, cy
+
+
+def _strip_letterbox(clip_path: str, out_path: str,
+                     box: tuple[int, int, int, int] | None = None) -> bool:
+    """Crop detected bars and scale back to the clip's original size.
+
+    Returns True if a crop was applied and written to out_path. The scale-back
+    matters: the concat demuxer needs every clip at identical dimensions, and
+    a cropped-but-unscaled shot would otherwise force a re-encode of the whole
+    film or fail outright.
+    """
+    if box is None:
+        box = _detect_letterbox(clip_path)
+    if box is None:
+        return False
+    cw, ch, cx, cy = box
+
+    probe = _run_ffmpeg(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", clip_path],
+        f"probe size for {clip_path}",
+    )
+    width, height = (int(v) for v in probe.stdout.strip().split("x")[:2])
+
+    _run_ffmpeg(
+        ["ffmpeg", "-i", clip_path,
+         "-vf", f"crop={cw}:{ch}:{cx}:{cy},scale={width}:{height}:flags=lanczos",
+         "-an", "-y", out_path],
+        f"letterbox crop for {clip_path}",
+    )
+    return True
+
+
+def _strip_letterbox_group(clip_paths: list[str], work_dir: str) -> list[str]:
+    """De-letterbox every part of one shot using a single shared crop.
+
+    The crop is detected once, on the first part, and applied to all of them.
+    Detecting per part would let two halves of the same shot land on crops a
+    few pixels apart, which reintroduces the jump this is meant to remove --
+    only now in the middle of a shot rather than at a cut.
+    """
+    if not clip_paths:
+        return clip_paths
+    box = _detect_letterbox(clip_paths[0])
+    if box is None:
+        return clip_paths
+
+    os.makedirs(work_dir, exist_ok=True)
+    out_paths = []
+    for src in clip_paths:
+        dst = os.path.join(work_dir, os.path.basename(src))
+        if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+            out_paths.append(dst)
+            continue
+        try:
+            out_paths.append(dst if _strip_letterbox(src, dst, box=box) else src)
+        except RuntimeError:
+            out_paths.append(src)  # a failed crop must not lose the shot
+    return out_paths
+
+
 # Seconds of dissolve over the join between chained parts of one shot.
 #
 # OFF by default. It was added to hide a visible hitch at each join, but that
@@ -407,6 +547,12 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
         os.path.join(adjusted_dir, f"{os.path.splitext(os.path.basename(p))[0]}.mp4")
         for p in clip_paths
     ]
+
+    # Strip any baked-in matte before retiming, so the timeline maths and the
+    # concat both see one consistent frame size.
+    if STRIP_LETTERBOX:
+        clip_paths = _strip_letterbox_group(
+            clip_paths, os.path.join(adjusted_dir, "unletterboxed"))
 
     mtime_stale = any(
         not os.path.exists(ap) or os.path.getmtime(cp) > os.path.getmtime(ap)

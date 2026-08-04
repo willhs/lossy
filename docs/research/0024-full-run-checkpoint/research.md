@@ -133,7 +133,37 @@ Measured on the encode being rendered right now: **390 of 2069 shots (18.8%) car
 
 This is the exact contamination vector from 0021: naming a character invites the model to reconstruct from world knowledge rather than from the compressed description, which is the property that whole research note argues undermines the reconstruction claim.
 
-**This is the single most consequential decision to make now, because it is destructive later.** A re-encode changes `manifest.encode_fingerprint`, which by design invalidates every existing progress file and clip. Doing it after 2000 shots throws away ~40 GPU-hours; doing it now throws away 50 shots and ~$0.33. Cost of the re-encode itself: ~$1.30.
+**Correction to an earlier claim in this note:** re-encoding does *not* automatically invalidate the clips. `manifest.encode_fingerprint` hashes only shot count, index and start/end times — not descriptions. A stage-2 re-run rebuilds descriptions from the unchanged stage-1 boundaries, so the fingerprint is identical and a resumed decode would **silently skip** the 50 old clips, mixing contaminated renders with clean ones. Restarting cleanly requires explicitly clearing the progress file and moving the old clips aside.
+
+### The re-encode does not fix the naming, and the names are load-bearing
+
+Attempted on 2026-08-04, and **stopped after ~$0.006** when the premise failed.
+
+Ran stage 2 over the first 21 shots with the current `ENCODE_MODEL` (`gemini-2.5-flash-lite`) and the supposedly fixed prompt. Naming rate was **identical to the old encode: 1 of 21 shots, the same shot**:
+
+```
+OLD (gemini-3.1-flash-lite-preview):
+  "A golden humanoid droid (C-3PO) and a blue and white astromech droid (R2-D2)..."
+NEW (gemini-2.5-flash-lite, "fixed" prompt):
+  "A golden humanoid droid (C-3PO) and a blue and white astromech droid (R2-D2)
+   are in the foreground, walking down a sterile, white corridor..."
+```
+
+The reason is in `SYSTEM_PROMPT` itself. The anti-naming clause is scoped entirely to the *continuity context*:
+
+> "It deliberately excludes character identity — do not infer, reuse, or guess who a person is from it. Identify who/what is in THIS shot from these frames alone; **if you don't recognize someone, describe them by visible appearance rather than guessing a name.**"
+
+That forbids *guessing* a name for an unrecognised person. It explicitly permits naming someone the model *does* recognise — and Gemini recognises C-3PO. The fix addressed the Leia-hologram failure (identity carried across a cut) and never addressed naming outright, so `CLAUDE.md`'s "root cause was the prompt inviting naming at all" is only half true.
+
+**And the names cannot simply be banned, because the pipeline consumes them.** `_text_match_cast` in `encode.py` matches TMDB cast names against each shot's `subjects` text; that text match is the primary, cheap path for assigning characters to shots, and the resulting `characters.json` `shots` lists are exactly what `build_character_shot_map` feeds to the identity mixin. Strip the names and the text-match path yields nothing: every shot falls through to the supervised Gemini batch, which can still match on appearance ("a golden humanoid droid") but costs more and is less certain.
+
+So there is a genuine tension the project has not yet resolved: **0021 wants names out of the descriptions; the character pipeline uses those names to know who is in a shot.** Resolving it is a design decision, not a re-run.
+
+The separate reason to re-encode still stands and is untouched by this: `config.py` records that this encode used `EVAL_MODEL` rather than `ENCODE_MODEL` and "must be re-encoded with ENCODE_MODEL before the real full run so the film is encoded with the same model throughout."
+
+Measured cost of a full re-encode, from the 21-shot sample: **~$0.64**, not the ~$1.30 estimated.
+
+One more thing a re-encode would change: shot **451** is present in `shot_index.json` with all four keyframes on disk, but missing from `shots.json` — it errored during the old describe pass. That single dropped shot is the cause of the known "index diverges from list position from 451 onward" defect. A re-encode would likely restore it, taking the film to 2070 shots — which *does* change the fingerprint and invalidate every clip and audio artifact.
 
 ### What held up well
 
@@ -162,10 +192,15 @@ The genuinely awkward finding is not a defect at all: the film is being rendered
 
 Ordered by what has to be decided before more GPU time is spent.
 
-1. **[HUMAN] Decide the re-encode before resuming.** Re-encoding invalidates all clips by fingerprint. Doing it now costs 50 shots and $0.33; doing it after the full run costs ~40 GPU-hours. Given 0021's argument, my recommendation is to **re-encode now** (~$1.30) and restart the run from shot 0.
+1. **[HUMAN] Decide how naming and character-assignment should coexist.** Will approved a re-encode; it was attempted and abandoned at ~$0.006 because it does not fix naming (above). The real choice is one of:
+   - **Ban naming in the prompt and let stage 3 match on appearance alone** — costs more per encode, accuracy unmeasured. Honest per 0021.
+   - **Keep names in `subjects` for stage 3, and strip them when composing the video prompt** — the decode-side prompt is what actually reaches the video model, so this gets 0021's benefit while leaving character assignment intact. Cheapest correct option, and my recommendation.
+   - **Accept the naming** and treat contamination as a documented property of the Star Wars run, which the Better Call Saul control exists to offset.
+
+   Whichever is chosen, re-encode with `ENCODE_MODEL` afterwards (~$0.64) for model consistency, and expect shot 451 to return.
 2. ~~Pool the HTTP connections and lengthen the retry backoff~~ — **done**, see above. Untested against a live pod; the next run exercises it.
 3. **Add an end-of-run retry sweep** over the `failed` list, now that the list is trustworthy. Not done.
-4. **Decide the letterbox policy** — crop-and-fill in the stitch is the cheapest fix and needs no re-render. This is a judgement call about how the film should look, so it is Will's, not mine.
+4. ~~Decide the letterbox policy~~ — Will chose crop-and-fill; **implemented** in `stitch.py`. `_detect_letterbox` runs ffmpeg `cropdetect` over 60 frames and only treats a 6-40% vertical trim as a matte, so dark shots and pillarboxing are left alone. `_strip_letterbox_group` detects once per shot and applies the same crop to every part — detecting per part would move the jump into the middle of a shot. Verified on the real clips: shot 0058 goes from 23% bars to 0% at unchanged 1280x704 and frame count, and clean shots are correctly untouched. Off via `LOSSY_STRIP_LETTERBOX=0` to compare stitches.
 5. Optional: reap the orphaned `sleep` in `disarm_self_destruct`. Cosmetic.
 
 **Go/no-go on the remaining ~2000 shots: technically GO — cost, reliability and pod hygiene all check out.** The blocker is editorial, not technical: settle the re-encode question first, because that decision is cheap today and expensive after 40 GPU-hours.
