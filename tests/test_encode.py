@@ -1693,3 +1693,35 @@ class TestCanonicalDescriptionsExcludeWardrobe:
         src = self._prompts()
         for trait in ("age range", "hair colour", "bearing"):
             assert trait in src or trait.replace("colour", "color") in src
+
+
+class TestGeminiClientHasADeadline:
+    """Every Gemini call must be able to give up.
+
+    The client was built with no http_options, so generate_content had no
+    timeout. Re-encoding the film hung on shot ~400 and sat there 21 hours:
+    process alive, 0% CPU, nothing written, no error -- indistinguishable
+    from working. It costs wall-clock rather than money, so nothing else
+    catches it either.
+    """
+
+    def test_the_client_is_built_with_a_timeout(self):
+        import encode
+
+        client = encode._gemini_client("dummy-key")
+        assert client._api_client._http_options.timeout == encode.GEMINI_TIMEOUT_MS
+
+    def test_the_timeout_is_a_hang_detector_not_a_latency_budget(self):
+        import encode
+
+        # Generous enough that a slow-but-working call is never killed, short
+        # enough that a hang cannot eat a night.
+        assert 60_000 <= encode.GEMINI_TIMEOUT_MS <= 600_000
+
+    def test_no_bare_client_construction_survives(self):
+        """A bare genai.Client() would silently reintroduce the hang."""
+        import inspect
+        import encode
+
+        source = inspect.getsource(encode)
+        assert "genai.Client(api_key=api_key)" not in source

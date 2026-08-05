@@ -157,7 +157,27 @@ That forbids *guessing* a name for an unrecognised person. It explicitly permits
 
 **And the names cannot simply be banned, because the pipeline consumes them.** `_text_match_cast` in `encode.py` matches TMDB cast names against each shot's `subjects` text; that text match is the primary, cheap path for assigning characters to shots, and the resulting `characters.json` `shots` lists are exactly what `build_character_shot_map` feeds to the identity mixin. Strip the names and the text-match path yields nothing: every shot falls through to the supervised Gemini batch, which can still match on appearance ("a golden humanoid droid") but costs more and is less certain.
 
-So there is a genuine tension the project has not yet resolved: **0021 wants names out of the descriptions; the character pipeline uses those names to know who is in a shot.** Resolving it is a design decision, not a re-run.
+So there is a genuine tension: **0021 wants names out of the descriptions; the character pipeline uses those names to know who is in a shot.**
+
+### Resolved: strip at the decode side (2026-08-05)
+
+Will chose to keep names in the encode for stage 3 and strip them when composing the prompt. Implementing it turned up a much larger problem than the descriptions.
+
+**The real exposure was 88.4%, not 18.8%.** `CharacterIdentityMixin._prepend_identity` prepended `"{display_name}: {description}"` for every mapped character, so a name reached the model on **1828 of 2069 shots** regardless of what `subjects` said. The 18.8% figure reported earlier in this note measured the descriptions, not the prompt the model actually receives.
+
+| | shots | % |
+|---|---|---|
+| Name in `subjects` | 389 | 18.8% |
+| Name reaching the model, before | **1828** | **88.4%** |
+| Name reaching the model, after | **3** | **0.14%** |
+
+The fix drops the display-name label (the description alone carries the identity) and runs `prompt_format.strip_character_names` over the composed prompt. Stripping keeps the text readable rather than leaving holes: a parenthetical gloss goes whole, an appositive takes both its commas, a governing preposition leaves with its object, and the stranded copula in "C-3PO is a tall golden droid" is repaired to "A tall golden droid". Text with no name in it is returned untouched, so nothing is silently reflowed.
+
+The 3 residual shots name **Greedo** (757) and **Jabba** (791, 793), neither of whom is in `characters.json` — stage 3 keeps only characters appearing in ≥2 shots, and `speakers.json` doesn't list them either. There is no on-disk source for those names, so stripping them would need a hardcoded list for 0.14%. Left as a documented limit.
+
+**This reverses `SPEC-220/REQ-020`**, which required the canonical name in the prompt. The spec is amended in place with the reasoning. `docs/design` is approval-gated, so that edit rides on the naming decision rather than standing on its own.
+
+Note the fix works **on the existing encode** — it needs no re-encode at all. That changes what the re-encode is for: model consistency and shot 451, not naming.
 
 The separate reason to re-encode still stands and is untouched by this: `config.py` records that this encode used `EVAL_MODEL` rather than `ENCODE_MODEL` and "must be re-encoded with ENCODE_MODEL before the real full run so the film is encoded with the same model throughout."
 
@@ -192,12 +212,7 @@ The genuinely awkward finding is not a defect at all: the film is being rendered
 
 Ordered by what has to be decided before more GPU time is spent.
 
-1. **[HUMAN] Decide how naming and character-assignment should coexist.** Will approved a re-encode; it was attempted and abandoned at ~$0.006 because it does not fix naming (above). The real choice is one of:
-   - **Ban naming in the prompt and let stage 3 match on appearance alone** — costs more per encode, accuracy unmeasured. Honest per 0021.
-   - **Keep names in `subjects` for stage 3, and strip them when composing the video prompt** — the decode-side prompt is what actually reaches the video model, so this gets 0021's benefit while leaving character assignment intact. Cheapest correct option, and my recommendation.
-   - **Accept the naming** and treat contamination as a documented property of the Star Wars run, which the Better Call Saul control exists to offset.
-
-   Whichever is chosen, re-encode with `ENCODE_MODEL` afterwards (~$0.64) for model consistency, and expect shot 451 to return.
+1. ~~Decide how naming and character-assignment should coexist~~ — **decided and implemented**: names stay in the encode for stage 3, stripped at composition. 88.4% → 0.14%. See above.
 2. ~~Pool the HTTP connections and lengthen the retry backoff~~ — **done**, see above. Untested against a live pod; the next run exercises it.
 3. **Add an end-of-run retry sweep** over the `failed` list, now that the list is trustworthy. Not done.
 4. ~~Decide the letterbox policy~~ — Will chose crop-and-fill; **implemented** in `stitch.py`. `_detect_letterbox` runs ffmpeg `cropdetect` over 60 frames and only treats a 6-40% vertical trim as a matte, so dark shots and pillarboxing are left alone. `_strip_letterbox_group` detects once per shot and applies the same crop to every part — detecting per part would move the jump into the middle of a shot. Verified on the real clips: shot 0058 goes from 23% bars to 0% at unchanged 1280x704 and frame count, and clean shots are correctly untouched. Off via `LOSSY_STRIP_LETTERBOX=0` to compare stitches.

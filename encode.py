@@ -543,6 +543,32 @@ def detect_audio_labels(
 # Stage 2: Gemini vision API prompt generation
 # ---------------------------------------------------------------------------
 
+# Every Gemini call gets a deadline.
+#
+# The client was built with no http_options, so generate_content had no
+# timeout and could block forever. Re-encoding the film hung on shot ~400 and
+# sat there for 21 hours: process alive, 0% CPU, 5s of CPU consumed, nothing
+# written, no error. Indistinguishable from "still working" to anything
+# watching progress, and it burns wall-clock rather than money, so nothing
+# else catches it either.
+#
+# 180s is generous for a describe call that normally takes a few seconds --
+# it is a hang detector, not a latency budget. The loop already retries and
+# tolerates a failed shot, so a timeout costs one shot, not the run.
+GEMINI_TIMEOUT_MS = 180_000
+
+
+def _gemini_client(api_key: str):
+    """Gemini client with a request deadline. Use instead of genai.Client."""
+    from google import genai
+    from google.genai import types
+
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+    )
+
+
 SYSTEM_PROMPT = """You are a film analysis expert. Given frames from a single shot of a film, describe the shot for use as a video generation prompt.
 
 Return a JSON object with these fields:
@@ -757,7 +783,7 @@ def generate_prompts(
         print("Get one at https://aistudio.google.com/apikey")
         sys.exit(1)
 
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
     keyframes_dir = os.path.join(output_dir, "keyframes")
 
     # Load existing shots for resume support (v2 shots.json, per the manifest contract)
@@ -1307,7 +1333,7 @@ def run_stage3(args):
         print("Error: GEMINI_API_KEY not set")
         sys.exit(1)
 
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
 
     # --- TMDB supervised path ---
     tmdb_id = getattr(args, 'tmdb_id', None)
@@ -1451,7 +1477,7 @@ def run_stage4(args):
     if not api_key:
         print("Error: GEMINI_API_KEY not set")
         sys.exit(1)
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
 
     BATCH_SIZE = 50
     assignments: dict[int, dict] = {}
