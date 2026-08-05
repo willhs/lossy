@@ -708,6 +708,46 @@ def _continuity_context(description: dict | None) -> dict:
     return {k: description[k] for k in CONTINUITY_CONTEXT_FIELDS if description.get(k)}
 
 
+def _retry_without_poisoned_frame(client, types, user_content, config, idx):
+    """Retry a blocked describe call, dropping one keyframe at a time.
+
+    A single frame can poison a whole shot. Shot 451 of Star Wars IV -- the
+    Tusken Raider standing over Luke -- came back empty on every encode the
+    project has ever run, and its absence is the cause of the known "index
+    diverges from list position from 451 onward" defect. The block is
+    `BlockedReason.OTHER`, which relaxing safety_settings does NOT lift, so it
+    read as permanently un-describable.
+
+    It is not. Only the first of its four keyframes trips the filter; frames
+    2, 3 and 4 each describe fine on their own. Dropping the offending frame
+    keeps the shot, at the cost of describing it from slightly less coverage
+    -- which is strictly better than losing it and silently renumbering every
+    shot after it.
+
+    Tries the largest subsets first (drop exactly one frame), so the retained
+    description is built from as much of the shot as possible.
+    """
+    images = [p for p in user_content if getattr(p, "inline_data", None) is not None]
+    if len(images) < 2:
+        return None
+
+    for dropped, image in enumerate(images):
+        attempt = [p for p in user_content if p is not image]
+        try:
+            response = client.models.generate_content(
+                model=ENCODE_MODEL,
+                contents=[types.Content(role="user", parts=attempt)],
+                config=config,
+            )
+        except Exception:
+            continue
+        if response.text:
+            print(f"  Shot {idx}: recovered by dropping keyframe {dropped + 1} "
+                  f"of {len(images)}")
+            return response
+    return None
+
+
 def _describe_shot(client, types, idx, scene, camera, audio_labels, dialogue,
                    frame_files, keyframes_dir, system_prompt, user_content,
                    encode_costs) -> dict | None:
@@ -716,16 +756,21 @@ def _describe_shot(client, types, idx, scene, camera, audio_labels, dialogue,
     Returns ``None`` if Gemini returned an empty response. Raises on API
     errors so the caller can decide whether to retry (e.g. on a 429).
     """
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=0.3,
+        response_mime_type="application/json",
+    )
     response = client.models.generate_content(
         model=ENCODE_MODEL,
         contents=[types.Content(role="user", parts=user_content)],
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.3,
-            response_mime_type="application/json",
-        ),
+        config=config,
     )
     text = response.text
+    if not text:
+        response = _retry_without_poisoned_frame(
+            client, types, user_content, config, idx)
+        text = response.text if response is not None else None
     if not text:
         return None
     description = json.loads(text.strip())

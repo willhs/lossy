@@ -1725,3 +1725,117 @@ class TestGeminiClientHasADeadline:
 
         source = inspect.getsource(encode)
         assert "genai.Client(api_key=api_key)" not in source
+
+
+class TestPoisonedKeyframeRecovery:
+    """One bad frame must not cost the whole shot.
+
+    Shot 451 of Star Wars IV -- the Tusken Raider standing over Luke -- came
+    back empty on every encode this project has run, and its absence is the
+    cause of the known "index diverges from list position from 451 onward"
+    defect. The block is BlockedReason.OTHER, which relaxing safety_settings
+    does not lift. But only the FIRST of its four keyframes trips it; the
+    other three each describe fine alone.
+    """
+
+    class _Part:
+        def __init__(self, inline_data=None):
+            self.inline_data = inline_data
+
+    class _Resp:
+        def __init__(self, text):
+            self.text = text
+
+    def _content(self, n_images=4):
+        parts = [self._Part(inline_data=f"img{i}") for i in range(n_images)]
+        return parts + [self._Part()]  # trailing text part
+
+    def _client(self, succeed_when):
+        """A client that returns text only when succeed_when(parts) is true."""
+        outer = self
+
+        class Models:
+            calls = []
+
+            def generate_content(self, model, contents, config):
+                parts = contents[0].parts
+                Models.calls.append(parts)
+                return outer._Resp("{}" if succeed_when(parts) else "")
+
+        class Client:
+            models = Models()
+
+        return Client()
+
+    def _types(self):
+        import types as _t
+
+        class Content:
+            def __init__(self, role, parts):
+                self.role, self.parts = role, parts
+
+        ns = _t.SimpleNamespace(Content=Content)
+        return ns
+
+    def test_the_shot_is_recovered_by_dropping_the_bad_frame(self):
+        import encode
+
+        content = self._content()
+        bad = content[0]
+        client = self._client(lambda parts: bad not in parts)
+
+        resp = encode._retry_without_poisoned_frame(
+            client, self._types(), content, config=None, idx=451)
+
+        assert resp is not None and resp.text == "{}"
+
+    def test_the_largest_subset_is_tried_first(self):
+        """Exactly one frame is dropped, so the shot keeps maximum coverage."""
+        import encode
+
+        content = self._content()
+        bad = content[0]
+        client = self._client(lambda parts: bad not in parts)
+
+        encode._retry_without_poisoned_frame(
+            client, self._types(), content, config=None, idx=451)
+
+        first_attempt = client.models.calls[0]
+        images = [p for p in first_attempt if p.inline_data is not None]
+        assert len(images) == 3  # 4 - exactly one
+
+    def test_a_shot_blocked_on_every_frame_still_gives_up(self):
+        import encode
+
+        client = self._client(lambda parts: False)
+        assert encode._retry_without_poisoned_frame(
+            client, self._types(), self._content(), config=None, idx=451) is None
+
+    def test_a_single_frame_shot_is_not_worth_retrying(self):
+        """Dropping the only image leaves nothing to describe."""
+        import encode
+
+        client = self._client(lambda parts: True)
+        assert encode._retry_without_poisoned_frame(
+            client, self._types(), self._content(n_images=1), config=None, idx=7) is None
+
+    def test_an_api_error_on_one_subset_does_not_abort_the_rest(self):
+        import encode
+
+        content = self._content()
+        good = content[2]
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                parts = contents[0].parts
+                if good in parts and content[0] in parts:
+                    raise RuntimeError("transient")
+                return TestPoisonedKeyframeRecovery._Resp(
+                    "{}" if content[0] not in parts else "")
+
+        class Client:
+            models = Models()
+
+        resp = encode._retry_without_poisoned_frame(
+            Client(), self._types(), content, config=None, idx=451)
+        assert resp is not None
