@@ -183,7 +183,51 @@ The separate reason to re-encode still stands and is untouched by this: `config.
 
 Measured cost of a full re-encode, from the 21-shot sample: **~$0.64**, not the ~$1.30 estimated.
 
-One more thing a re-encode would change: shot **451** is present in `shot_index.json` with all four keyframes on disk, but missing from `shots.json` — it errored during the old describe pass. That single dropped shot is the cause of the known "index diverges from list position from 451 onward" defect. A re-encode would likely restore it, taking the film to 2070 shots — which *does* change the fingerprint and invalidate every clip and audio artifact.
+One more thing a re-encode would change: shot **451** is present in `shot_index.json` with all four keyframes on disk, but missing from `shots.json` — it errored during the old describe pass. That single dropped shot is the cause of the known "index diverges from list position from 451 onward" defect.
+
+### Shot 451: one poisoned keyframe, not an undescribable shot
+
+451 failed *again* on the re-encode, reproducibly — so it was never bad luck. It is the Tusken Raider standing over Luke at 29:00.
+
+My first hypothesis was a safety-filter block, and it was **wrong**. The block is `BlockedReason.OTHER`, and setting `BLOCK_NONE` on every harm category does not lift it. Testing that before building on it is what surfaced the real cause: **only the first of its four keyframes trips the filter.** Frames 2, 3 and 4 each describe fine alone, and all four pass under `EVAL_MODEL`.
+
+So a blocked describe call now retries with one frame dropped, largest subsets first. Verified live: 451 recovers for **$0.00016**, described from three frames instead of four — strictly better than losing it and silently renumbering the 1618 shots after it.
+
+### Re-encode result (2026-08-06)
+
+| | |
+|---|---|
+| Shots described | **2070 — no gaps, the complete film for the first time** |
+| Model | `gemini-2.5-flash-lite` (`ENCODE_MODEL`, as `config.py` required) |
+| Cost | **$0.3777** (vs ~$0.64 projected, ~$1.30 originally estimated) |
+| Wall-clock | ~2.5hrs of describing, plus a 21hr hang (below) |
+| Fingerprint | `805f0b0bd0ea` → **`8855b97c449f`** |
+| Runtime | 124.7 min, mean shot 3.62s |
+
+Three calls failed across ~2070; two recovered on the existing retry, one was 451.
+
+**The fingerprint change invalidates the 50 checkpoint clips**, as expected under a restart from shot 0. They are archived to `archive_pre_reencode_20260806/` rather than deleted, along with their progress file, so nothing can adopt them off disk.
+
+Naming after the strip, measured on the new encode:
+
+| | shots | % |
+|---|---|---|
+| Names in `subjects` (kept for stage 3) | 394 | 19.0% |
+| Names reaching the video model | **4** | **0.19%** |
+
+The 4 are shots 757, 788, 791, 793 — Greedo and Jabba, still absent from `characters.json`.
+
+### The encode hung for 21 hours
+
+The first re-encode attempt stopped at shot ~400 and sat there: process alive, 0% CPU, 5s of CPU across 23hrs, nothing written, no error. `genai.Client` was built without `http_options`, so `generate_content` had no timeout and blocked forever on a socket the far end had stopped answering — the log shows "Server disconnected without sending a response" 66 shots earlier.
+
+No work was lost (`save_shots` checkpoints every 10 shots) and no money (Gemini bills per call). But it cost a night, and **nothing detected it**: a hang keeps the process alive so liveness checks pass, spends nothing so cost alarms stay quiet, and simply stops changing — which to a progress watcher is indistinguishable from a slow shot. The monitor watching it only reported on count *change*, so it reported nothing at all.
+
+Fixed with a 180s deadline on every Gemini call, and a replacement monitor that alerts explicitly on no progress for 12 minutes.
+
+This is the **third instance of one pattern**: unbounded network calls with no deadline. Shot 56 died to local socket exhaustion, the ComfyUI polling opened ~48,000 connections, and the encode hung on a dead socket. Worth carrying into the 40-hour render, where a silent hang costs far more than a night.
+
+Minor: `encode_costs.json` is rewritten rather than merged on a resumed stage 2, so it now records only the final follow-up call. The real total is in the run log.
 
 ### What held up well
 
