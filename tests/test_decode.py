@@ -2408,3 +2408,57 @@ class TestIdentityBlockCarriesNoName:
     def test_a_shot_with_no_index_is_still_stripped(self):
         out = self._strategy()._prepend_identity({}, "C-3PO waits.")
         assert "C-3PO" not in out
+
+
+class TestDesignNamesSurviveTheStrip:
+    """Not every name is contamination.
+
+    "Luke Skywalker" makes the model recall an actor's face -- that is what
+    0021 objects to. "Stormtrooper" is not a person; it is the most compact
+    description that armour has. Stripping it turned a corridor of
+    stormtroopers into generic soldiers in white, even though the prompt
+    still read "Imperial soldiers clad in distinctive white armor". The one
+    word carried more than the paragraph.
+    """
+
+    def _strategy(self):
+        from strategies_video import CharacterIdentityMixin
+
+        s = CharacterIdentityMixin.__new__(CharacterIdentityMixin)
+        s._init_character_identity(
+            {1: ["stormtrooper"], 2: ["luke"], 3: ["stormtrooper", "luke"]},
+            {"characters": [
+                {"name": "stormtrooper", "display_name": "Stormtrooper",
+                 "description": "Imperial soldiers in white armor.",
+                 "shots": [1, 3], "keep_name": True},
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "A young man with sandy hair.",
+                 "shots": [2, 3]},
+            ]},
+        )
+        return s
+
+    def test_a_design_name_is_kept_and_labelled(self):
+        out = self._strategy()._prepend_identity({"index": 1}, "Cinematic wide shot.")
+        assert out.startswith("Stormtrooper: Imperial soldiers in white armor.")
+
+    def test_a_personal_name_is_still_stripped(self):
+        out = self._strategy()._prepend_identity({"index": 2}, "Cinematic wide shot.")
+        assert "Luke" not in out and "Skywalker" not in out
+        assert "young man with sandy hair" in out
+
+    def test_both_rules_apply_in_one_shot(self):
+        out = self._strategy()._prepend_identity({"index": 3}, "Cinematic wide shot.")
+        assert "Stormtrooper" in out
+        assert "Luke" not in out and "Skywalker" not in out
+
+    def test_a_design_name_survives_in_the_shot_text_too(self):
+        """The describe pass writes "stormtroopers in white armor" -- keep it."""
+        out = self._strategy()._prepend_identity(
+            {"index": 1}, "Three Stormtrooper figures advance.")
+        assert "Stormtrooper figures advance" in out
+
+    def test_only_flagged_characters_are_spared(self):
+        s = self._strategy()
+        assert "Luke Skywalker" in s._all_character_names()
+        assert "Stormtrooper" not in s._all_character_names()

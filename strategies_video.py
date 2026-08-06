@@ -109,14 +109,20 @@ class CharacterIdentityMixin(GenerationStrategy):
             for name in self._character_shot_map.get(shot_idx, []):
                 char = self._characters_by_name.get(name)
                 if char:
-                    # The description alone carries the identity. The display
-                    # name used to be prepended as a label, which put a
-                    # character name in front of 1828 of 2069 shots (88.4%) --
-                    # far more exposure than the 389 shots whose `subjects`
-                    # text names anyone -- and naming is exactly what lets the
-                    # model reconstruct from memory rather than from the
-                    # description (research 0021).
-                    identity_parts.append(char["description"])
+                    # For a person, the description alone carries the
+                    # identity. Labelling it with the name used to put a
+                    # character name in front of 88.4% of shots, and naming is
+                    # what lets the model reconstruct from memory rather than
+                    # from the description (research 0021).
+                    #
+                    # For a design -- Vader, a stormtrooper, an astromech --
+                    # the name IS the description, and dropping it costs the
+                    # look for nothing gained. Those keep their label.
+                    if char.get("keep_name") and char.get("display_name"):
+                        identity_parts.append(
+                            f"{char['display_name']}: {char['description']}")
+                    else:
+                        identity_parts.append(char["description"])
 
         composed = " ".join(identity_parts + [base]) if identity_parts else base
         # Strip on every path, including shots with no identity block at all.
@@ -126,9 +132,27 @@ class CharacterIdentityMixin(GenerationStrategy):
         return strip_character_names(composed, self._all_character_names())
 
     def _all_character_names(self) -> set:
-        """Every name a character might be referred to by, for stripping."""
+        """Names to strip: personal names only, not design names.
+
+        Not every name is contamination. "Luke Skywalker" makes the model
+        recall an actor's face, which is exactly what 0021 objects to. But
+        "Stormtrooper" is not a person -- it is the most compact description
+        that armour has, and no paragraph of prose replaces it. Stripping it
+        turned a corridor of stormtroopers into generic soldiers in white,
+        even though the prompt still said "Imperial soldiers clad in
+        distinctive white armor". One word carried more than the paragraph.
+
+        So a character can opt out via ``keep_name`` in characters.json. That
+        is a per-film editorial judgement about which names are designs
+        rather than people, so it lives in the data a human curates, not in a
+        heuristic this code guesses. Star Wars keeps Vader, C-3PO, R2-D2,
+        Chewbacca, Stormtrooper and the Jawas -- the same carve-out 0023 made
+        for costume descriptions, for the same reason.
+        """
         names = set()
         for key, char in self._characters_by_name.items():
+            if char.get("keep_name"):
+                continue
             names.add(key)
             display = char.get("display_name")
             if display:
