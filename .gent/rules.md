@@ -17,8 +17,11 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 - `voice_casting.py` -- proposes a per-character voice map (`voice_map.json`) from `characters.json` via Gemini, with `--sample` to render one short clip per voice for review. A proposal only -- casting is a human call, made by editing `voice_map.json`
 - `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols. Speech generation reads `speakers.json`/`voice_map.json` if present (falls back to the single `--speech-voice` otherwise)
 - `prompt_format.py` -- prompt formatting functions (CAMERA_TERMS, format_prompt, model-specific variants)
-- `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod WAN T2V, RunPod VACE)
+- `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod WAN T2V, RunPod VACE, RunPod LTX-2)
 - `strategies_audio.py` -- audio/speech generation strategies (AudioStrategy base + ElevenLabs, MMAudio, RunPod, SpeechStrategy)
+- `runpod_pod.py` -- shared RunPod pod lifecycle (`RunPodSession`): provisions across a cloud x GPU fallback matrix, `with_setup_retry` re-provisions on boot failure, exit-time stray-pod sweep. Every RunPod strategy builds on this.
+- `manifest.py` -- single source of truth for on-disk filename conventions and the `shots.json` v2 schema; also owns `encode_fingerprint`/`check_encode_fingerprint`, which stamp progress files so a resumed run detects and refuses output from a since-changed encode.
+- `config.py` -- `.env` loading, Gemini model-id constants, and the video/audio strategy registries (name -> class + capability flags).
 - `stitch.py` -- FFmpeg stitching (video concat, audio/speech track building, muxing)
 - `eval.py` -- evaluation CLI (re-encodes output, compares to original, writes quality reports)
 - `pipeline.py` -- orchestrator (chains all stages via subprocess)
@@ -71,10 +74,13 @@ Requires `.env` with API keys for the chosen strategy (see README.md).
 ## Running Tests
 
 ```bash
-python -m pytest -v
+uv run python -m pytest -v
 ```
 
-Tests use mocks for external APIs. No real API calls in tests.
+Use `uv run` (or an activated `uv sync`'d venv) -- a bare system `python -m pytest`
+fails at collection with `ModuleNotFoundError: No module named 'scenedetect'` since
+deps live in the uv-managed venv, not system site-packages. Tests use mocks for
+external APIs. No real API calls in tests.
 
 ## Workflow
 
