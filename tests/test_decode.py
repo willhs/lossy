@@ -500,7 +500,7 @@ class TestFormatPromptSeedance:
 # never read on the decode side except temporal_segments, which is
 # consulted with .get() only for split (multi-part) shots -- absence must
 # fall back to vary_prompt_for_part, not error. See docs/research/
-# 0022-authored-manifest-verification/research.md.
+# 0024-authored-manifest-verification/research.md.
 # ---------------------------------------------------------------------------
 
 class TestFalSeedanceGenerateMissingEncodeFields:
