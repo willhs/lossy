@@ -1678,16 +1678,20 @@ class TestCanonicalDescriptionsExcludeWardrobe:
         return src
 
     def test_stage3_prompts_forbid_costume_for_humans(self):
-        src = self._prompts()
-        # every place that asks for a canonical description must also forbid
-        # clothing for human characters
-        assert src.count("Do NOT describe clothing or costume") >= 3
+        # The rule used to be copy-pasted into all three prompts and was
+        # checked by counting occurrences. It now lives in one shared spec,
+        # so the guarantee is structural rather than a headcount.
+        import encode
+
+        assert "Do NOT describe clothing or costume" in encode.IDENTITY_DESCRIPTION_SPEC
+        assert encode.IDENTITY_DESCRIPTION_SPEC in encode.STAGE3_SYSTEM_PROMPT
 
     def test_stage3_prompts_keep_the_costume_is_identity_exception(self):
         # droids, masked and armoured figures never change, and stripping
         # their shell would strip their identity (C-3PO becomes a man)
-        src = self._prompts()
-        assert src.count("costume or shell IS the character") >= 3
+        import encode
+
+        assert "costume or shell IS the character" in encode.IDENTITY_DESCRIPTION_SPEC
 
     def test_stage3_prompts_still_ask_for_stable_identity_traits(self):
         src = self._prompts()
@@ -1839,3 +1843,105 @@ class TestPoisonedKeyframeRecovery:
         resp = encode._retry_without_poisoned_frame(
             Client(), self._types(), content, config=None, idx=451)
         assert resp is not None
+
+
+class TestIdentityDescriptionSpec:
+    """The description is the only identity signal the model gets.
+
+    Names are stripped before the prompt is sent, so a description made of
+    personality words leaves nothing to draw. Han came back as "a smuggler
+    and pilot: cocky and cynical in manner, quick-moving and physically
+    confident" -- half of it unrenderable, silently dropped by the model,
+    which fell back on a generic handsome lead.
+    """
+
+    def test_it_demands_drawable_geometry(self):
+        import encode
+
+        spec = encode.IDENTITY_DESCRIPTION_SPEC.lower()
+        for feature in ("face shape", "brow", "nose", "jaw"):
+            assert feature in spec
+
+    def test_it_forbids_the_unrenderable(self):
+        import encode
+
+        spec = encode.IDENTITY_DESCRIPTION_SPEC.lower()
+        for banned in ("personality", "temperament", "profession", "backstory"):
+            assert banned in spec
+
+    def test_it_keeps_the_costume_rule(self):
+        """Wardrobe is per-shot, except where the shell IS the character."""
+        import encode
+
+        spec = encode.IDENTITY_DESCRIPTION_SPEC.lower()
+        assert "clothing or costume" in spec
+        assert "droids" in spec
+
+    def test_all_three_stage3_prompts_share_one_spec(self):
+        """Three copies of this instruction used to drift apart."""
+        import encode
+
+        assert "__IDENTITY_SPEC__" not in encode.STAGE3_SYSTEM_PROMPT
+        assert encode.IDENTITY_DESCRIPTION_SPEC in encode.STAGE3_SYSTEM_PROMPT
+
+
+class TestCuratedFieldsSurviveRegeneration:
+    """Stage 3 rewrites characters.json wholesale.
+
+    `keep_name` marks the characters whose name is their design rather than a
+    person, so it must survive the prompt-time strip. Regenerating the
+    registry silently dropped it, and the damage only showed up as
+    stormtroopers rendering as generic soldiers, several dollars later.
+    """
+
+    def _existing(self, tmp_path, entries):
+        import json
+
+        p = tmp_path / "characters.json"
+        p.write_text(json.dumps({"characters": entries}))
+        return str(p)
+
+    def test_a_hand_set_flag_is_carried_forward(self, tmp_path):
+        import encode
+
+        path = self._existing(tmp_path, [{"name": "stormtrooper", "keep_name": True}])
+        fresh = {"characters": [{"name": "stormtrooper", "description": "new"}]}
+
+        encode._preserve_curated_fields(path, fresh)
+
+        assert fresh["characters"][0]["keep_name"] is True
+        assert fresh["characters"][0]["description"] == "new"  # regenerated text wins
+
+    def test_characters_without_the_flag_are_untouched(self, tmp_path):
+        import encode
+
+        path = self._existing(tmp_path, [{"name": "luke"}])
+        fresh = {"characters": [{"name": "luke", "description": "new"}]}
+
+        encode._preserve_curated_fields(path, fresh)
+
+        assert "keep_name" not in fresh["characters"][0]
+
+    def test_a_character_that_no_longer_exists_is_ignored(self, tmp_path):
+        import encode
+
+        path = self._existing(tmp_path, [{"name": "gone", "keep_name": True}])
+        fresh = {"characters": [{"name": "luke"}]}
+
+        encode._preserve_curated_fields(path, fresh)  # must not raise
+        assert "keep_name" not in fresh["characters"][0]
+
+    def test_a_first_run_with_no_existing_registry_is_fine(self, tmp_path):
+        import encode
+
+        fresh = {"characters": [{"name": "luke"}]}
+        encode._preserve_curated_fields(str(tmp_path / "nope.json"), fresh)
+        assert fresh["characters"] == [{"name": "luke"}]
+
+    def test_a_corrupt_registry_does_not_abort_stage3(self, tmp_path):
+        import encode
+
+        p = tmp_path / "characters.json"
+        p.write_text("{ not json")
+        fresh = {"characters": [{"name": "luke"}]}
+        encode._preserve_curated_fields(str(p), fresh)  # must not raise

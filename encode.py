@@ -543,6 +543,45 @@ def detect_audio_labels(
 # Stage 2: Gemini vision API prompt generation
 # ---------------------------------------------------------------------------
 
+# What a canonical character description has to be, in one place.
+#
+# These descriptions are the ONLY identity signal the video model gets, now
+# that character names are stripped before the prompt is sent
+# (prompt_format.strip_character_names). So every word has to be something a
+# diffusion model can actually draw.
+#
+# The earlier wording asked for "distinctive facial features and bearing",
+# and "bearing" is what invited the unrenderable half. Han came back as "a
+# smuggler and pilot: cocky and cynical in manner, quick-moving and
+# physically confident" -- roughly half the description describing personality
+# and profession, which the model silently dropped, falling back on a generic
+# handsome lead. Luke's "open, boyish face that reads clearly from eager
+# determination to alarm" is an acting note, not a face.
+#
+# Naming the character was previously papering over this: the name pointed at
+# a face the model had memorised, so a vague description did not matter. With
+# names gone the description has to carry the whole load, and specificity has
+# to come from geometry -- face shape, brow, nose, jaw, skin -- rather than
+# from adjectives about temperament.
+IDENTITY_DESCRIPTION_SPEC = (
+    "a canonical IDENTITY description (~50-80 words) that a text-to-image "
+    "model could draw from cold. Give concrete, visible geometry: age range, "
+    "gender, skin tone, hair colour and cut, eye colour, build, face shape, "
+    "brow, nose, jaw, mouth, and any distinctive marks, scars or asymmetries. "
+    "Write only what is VISIBLE IN A STILL FRAME. Do NOT include personality, "
+    "temperament, profession, role, mood, backstory or how the character "
+    "moves or behaves -- a model cannot draw 'cocky', 'cynical', 'confident' "
+    "or 'quick-moving', and those words crowd out the ones it can use. "
+    "Prefer 'asymmetric half-smile, heavy brow, broad straight nose' over "
+    "'sardonic and rugged'. "
+    "Do NOT describe clothing or costume for human characters -- this one "
+    "description is prepended to every shot they appear in, so a costume "
+    "named here is wrong everywhere they wear something else. Exception: when "
+    "the costume or shell IS the character and never changes (droids, masked "
+    "or armoured figures, non-human creatures), describe it."
+)
+
+
 # Every Gemini call gets a deadline.
 #
 # The client was built with no http_options, so generate_content had no
@@ -1092,12 +1131,7 @@ def _make_supervised_system_prompt(cast_entries):
         "Return a JSON object with a \"characters\" array. Each entry has:\n"
         "- \"name\": lowercase identifier matching the cast list (e.g., \"luke_skywalker\") — underscores, no spaces\n"
         "- \"display_name\": character's name as listed in credits\n"
-        "- \"description\": canonical IDENTITY description (~50-80 words): age range, gender, "
-        "skin tone, hair colour and style, eye colour, build, distinctive facial features and bearing. "
-        "Do NOT describe clothing or costume for human characters — this one description is prepended "
-        "to every shot they appear in, so a costume named here is wrong everywhere they wear something "
-        "else. Exception: when the costume or shell IS the character and never changes (droids, masked "
-        "or armoured figures, non-human creatures), describe it.\n"
+        f"- \"description\": {IDENTITY_DESCRIPTION_SPEC}\n"
         "- \"shots\": list of shot indices (integers) where this character appears\n\n"
         "Rules:\n"
         "- Only match subjects to the provided cast list — do not invent unlisted characters\n"
@@ -1220,13 +1254,7 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
             desc_prompt = (
                 f"Character: {stub['display_name']}\n"
                 f"Appears in these shots:\n" + "\n".join(shot_subjects[:20]) + "\n\n"
-                "Write a canonical IDENTITY description (~50-80 words): age range, gender, "
-                "skin tone, hair colour and style, eye colour, build, distinctive facial "
-                "features and bearing. Do NOT describe clothing or costume for a human "
-                "character — this description is prepended to every shot they appear in, so "
-                "a costume named here is wrong everywhere they wear something else. "
-                "Exception: when the costume or shell IS the character and never changes "
-                "(droids, masked or armoured figures, non-human creatures), describe it."
+                f"Write {IDENTITY_DESCRIPTION_SPEC}"
             )
             resp = client.models.generate_content(
                 model=ENCODE_MODEL,
@@ -1243,7 +1271,7 @@ STAGE3_SYSTEM_PROMPT = """You are a film analysis expert. Given a list of subjec
 Return a JSON object with a "characters" array. Each character entry has:
 - "name": a short identifier (e.g., "luke", "han_solo", "vader") — lowercase, underscores, no spaces
 - "display_name": the character's name as it would appear in credits (e.g., "Luke Skywalker")
-- "description": a canonical IDENTITY description — specific enough to generate a consistent portrait. Include: age range, gender, ethnicity/skin tone, hair color/style, eye color, build, distinctive facial features and bearing. ~50-80 words. Do NOT describe clothing or costume for human characters: this one description is prepended to every shot the character appears in, so a costume named here is wrong everywhere they wear something else. Exception: when the costume or shell IS the character and never changes (droids, masked or armoured figures, non-human creatures), describe it.
+- "description": __IDENTITY_SPEC__
 - "shots": list of shot indices (integers) where this character appears
 
 Rules:
@@ -1253,6 +1281,11 @@ Rules:
 - If a character cannot be identified by name, use a descriptive identifier (e.g., "tall_officer", "bartender")
 
 Output ONLY valid JSON."""
+
+# One definition of what a description must be, shared by all three stage-3
+# prompts so they cannot drift apart.
+STAGE3_SYSTEM_PROMPT = STAGE3_SYSTEM_PROMPT.replace(
+    "__IDENTITY_SPEC__", IDENTITY_DESCRIPTION_SPEC)
 
 
 REFINE_SYSTEM_PROMPT = """You are a film analysis expert. You are given a character registry and a list of unassigned shots (shots not yet linked to any character). For each unassigned shot, determine if any of the registered characters appear in it based on the subject description.
@@ -1268,6 +1301,43 @@ Rules:
 - Be generous with matching — it's better to include a plausible match than to miss one.
 
 Output ONLY valid JSON."""
+
+
+# Fields a human curates by hand, which stage 3 must not blow away when it
+# regenerates the registry.
+CURATED_CHARACTER_FIELDS = ("keep_name",)
+
+
+def _preserve_curated_fields(characters_path: str, characters_data: dict) -> None:
+    """Carry hand-set fields from the existing registry into the new one.
+
+    Stage 3 rewrites characters.json wholesale, so anything a human set by
+    hand vanishes on the next run. `keep_name` -- which marks the characters
+    whose name is their design rather than a person, and so must survive the
+    prompt-time name strip -- was lost exactly this way the first time the
+    registry was regenerated. Silently, and the damage only shows up as
+    stormtroopers rendering as generic soldiers several dollars later.
+    """
+    if not os.path.exists(characters_path):
+        return
+    try:
+        with open(characters_path) as f:
+            existing = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    curated = {
+        c["name"]: {k: c[k] for k in CURATED_CHARACTER_FIELDS if k in c}
+        for c in existing.get("characters", []) if c.get("name")
+    }
+    kept = 0
+    for char in characters_data.get("characters", []):
+        fields = curated.get(char.get("name"))
+        if fields:
+            char.update(fields)
+            kept += 1
+    if kept:
+        print(f"  Preserved hand-set fields on {kept} character(s)")
 
 
 def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot):
@@ -1434,6 +1504,7 @@ def run_stage3(args):
     characters = characters_data.get("characters", [])
 
     characters_path = manifest.characters_path(output_dir)
+    _preserve_curated_fields(characters_path, characters_data)
     with open(characters_path, "w") as f:
         json.dump(characters_data, f, indent=2)
 
