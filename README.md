@@ -107,7 +107,7 @@ Decode + stitch don't require an `encode.py` run at all -- they only need a
 `shots.json` (v2 format) and, optionally, a `characters.json` sitting in the
 output directory. This is a first-class mode, used for original films
 written from a screenplay rather than reconstructed from a source video (see
-`docs/research/0022-authored-manifest-verification/research.md` and
+`docs/research/0024-authored-manifest-verification/research.md` and
 [ADR-009](docs/design/adr/009-authored-manifest-retiming.md)).
 
 ```bash

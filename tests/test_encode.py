@@ -1673,7 +1673,8 @@ class TestCanonicalDescriptionsExcludeWardrobe:
     """
 
     def _prompts(self):
-        import encode, inspect
+        import encode
+        import inspect
         src = inspect.getsource(encode)
         return src
 

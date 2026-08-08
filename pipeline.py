@@ -147,7 +147,7 @@ def run_pipeline(args):
             os.remove(pod_state)
         except Exception as e:
             print(f"  Warning: Could not clean up pod: {e}")
-            print(f"  Check https://www.runpod.io/console/pods")
+            print("  Check https://www.runpod.io/console/pods")
 
     print_summary(timings, args)
 

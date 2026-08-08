@@ -553,7 +553,6 @@ def run_audio_clip_eval(
     print(f"Evaluating {len(clips_to_eval)} audio clips from {audio_strategy}...")
 
     results = []
-    cost_tokens = {"input": 0, "output": 0}
 
     for i, (idx, clip_path, sound_desc) in enumerate(clips_to_eval):
         result = judge_audio_clip(client, clip_path, sound_desc)
@@ -614,10 +613,10 @@ def run_audio_clip_eval(
     print(f"  Avg quality:   {avg_quality:.2f}")
     print(f"  Avg relevance: {avg_relevance:.2f}")
     print(f"  Distribution:  {buckets['good (>=0.7)']} good, {buckets['ok (0.4-0.7)']} ok, {buckets['poor (<0.4)']} poor")
-    print(f"\n  Best clips:")
+    print("\n  Best clips:")
     for r in best:
         print(f"    Shot {r['index']}: quality={r['quality']:.1f} relevance={r['relevance']:.1f} -- {r['notes'][:60]}")
-    print(f"\n  Worst clips:")
+    print("\n  Worst clips:")
     for r in worst[:5]:
         print(f"    Shot {r['index']}: quality={r['quality']:.1f} relevance={r['relevance']:.1f} -- {r['notes'][:60]}")
 

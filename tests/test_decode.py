@@ -9,7 +9,6 @@ import pytest
 
 from decode import (
     AudioClipResult,
-    CAMERA_TERMS,
     ClipResult,
     ElevenLabsStrategy,
     FalSeedanceStrategy,
@@ -1541,7 +1540,7 @@ class TestVaceStrategyIntegration:
 # run_speech — v2 global dialog path
 # ---------------------------------------------------------------------------
 
-import argparse  # noqa: E402 (already imported above, harmless re-import)
+import argparse  # noqa: E402,F811 (already imported above, harmless re-import)
 from decode import run_speech  # noqa: E402
 
 
@@ -1928,7 +1927,6 @@ class TestChainUploadIsNonFatal:
     """
 
     def _strategy(self, tmp_path, raiser):
-        import subprocess as sp
         from strategies_video import RunPodLtx2Strategy
         s = RunPodLtx2Strategy.__new__(RunPodLtx2Strategy)
 

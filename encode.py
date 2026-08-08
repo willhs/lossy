@@ -461,7 +461,6 @@ def run_yamnet(audio_path: str, output_dir: str) -> tuple[np.ndarray, list[str]]
     import csv
 
     # Work around macOS Python SSL certificate issue
-    import ssl
     try:
         import certifi
         os.environ.setdefault("SSL_CERT_FILE", certifi.where())
@@ -1535,7 +1534,7 @@ def run_stage1(args):
         print("No shots detected. Try lowering the threshold.")
         sys.exit(1)
 
-    print(f"\nExtracting keyframes (512px, adaptive frame count)...")
+    print("\nExtracting keyframes (512px, adaptive frame count)...")
     extract_keyframes(args.video, scenes, args.output)
 
     shot_manifest = build_manifest(scenes, args.video)

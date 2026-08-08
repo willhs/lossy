@@ -35,7 +35,7 @@ def load_env(path):
 
 load_env(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"))
 
-from strategies_video import RunPodLtx2Strategy
+from strategies_video import RunPodLtx2Strategy  # noqa: E402 (after load_env/sys.path setup)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLIPS_DIR = os.path.join(HERE, "work-ltx2")

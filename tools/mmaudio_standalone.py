@@ -100,7 +100,7 @@ def run_inference(
                 model_name = name
                 break
         else:
-            print(f"Error: No suitable model config found.")
+            print("Error: No suitable model config found.")
             return False
 
     model: ModelConfig = all_model_cfg[model_name]

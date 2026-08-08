@@ -3,7 +3,7 @@
 Standalone authored-manifest scene for the `generate-scene` skill (Wan 2.2 5B on fal.ai).
 Not part of the Star Wars IV reconstruction, not the source-encoded `output/big_lebowski`
 pipeline run — this is a hand-written shot list per
-`docs/research/0022-authored-manifest-verification`.
+`docs/research/0024-authored-manifest-verification`.
 
 ## Source beat (for reference, not reproduced verbatim in prompts)
 

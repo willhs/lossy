@@ -11,22 +11,32 @@ Usage:
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 
-from config import DECODE_AUDIO_STRATEGIES, MUSIC_STRATEGIES, VIDEO_STRATEGY_NAMES, load_env  # noqa: E402 -- re-export for backwards compat
-from clip_types import ClipResult, AudioClipResult, SpeechClipResult  # noqa: E402
+from config import (  # noqa: E402 -- re-export for backwards compat
+    DECODE_AUDIO_STRATEGIES,
+    MUSIC_STRATEGIES,
+    VIDEO_STRATEGY_NAMES,
+    load_env,
+)
+from clip_types import (  # noqa: E402,F401 -- re-export for backwards compat
+    ClipResult,
+    AudioClipResult,
+    SpeechClipResult,
+)
 import manifest  # noqa: E402
 
 
-from prompt_format import (  # noqa: E402 -- re-export for backwards compat
+from prompt_format import (  # noqa: E402,F401 -- re-export for backwards compat
     CAMERA_TERMS,
     format_prompt,
     vary_prompt_for_part,
     _format_prompt_wan,
     _format_prompt_seedance,
 )
+
+
 from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     GenerationStrategy,
     ReplicateWanStrategy,
@@ -49,7 +59,7 @@ from strategies_audio import (  # noqa: E402 -- re-export for backwards compat
     ReplicateMusicGenStrategy,
     RunPodMusicGenStrategy,
     SpeechStrategy,
-    filter_speech_from_sound,
+    filter_speech_from_sound,  # noqa: F401 -- re-export for backwards compat
 )
 
 

@@ -5,7 +5,7 @@ purpose: "Record the decision to keep stitch's clip retiming behavior unchanged 
 scope: ["design", "architecture", "decode", "stitch"]
 non_goals: []
 tags: ["adr", "stitch", "authored-manifest"]
-related: ["design/adr/002-stateless-cli-pipeline.md", "research/0022-authored-manifest-verification/research.md"]
+related: ["design/adr/002-stateless-cli-pipeline.md", "research/0024-authored-manifest-verification/research.md"]
 ---
 
 # Context
@@ -18,7 +18,7 @@ lumpy-blue-men has no source film. `shots.json`'s `duration_s` per shot is *chos
 
 Keep retiming unchanged. Authored `duration_s` is treated identically to observed `duration_s` -- both are read the same way by `stitch.py`, and no code distinguishes "this number came from an author" vs "this number came from PySceneDetect."
 
-Verified in `docs/research/0022-authored-manifest-verification/research.md`: a 3-shot authored manifest run through `decode.py --strategy fal-seedance --stitch` produced a 10.0s output matching the sum of authored `duration_s` values exactly, no retiming-tripwire warnings fired.
+Verified in `docs/research/0024-authored-manifest-verification/research.md`: a 3-shot authored manifest run through `decode.py --strategy fal-seedance --stitch` produced a 10.0s output matching the sum of authored `duration_s` values exactly, no retiming-tripwire warnings fired.
 
 # Consequences
 
@@ -38,5 +38,5 @@ Verified in `docs/research/0022-authored-manifest-verification/research.md`: a 3
 
 # Links
 
-- [Authored Manifest Verification research](../../research/0022-authored-manifest-verification/research.md)
+- [Authored Manifest Verification research](../../research/0024-authored-manifest-verification/research.md)
 - [ADR-002: Stateless CLI Pipeline](002-stateless-cli-pipeline.md)

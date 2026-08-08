@@ -2,7 +2,6 @@
 """Tiny server to verify shot boundaries against the source video."""
 
 import http.server
-import json
 import os
 import socketserver
 import sys

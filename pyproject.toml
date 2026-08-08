@@ -37,3 +37,17 @@ specs_dir = "docs/design"
 tests_dir = "."
 min_coverage = 90.0
 use_gitignore = true
+
+[tool.ruff]
+line-length = 120
+
+# These files embed long natural-language content (LLM system prompts, CJK
+# negative-prompt strings, explanatory math comments) that reads worse
+# hard-wrapped than left alone -- ignore line length there specifically
+# rather than everywhere.
+[tool.ruff.per-file-ignores]
+"encode.py" = ["E501"]
+"eval.py" = ["E501"]
+"voice_casting.py" = ["E501"]
+"strategies_video.py" = ["E501"]
+"tests/test_decode.py" = ["E501"]

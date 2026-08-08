@@ -469,9 +469,9 @@ class RunPodSession:
             else:
                 print(f"  NOTE: pod {pod_id} ({pod.get('name')}) is still running and "
                       f"billing, but is not this session's.")
-                print(f"        Probably a concurrent run. If it is orphaned, terminate it "
-                      f"at https://www.runpod.io/console/pods (or re-run with "
-                      f"LOSSY_RUNPOD_SWEEP=1).")
+                print("        Probably a concurrent run. If it is orphaned, terminate it "
+                      "at https://www.runpod.io/console/pods (or re-run with "
+                      "LOSSY_RUNPOD_SWEEP=1).")
         return [p["id"] for p in strays]
 
     def terminate(self):
@@ -493,7 +493,7 @@ class RunPodSession:
             print(f"  Pod {pod_id} terminated. Session cost: ~${estimated_cost:.2f} ({elapsed_h:.1f}hrs)")
         except Exception as e:
             print(f"  Warning: Failed to terminate pod {pod_id}: {e}")
-            print(f"  Manually terminate at https://www.runpod.io/console/pods")
+            print("  Manually terminate at https://www.runpod.io/console/pods")
 
         self.remove_state()
 

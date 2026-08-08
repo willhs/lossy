@@ -492,7 +492,7 @@ class RunPodWanStrategy(GenerationStrategy):
             timeout=30,
         )
         if "OK" not in (result.stdout or ""):
-            print(f"  Warning: Failed to upload mmaudio_standalone.py")
+            print("  Warning: Failed to upload mmaudio_standalone.py")
             return
 
         # Install mmaudio pip package
@@ -502,7 +502,7 @@ class RunPodWanStrategy(GenerationStrategy):
             timeout=300,
         )
         if "OK" not in (result.stdout or ""):
-            print(f"  Warning: mmaudio pip install may have failed")
+            print("  Warning: mmaudio pip install may have failed")
             return
 
         # Pre-download standard weights (~5 GB first time)

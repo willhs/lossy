@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import manifest
 from voice_casting import (
-    CURATED_VOICE_BANK,
     _sample_line_for,
     main,
     propose_casting,
