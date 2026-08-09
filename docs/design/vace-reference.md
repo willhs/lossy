@@ -32,8 +32,8 @@ The `runpod-vace` strategy uses VACE-1.3B to generate video clips with character
 ## Prompt Enrichment
 
 <!-- REQ-020 to REQ-029 -->
-**REQ-020**: When a character is identified in a shot, the prompt sent to the workflow shall include the character's canonical name from `characters.json`.
-**REQ-021**: When a character is identified in a shot, the prompt shall include the character's canonical description from `characters.json`.
+**REQ-020**: ~~When a character is identified in a shot, the prompt sent to the workflow shall include the character's canonical name from `characters.json`.~~ **Reversed 2026-08-05**: the prompt sent to the workflow shall **not** include any character name. Naming a character invites the model to reconstruct it from world knowledge rather than from the compressed description, which is the effect `research/0021-training-data-contamination` documents and the one that undermines the reconstruction claim. Measured on `star_wars_iv_v2`, the old label put a name in front of 1828 of 2069 shots (88.4%); stripping leaves 3 (0.14%), all characters absent from `characters.json` and so unknown to the stripper. Names remain in `shots.json` `subjects` on purpose — stage 3's `_text_match_cast` matches the TMDB cast against that text — and are removed by `prompt_format.strip_character_names` at composition time. See `research/0024-full-run-checkpoint`.
+**REQ-021**: When a character is identified in a shot, the prompt shall include the character's canonical description from `characters.json`. The description alone carries the identity.
 
 ## Strategy Integration
 

@@ -123,9 +123,11 @@ class TestCharacterIdentityMixin:
         result0 = strategy.format_prompt(entry0)
         result5 = strategy.format_prompt(entry5)
 
-        prefix = "Luke Skywalker: A young man in a beige tunic with sandy blond hair."
+        # The description is the identity; the name is deliberately not in it.
+        prefix = "A young man in a beige tunic with sandy blond hair."
         assert result0.startswith(prefix)
         assert result5.startswith(prefix)
+        assert "Luke" not in result0 and "Luke" not in result5
         # Only the base shot text should differ -- the identity block is byte-identical.
         assert result0[: len(prefix)] == result5[: len(prefix)]
 
@@ -1403,8 +1405,13 @@ class TestVacePromptEnrichment:
     """SPEC-220: Prompt enrichment with character identity (REQ-020 to REQ-021)."""
 
     @pytest.mark.req("SPEC-220/REQ-020")
-    def test_prompt_includes_character_name(self):
-        """REQ-020: Prompt shall include the character's canonical name."""
+    def test_prompt_excludes_character_name(self):
+        """REQ-020 (reversed 2026-08-05): the prompt shall NOT include the name.
+
+        Naming a character lets the model reconstruct it from world knowledge
+        instead of from the compressed description -- research 0021. The
+        description still carries the identity, per REQ-021.
+        """
         characters_data = {
             "characters": [
                 {"name": "luke", "display_name": "Luke Skywalker",
@@ -1418,8 +1425,6 @@ class TestVacePromptEnrichment:
         )
         strategy._uploaded_portraits = {"luke": "luke.png"}
 
-        # Simulate what the generate method would produce as the prompt
-        # The prompt should contain the character name when a character is in the shot
         entry = {
             "index": 5,
             "description": {
@@ -1432,7 +1437,9 @@ class TestVacePromptEnrichment:
         }
 
         prompt = strategy.format_prompt(entry)
-        assert "Luke Skywalker" in prompt or "luke" in prompt.lower()
+        assert "Luke Skywalker" not in prompt
+        assert "Luke" not in prompt
+        assert "sandy blond hair" in prompt  # the description still arrives
 
     @pytest.mark.req("SPEC-220/REQ-021")
     def test_prompt_includes_character_description(self):
@@ -1772,7 +1779,9 @@ class TestLtx2CharacterIdentity:
         s = self._strategy(character_shot_map={796: ["han_solo"]},
                            characters_data=self.CHARACTERS)
         prompt = s.format_prompt(self.ENTRY)
-        assert prompt.startswith("Han Solo: A rugged smuggler in a tan tunic.")
+        # The description leads; the name is stripped before the model sees it.
+        assert prompt.startswith("A rugged smuggler in a tan tunic.")
+        assert "Han Solo" not in prompt
 
     def test_no_identity_when_shot_has_no_characters(self):
         from prompt_format import format_prompt
@@ -2145,3 +2154,309 @@ class TestClipRetry:
         strategy._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7, start_image="http://f.jpg")
 
         assert seen == ["http://f.jpg"] * strategy.CLIP_ATTEMPTS
+
+
+from decode import _record_success  # noqa: E402
+
+
+class TestRecordSuccessClearsFailures:
+    """A shot that succeeds must stop being reported as failed.
+
+    Only the in-run retry path used to clear the failed list, so a *resumed*
+    run left shots sitting in `completed` and `failed` at once. The full run's
+    first checkpoint showed exactly that for shots 10-14, which makes the
+    failed list useless as a QC signal across 2069 shots.
+    """
+
+    def _result(self, path="0010.mp4"):
+        return ClipResult(path=path, cost=0.01, actual_duration_s=2.0)
+
+    def test_a_shot_failed_on_an_earlier_run_is_cleared_on_success(self):
+        progress = {"completed": [], "failed": [10, 11], "total_cost_estimate": 0.0, "clips": {}}
+
+        _record_success(progress, set(), 10, [self._result()])
+
+        assert progress["failed"] == [11]
+        assert progress["completed"] == [10]
+
+    def test_other_shots_failures_are_left_alone(self):
+        progress = {"completed": [], "failed": [7, 8, 9], "total_cost_estimate": 0.0, "clips": {}}
+
+        _record_success(progress, set(), 42, [self._result("0042.mp4")])
+
+        assert progress["failed"] == [7, 8, 9]
+
+    def test_cost_and_clips_are_still_recorded(self):
+        progress = {"completed": [], "failed": [10], "total_cost_estimate": 1.5, "clips": {}}
+
+        _record_success(progress, set(), 10, [self._result(), self._result("0010-02.mp4")])
+
+        assert progress["total_cost_estimate"] == pytest.approx(1.52)
+        assert [c["path"] for c in progress["clips"]["10"]] == ["0010.mp4", "0010-02.mp4"]
+
+
+class TestClipRetryBackoffGrows:
+    """A retry delay that grows, because not every failure is the pod's.
+
+    The full run's checkpoint lost shot 56 to `[Errno 49] Can't assign
+    requested address` -- local socket exhaustion. Two attempts 20s apart
+    could not outlast it; the shot was abandoned and the run moved on.
+    """
+
+    def _strategy(self, monkeypatch):
+        s = RunPodWanStrategy.__new__(RunPodWanStrategy)
+        return s
+
+    def test_the_delay_grows_with_each_attempt(self, monkeypatch, tmp_path):
+        s = self._strategy(monkeypatch)
+        slept = []
+        monkeypatch.setattr("strategies_video.time.sleep", lambda d: slept.append(d))
+        monkeypatch.setattr(s, "_attempt_one_clip",
+                            lambda *a, **k: None)
+
+        assert s._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7) is None
+        assert slept == [s.CLIP_RETRY_DELAY_S * n for n in range(1, s.CLIP_ATTEMPTS)]
+        assert slept == sorted(slept) and len(set(slept)) == len(slept)
+
+    def test_there_are_at_least_three_attempts(self):
+        assert RunPodWanStrategy.CLIP_ATTEMPTS >= 3
+
+
+class TestLetterboxStripping:
+    """Baked-in mattes are cropped at stitch time, not re-rendered.
+
+    13 of the full run's first 50 shots (26%) came back with ~23% of frame
+    height as black bars, scattered rather than clustered, so the film jumped
+    aspect ratio at the cut. The bars are in the pixels, so only a crop
+    removes them.
+    """
+
+    def _detect(self, monkeypatch, crop_line, size="1280x704"):
+        import stitch
+
+        def fake_ffmpeg(cmd, context):
+            out = MagicMock()
+            out.stdout = size if cmd[0] == "ffprobe" else ""
+            out.stderr = crop_line
+            return out
+
+        monkeypatch.setattr(stitch, "_run_ffmpeg", fake_ffmpeg)
+        return stitch._detect_letterbox("clip.mp4")
+
+    def test_a_real_matte_is_detected(self, monkeypatch):
+        # what cropdetect actually reported for shot 0058
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:534:0:86") \
+            == (1280, 534, 0, 86)
+
+    def test_a_full_frame_clip_is_left_alone(self, monkeypatch):
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:704:0:0") is None
+
+    def test_a_few_dark_rows_are_not_a_matte(self, monkeypatch):
+        """Night skies and shadowed ceilings must not zoom the shot."""
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:690:0:7") is None
+
+    def test_an_implausibly_deep_crop_is_refused(self, monkeypatch):
+        """Past a point it is a dark shot, not a matte."""
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=1280:200:0:252") is None
+
+    def test_pillarboxing_is_out_of_scope(self, monkeypatch):
+        assert self._detect(monkeypatch, "[Parsed_cropdetect] crop=900:704:190:0") is None
+
+    def test_unparseable_output_is_survivable(self, monkeypatch):
+        assert self._detect(monkeypatch, "no crop here at all") is None
+
+    def test_every_part_of_a_shot_shares_one_crop(self, monkeypatch, tmp_path):
+        """Per-part detection would move the jump into the middle of a shot."""
+        import stitch
+
+        boxes = []
+        monkeypatch.setattr(stitch, "_detect_letterbox", lambda p: (1280, 534, 0, 86))
+
+        def fake_strip(src, dst, box=None):
+            boxes.append(box)
+            open(dst, "w").close()
+            return True
+
+        monkeypatch.setattr(stitch, "_strip_letterbox", fake_strip)
+        parts = []
+        for n in (1, 2, 3):
+            p = tmp_path / f"0846-0{n}.mp4"
+            p.write_text("x")
+            parts.append(str(p))
+
+        out = stitch._strip_letterbox_group(parts, str(tmp_path / "work"))
+        assert len(out) == 3
+        assert boxes == [(1280, 534, 0, 86)] * 3  # detected once, applied to all
+
+    def test_a_clean_shot_passes_through_untouched(self, monkeypatch, tmp_path):
+        import stitch
+        monkeypatch.setattr(stitch, "_detect_letterbox", lambda p: None)
+        parts = [str(tmp_path / "0011.mp4")]
+        assert stitch._strip_letterbox_group(parts, str(tmp_path / "work")) == parts
+
+    def test_a_failed_crop_keeps_the_original_rather_than_losing_the_shot(
+            self, monkeypatch, tmp_path):
+        import stitch
+        monkeypatch.setattr(stitch, "_detect_letterbox", lambda p: (1280, 534, 0, 86))
+
+        def boom(src, dst, box=None):
+            raise RuntimeError("ffmpeg fell over")
+
+        monkeypatch.setattr(stitch, "_strip_letterbox", boom)
+        src = str(tmp_path / "0058.mp4")
+        assert stitch._strip_letterbox_group([src], str(tmp_path / "work")) == [src]
+
+
+from prompt_format import strip_character_names  # noqa: E402
+
+
+class TestStripCharacterNames:
+    """Names are kept in the encode for stage 3, and removed before the model.
+
+    Naming a character lets the model reconstruct it from world knowledge
+    rather than from the compressed description (research 0021). The names
+    cannot simply be banned at encode time: `_text_match_cast` matches the
+    TMDB cast against the `subjects` text to work out who is in each shot.
+    So they survive in shots.json and die here.
+    """
+
+    NAMES = ["C-3PO", "R2-D2", "Luke Skywalker", "Luke", "Darth Vader", "Vader", "Han"]
+
+    def strip(self, text):
+        return strip_character_names(text, self.NAMES)
+
+    def test_a_parenthetical_gloss_is_dropped_whole(self):
+        assert self.strip(
+            "A golden humanoid droid (C-3PO) and a blue astromech droid (R2-D2) wait."
+        ) == "A golden humanoid droid and a blue astromech droid wait."
+
+    def test_a_comma_appositive_loses_both_commas(self):
+        """'a droid, C-3PO, stands' must not become 'a droid, stands'."""
+        assert self.strip("A golden humanoid droid, C-3PO, stands center frame.") \
+            == "A golden humanoid droid stands center frame."
+
+    def test_a_bare_name_after_a_noun_just_goes(self):
+        assert self.strip("The droid R2-D2 is in the foreground.") \
+            == "The droid is in the foreground."
+
+    def test_a_governing_preposition_goes_with_it(self):
+        """Otherwise 'similar in appearance to C-3PO but silver' strands 'to'."""
+        assert self.strip("A droid, similar in appearance to C-3PO but silver, waits.") \
+            == "A droid, similar in appearance but silver, waits."
+
+    def test_a_stranded_copula_is_repaired_and_recapitalised(self):
+        """Canonical descriptions read 'C-3PO is a tall golden droid'."""
+        assert self.strip("C-3PO is a tall, golden humanoid droid.") \
+            == "A tall, golden humanoid droid."
+
+    def test_the_identity_block_label_is_removed(self):
+        assert self.strip("C-3PO: a tall golden droid. Cinematic wide shot.") \
+            == "A tall golden droid. Cinematic wide shot."
+
+    def test_a_full_name_is_preferred_over_its_parts(self):
+        """Stripping 'Luke' first would strand 'Skywalker'."""
+        assert "Skywalker" not in self.strip("Luke Skywalker walks into the hangar.")
+
+    def test_text_with_no_names_is_untouched(self):
+        text = "A corridor with no characters at all."
+        assert self.strip(text) == text
+
+    def test_an_empty_name_list_changes_nothing(self):
+        text = "C-3PO and R2-D2 wait."
+        assert strip_character_names(text, []) == text
+
+    def test_empty_text_is_survivable(self):
+        assert strip_character_names("", self.NAMES) == ""
+
+
+class TestIdentityBlockCarriesNoName:
+    """The identity block used to prepend '<display_name>: <description>'.
+
+    That put a character name in front of 1828 of 2069 shots (88.4%) -- far
+    more exposure than the 389 whose `subjects` text names anyone.
+    """
+
+    def _strategy(self):
+        from strategies_video import CharacterIdentityMixin
+
+        s = CharacterIdentityMixin.__new__(CharacterIdentityMixin)
+        s._init_character_identity(
+            {7: ["c_3po"]},
+            {"characters": [{
+                "name": "c_3po",
+                "display_name": "C-3PO",
+                "description": "C-3PO is a tall, golden humanoid droid.",
+                "shots": [7],
+            }]},
+        )
+        return s
+
+    def test_the_description_arrives_without_the_name(self):
+        out = self._strategy()._prepend_identity({"index": 7}, "Cinematic wide shot.")
+        assert "C-3PO" not in out
+        assert "tall, golden humanoid droid" in out
+        assert out.startswith("A tall")  # copula repaired, not left as "is a tall"
+
+    def test_a_shot_with_no_identity_block_is_still_stripped(self):
+        """Returning early here leaked Greedo in 757 and Vader in 1977."""
+        out = self._strategy()._prepend_identity(
+            {"index": 999}, "A protocol droid, C-3PO, waits.")
+        assert "C-3PO" not in out
+
+    def test_a_shot_with_no_index_is_still_stripped(self):
+        out = self._strategy()._prepend_identity({}, "C-3PO waits.")
+        assert "C-3PO" not in out
+
+
+class TestDesignNamesSurviveTheStrip:
+    """Not every name is contamination.
+
+    "Luke Skywalker" makes the model recall an actor's face -- that is what
+    0021 objects to. "Stormtrooper" is not a person; it is the most compact
+    description that armour has. Stripping it turned a corridor of
+    stormtroopers into generic soldiers in white, even though the prompt
+    still read "Imperial soldiers clad in distinctive white armor". The one
+    word carried more than the paragraph.
+    """
+
+    def _strategy(self):
+        from strategies_video import CharacterIdentityMixin
+
+        s = CharacterIdentityMixin.__new__(CharacterIdentityMixin)
+        s._init_character_identity(
+            {1: ["stormtrooper"], 2: ["luke"], 3: ["stormtrooper", "luke"]},
+            {"characters": [
+                {"name": "stormtrooper", "display_name": "Stormtrooper",
+                 "description": "Imperial soldiers in white armor.",
+                 "shots": [1, 3], "keep_name": True},
+                {"name": "luke", "display_name": "Luke Skywalker",
+                 "description": "A young man with sandy hair.",
+                 "shots": [2, 3]},
+            ]},
+        )
+        return s
+
+    def test_a_design_name_is_kept_and_labelled(self):
+        out = self._strategy()._prepend_identity({"index": 1}, "Cinematic wide shot.")
+        assert out.startswith("Stormtrooper: Imperial soldiers in white armor.")
+
+    def test_a_personal_name_is_still_stripped(self):
+        out = self._strategy()._prepend_identity({"index": 2}, "Cinematic wide shot.")
+        assert "Luke" not in out and "Skywalker" not in out
+        assert "young man with sandy hair" in out
+
+    def test_both_rules_apply_in_one_shot(self):
+        out = self._strategy()._prepend_identity({"index": 3}, "Cinematic wide shot.")
+        assert "Stormtrooper" in out
+        assert "Luke" not in out and "Skywalker" not in out
+
+    def test_a_design_name_survives_in_the_shot_text_too(self):
+        """The describe pass writes "stormtroopers in white armor" -- keep it."""
+        out = self._strategy()._prepend_identity(
+            {"index": 1}, "Three Stormtrooper figures advance.")
+        assert "Stormtrooper figures advance" in out
+
+    def test_only_flagged_characters_are_spared(self):
+        s = self._strategy()
+        assert "Luke Skywalker" in s._all_character_names()
+        assert "Stormtrooper" not in s._all_character_names()

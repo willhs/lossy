@@ -13,7 +13,8 @@ import time
 
 import manifest
 from clip_types import AudioClipResult, ClipResult
-from prompt_format import _format_prompt_wan, _format_prompt_seedance, format_prompt, vary_prompt_for_part
+from prompt_format import (_format_prompt_wan, _format_prompt_seedance, format_prompt,
+                           strip_character_names, vary_prompt_for_part)
 
 
 class GenerationStrategy:
@@ -102,20 +103,64 @@ class CharacterIdentityMixin(GenerationStrategy):
         Wan-specific formatting its base class would apply) can still opt into
         identity enrichment.
         """
-        shot_idx = entry.get("index")
-        if shot_idx is None:
-            return base
-        char_names = self._character_shot_map.get(shot_idx, [])
-        if not char_names:
-            return base
         identity_parts = []
-        for name in char_names:
-            char = self._characters_by_name.get(name)
-            if char:
-                identity_parts.append(f"{char['display_name']}: {char['description']}")
-        if not identity_parts:
-            return base
-        return " ".join(identity_parts) + " " + base
+        shot_idx = entry.get("index")
+        if shot_idx is not None:
+            for name in self._character_shot_map.get(shot_idx, []):
+                char = self._characters_by_name.get(name)
+                if char:
+                    # For a person, the description alone carries the
+                    # identity. Labelling it with the name used to put a
+                    # character name in front of 88.4% of shots, and naming is
+                    # what lets the model reconstruct from memory rather than
+                    # from the description (research 0021).
+                    #
+                    # For a design -- Vader, a stormtrooper, an astromech --
+                    # the name IS the description, and dropping it costs the
+                    # look for nothing gained. Those keep their label.
+                    if char.get("keep_name") and char.get("display_name"):
+                        identity_parts.append(
+                            f"{char['display_name']}: {char['description']}")
+                    else:
+                        identity_parts.append(char["description"])
+
+        composed = " ".join(identity_parts + [base]) if identity_parts else base
+        # Strip on every path, including shots with no identity block at all.
+        # Returning those early leaked a name whenever the describe pass named
+        # someone the shot map had not assigned to that shot -- Greedo in 757,
+        # Vader in 1977.
+        return strip_character_names(composed, self._all_character_names())
+
+    def _all_character_names(self) -> set:
+        """Names to strip: personal names only, not design names.
+
+        Not every name is contamination. "Luke Skywalker" makes the model
+        recall an actor's face, which is exactly what 0021 objects to. But
+        "Stormtrooper" is not a person -- it is the most compact description
+        that armour has, and no paragraph of prose replaces it. Stripping it
+        turned a corridor of stormtroopers into generic soldiers in white,
+        even though the prompt still said "Imperial soldiers clad in
+        distinctive white armor". One word carried more than the paragraph.
+
+        So a character can opt out via ``keep_name`` in characters.json. That
+        is a per-film editorial judgement about which names are designs
+        rather than people, so it lives in the data a human curates, not in a
+        heuristic this code guesses. Star Wars keeps Vader, C-3PO, R2-D2,
+        Chewbacca, Stormtrooper and the Jawas -- the same carve-out 0023 made
+        for costume descriptions, for the same reason.
+        """
+        names = set()
+        for key, char in self._characters_by_name.items():
+            if char.get("keep_name"):
+                continue
+            names.add(key)
+            display = char.get("display_name")
+            if display:
+                names.add(display)
+                # Credited names are routinely shortened in descriptions --
+                # "Luke Skywalker" written as "Luke", "Han Solo" as "Han".
+                names.update(part for part in display.split() if len(part) > 2)
+        return names
 
 
 class ReplicateWanStrategy(GenerationStrategy):
@@ -344,7 +389,12 @@ class RunPodWanStrategy(GenerationStrategy):
     # sampleable, and there is a window between the two. One retry after a
     # short delay clears it; without it generate() discards an entire shot on
     # a pod that is already paid for and about to work.
-    CLIP_ATTEMPTS = 2
+    # A third attempt, and a delay that grows with each one, because not every
+    # failure is the pod's. The full run's checkpoint lost shot 56 outright to
+    # `[Errno 49] Can't assign requested address` -- local socket exhaustion,
+    # which two attempts 20s apart cannot outlast. Backing off 20s then 40s
+    # gives that kind of transient room to clear.
+    CLIP_ATTEMPTS = 3
     CLIP_RETRY_DELAY_S = 20
 
     def format_prompt(self, entry: dict) -> str:
@@ -791,10 +841,11 @@ class RunPodWanStrategy(GenerationStrategy):
             if result is not None:
                 return result
             if attempt < self.CLIP_ATTEMPTS:
+                delay = self.CLIP_RETRY_DELAY_S * attempt
                 print(f"  {clip_name}: attempt {attempt} failed, "
-                      f"retrying in {self.CLIP_RETRY_DELAY_S}s "
+                      f"retrying in {delay}s "
                       f"[attempt {attempt + 1}/{self.CLIP_ATTEMPTS}]...")
-                time.sleep(self.CLIP_RETRY_DELAY_S)
+                time.sleep(delay)
         return None
 
     def _attempt_one_clip(

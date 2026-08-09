@@ -95,6 +95,7 @@ class RunPodSession:
         self._clean_exit = False
         self._cleanup_registered = False
         self._swept = False
+        self._http = None
         # Pod ids this session provisioned or adopted. Belt-and-braces
         # alongside the name check: either one identifying a pod as ours is
         # enough to terminate it.
@@ -139,6 +140,8 @@ class RunPodSession:
                 print(f"  Pod {self.pod_id} kept alive ({note}); state at {self.state_path}")
             else:
                 self.terminate()
+
+        self.close_http()
 
         # A deliberately kept-alive pod is not a stray -- don't sweep it away.
         if keeping or self._swept:
@@ -544,6 +547,36 @@ class RunPodSession:
 
     # -- ComfyUI helpers --
 
+    @property
+    def http(self):
+        """Shared, connection-pooled HTTP client for every ComfyUI call.
+
+        Each call used to be a bare `httpx.get`/`httpx.post`, which opens a
+        fresh TCP+TLS connection and drops it. Generation polls /history every
+        ~2s, so the first 50 shots of the full run opened 1,249 connections
+        (~25 a shot, ~48,000 extrapolated across 2069). That churn is what
+        exhausted the local ephemeral port range and lost shot 56 outright to
+        `[Errno 49] Can't assign requested address` -- a failure on this
+        machine, not on the pod. Pooling collapses it to a handful of
+        connections held open per host.
+        """
+        if self._http is None:
+            import httpx
+            self._http = httpx.Client(
+                limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+                timeout=30,
+            )
+        return self._http
+
+    def close_http(self):
+        """Release pooled connections. Safe to call more than once."""
+        if self._http is not None:
+            try:
+                self._http.close()
+            except Exception:
+                pass
+            self._http = None
+
     def wait_for_comfyui(self):
         """Poll ComfyUI until it responds to /system_stats."""
         import httpx
@@ -552,7 +585,7 @@ class RunPodSession:
         start = time.time()
         while time.time() - start < COMFYUI_READY_TIMEOUT:
             try:
-                resp = httpx.get(f"{self.base_url}/system_stats", timeout=10)
+                resp = self.http.get(f"{self.base_url}/system_stats", timeout=10)
                 if resp.status_code == 200:
                     print("  ComfyUI is ready.")
                     return
@@ -634,9 +667,7 @@ class RunPodSession:
 
         Returns the history entry for the prompt, or None on failure.
         """
-        import httpx
-
-        resp = httpx.post(
+        resp = self.http.post(
             f"{self.base_url}/prompt",
             json={"prompt": workflow},
             timeout=30,
@@ -650,7 +681,7 @@ class RunPodSession:
 
         start = time.time()
         while time.time() - start < timeout:
-            resp = httpx.get(
+            resp = self.http.get(
                 f"{self.base_url}/history/{prompt_id}",
                 timeout=10,
             )
@@ -668,10 +699,8 @@ class RunPodSession:
 
     def download_output(self, output_file: dict) -> bytes | None:
         """Download an output file from ComfyUI's /view endpoint."""
-        import httpx
-
         try:
-            resp = httpx.get(
+            resp = self.http.get(
                 f"{self.base_url}/view",
                 params={
                     "filename": output_file["filename"],
@@ -689,8 +718,7 @@ class RunPodSession:
 
     def free_vram(self):
         """Free cached VRAM from last generation (keep models loaded)."""
-        import httpx
         try:
-            httpx.post(f"{self.base_url}/free", json={"free_memory": True}, timeout=10)
+            self.http.post(f"{self.base_url}/free", json={"free_memory": True}, timeout=10)
         except Exception:
             pass

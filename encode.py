@@ -542,6 +542,71 @@ def detect_audio_labels(
 # Stage 2: Gemini vision API prompt generation
 # ---------------------------------------------------------------------------
 
+# What a canonical character description has to be, in one place.
+#
+# These descriptions are the ONLY identity signal the video model gets, now
+# that character names are stripped before the prompt is sent
+# (prompt_format.strip_character_names). So every word has to be something a
+# diffusion model can actually draw.
+#
+# The earlier wording asked for "distinctive facial features and bearing",
+# and "bearing" is what invited the unrenderable half. Han came back as "a
+# smuggler and pilot: cocky and cynical in manner, quick-moving and
+# physically confident" -- roughly half the description describing personality
+# and profession, which the model silently dropped, falling back on a generic
+# handsome lead. Luke's "open, boyish face that reads clearly from eager
+# determination to alarm" is an acting note, not a face.
+#
+# Naming the character was previously papering over this: the name pointed at
+# a face the model had memorised, so a vague description did not matter. With
+# names gone the description has to carry the whole load, and specificity has
+# to come from geometry -- face shape, brow, nose, jaw, skin -- rather than
+# from adjectives about temperament.
+IDENTITY_DESCRIPTION_SPEC = (
+    "a canonical IDENTITY description (~50-80 words) that a text-to-image "
+    "model could draw from cold. Give concrete, visible geometry: age range, "
+    "gender, skin tone, hair colour and cut, eye colour, build, face shape, "
+    "brow, nose, jaw, mouth, and any distinctive marks, scars or asymmetries. "
+    "Write only what is VISIBLE IN A STILL FRAME. Do NOT include personality, "
+    "temperament, profession, role, mood, backstory or how the character "
+    "moves or behaves -- a model cannot draw 'cocky', 'cynical', 'confident' "
+    "or 'quick-moving', and those words crowd out the ones it can use. "
+    "Prefer 'asymmetric half-smile, heavy brow, broad straight nose' over "
+    "'sardonic and rugged'. "
+    "Do NOT describe clothing or costume for human characters -- this one "
+    "description is prepended to every shot they appear in, so a costume "
+    "named here is wrong everywhere they wear something else. Exception: when "
+    "the costume or shell IS the character and never changes (droids, masked "
+    "or armoured figures, non-human creatures), describe it."
+)
+
+
+# Every Gemini call gets a deadline.
+#
+# The client was built with no http_options, so generate_content had no
+# timeout and could block forever. Re-encoding the film hung on shot ~400 and
+# sat there for 21 hours: process alive, 0% CPU, 5s of CPU consumed, nothing
+# written, no error. Indistinguishable from "still working" to anything
+# watching progress, and it burns wall-clock rather than money, so nothing
+# else catches it either.
+#
+# 180s is generous for a describe call that normally takes a few seconds --
+# it is a hang detector, not a latency budget. The loop already retries and
+# tolerates a failed shot, so a timeout costs one shot, not the run.
+GEMINI_TIMEOUT_MS = 180_000
+
+
+def _gemini_client(api_key: str):
+    """Gemini client with a request deadline. Use instead of genai.Client."""
+    from google import genai
+    from google.genai import types
+
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+    )
+
+
 SYSTEM_PROMPT = """You are a film analysis expert. Given frames from a single shot of a film, describe the shot for use as a video generation prompt.
 
 Return a JSON object with these fields:
@@ -681,6 +746,46 @@ def _continuity_context(description: dict | None) -> dict:
     return {k: description[k] for k in CONTINUITY_CONTEXT_FIELDS if description.get(k)}
 
 
+def _retry_without_poisoned_frame(client, types, user_content, config, idx):
+    """Retry a blocked describe call, dropping one keyframe at a time.
+
+    A single frame can poison a whole shot. Shot 451 of Star Wars IV -- the
+    Tusken Raider standing over Luke -- came back empty on every encode the
+    project has ever run, and its absence is the cause of the known "index
+    diverges from list position from 451 onward" defect. The block is
+    `BlockedReason.OTHER`, which relaxing safety_settings does NOT lift, so it
+    read as permanently un-describable.
+
+    It is not. Only the first of its four keyframes trips the filter; frames
+    2, 3 and 4 each describe fine on their own. Dropping the offending frame
+    keeps the shot, at the cost of describing it from slightly less coverage
+    -- which is strictly better than losing it and silently renumbering every
+    shot after it.
+
+    Tries the largest subsets first (drop exactly one frame), so the retained
+    description is built from as much of the shot as possible.
+    """
+    images = [p for p in user_content if getattr(p, "inline_data", None) is not None]
+    if len(images) < 2:
+        return None
+
+    for dropped, image in enumerate(images):
+        attempt = [p for p in user_content if p is not image]
+        try:
+            response = client.models.generate_content(
+                model=ENCODE_MODEL,
+                contents=[types.Content(role="user", parts=attempt)],
+                config=config,
+            )
+        except Exception:
+            continue
+        if response.text:
+            print(f"  Shot {idx}: recovered by dropping keyframe {dropped + 1} "
+                  f"of {len(images)}")
+            return response
+    return None
+
+
 def _describe_shot(client, types, idx, scene, camera, audio_labels, dialogue,
                    frame_files, keyframes_dir, system_prompt, user_content,
                    encode_costs) -> dict | None:
@@ -689,16 +794,21 @@ def _describe_shot(client, types, idx, scene, camera, audio_labels, dialogue,
     Returns ``None`` if Gemini returned an empty response. Raises on API
     errors so the caller can decide whether to retry (e.g. on a 429).
     """
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=0.3,
+        response_mime_type="application/json",
+    )
     response = client.models.generate_content(
         model=ENCODE_MODEL,
         contents=[types.Content(role="user", parts=user_content)],
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.3,
-            response_mime_type="application/json",
-        ),
+        config=config,
     )
     text = response.text
+    if not text:
+        response = _retry_without_poisoned_frame(
+            client, types, user_content, config, idx)
+        text = response.text if response is not None else None
     if not text:
         return None
     description = json.loads(text.strip())
@@ -756,7 +866,7 @@ def generate_prompts(
         print("Get one at https://aistudio.google.com/apikey")
         sys.exit(1)
 
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
     keyframes_dir = os.path.join(output_dir, "keyframes")
 
     # Load existing shots for resume support (v2 shots.json, per the manifest contract)
@@ -1020,12 +1130,7 @@ def _make_supervised_system_prompt(cast_entries):
         "Return a JSON object with a \"characters\" array. Each entry has:\n"
         "- \"name\": lowercase identifier matching the cast list (e.g., \"luke_skywalker\") — underscores, no spaces\n"
         "- \"display_name\": character's name as listed in credits\n"
-        "- \"description\": canonical IDENTITY description (~50-80 words): age range, gender, "
-        "skin tone, hair colour and style, eye colour, build, distinctive facial features and bearing. "
-        "Do NOT describe clothing or costume for human characters — this one description is prepended "
-        "to every shot they appear in, so a costume named here is wrong everywhere they wear something "
-        "else. Exception: when the costume or shell IS the character and never changes (droids, masked "
-        "or armoured figures, non-human creatures), describe it.\n"
+        f"- \"description\": {IDENTITY_DESCRIPTION_SPEC}\n"
         "- \"shots\": list of shot indices (integers) where this character appears\n\n"
         "Rules:\n"
         "- Only match subjects to the provided cast list — do not invent unlisted characters\n"
@@ -1148,13 +1253,7 @@ def _run_supervised_stage3(client, cast_entries, subjects_by_shot, prompts):
             desc_prompt = (
                 f"Character: {stub['display_name']}\n"
                 f"Appears in these shots:\n" + "\n".join(shot_subjects[:20]) + "\n\n"
-                "Write a canonical IDENTITY description (~50-80 words): age range, gender, "
-                "skin tone, hair colour and style, eye colour, build, distinctive facial "
-                "features and bearing. Do NOT describe clothing or costume for a human "
-                "character — this description is prepended to every shot they appear in, so "
-                "a costume named here is wrong everywhere they wear something else. "
-                "Exception: when the costume or shell IS the character and never changes "
-                "(droids, masked or armoured figures, non-human creatures), describe it."
+                f"Write {IDENTITY_DESCRIPTION_SPEC}"
             )
             resp = client.models.generate_content(
                 model=ENCODE_MODEL,
@@ -1171,7 +1270,7 @@ STAGE3_SYSTEM_PROMPT = """You are a film analysis expert. Given a list of subjec
 Return a JSON object with a "characters" array. Each character entry has:
 - "name": a short identifier (e.g., "luke", "han_solo", "vader") — lowercase, underscores, no spaces
 - "display_name": the character's name as it would appear in credits (e.g., "Luke Skywalker")
-- "description": a canonical IDENTITY description — specific enough to generate a consistent portrait. Include: age range, gender, ethnicity/skin tone, hair color/style, eye color, build, distinctive facial features and bearing. ~50-80 words. Do NOT describe clothing or costume for human characters: this one description is prepended to every shot the character appears in, so a costume named here is wrong everywhere they wear something else. Exception: when the costume or shell IS the character and never changes (droids, masked or armoured figures, non-human creatures), describe it.
+- "description": __IDENTITY_SPEC__
 - "shots": list of shot indices (integers) where this character appears
 
 Rules:
@@ -1181,6 +1280,11 @@ Rules:
 - If a character cannot be identified by name, use a descriptive identifier (e.g., "tall_officer", "bartender")
 
 Output ONLY valid JSON."""
+
+# One definition of what a description must be, shared by all three stage-3
+# prompts so they cannot drift apart.
+STAGE3_SYSTEM_PROMPT = STAGE3_SYSTEM_PROMPT.replace(
+    "__IDENTITY_SPEC__", IDENTITY_DESCRIPTION_SPEC)
 
 
 REFINE_SYSTEM_PROMPT = """You are a film analysis expert. You are given a character registry and a list of unassigned shots (shots not yet linked to any character). For each unassigned shot, determine if any of the registered characters appear in it based on the subject description.
@@ -1196,6 +1300,43 @@ Rules:
 - Be generous with matching — it's better to include a plausible match than to miss one.
 
 Output ONLY valid JSON."""
+
+
+# Fields a human curates by hand, which stage 3 must not blow away when it
+# regenerates the registry.
+CURATED_CHARACTER_FIELDS = ("keep_name",)
+
+
+def _preserve_curated_fields(characters_path: str, characters_data: dict) -> None:
+    """Carry hand-set fields from the existing registry into the new one.
+
+    Stage 3 rewrites characters.json wholesale, so anything a human set by
+    hand vanishes on the next run. `keep_name` -- which marks the characters
+    whose name is their design rather than a person, and so must survive the
+    prompt-time name strip -- was lost exactly this way the first time the
+    registry was regenerated. Silently, and the damage only shows up as
+    stormtroopers rendering as generic soldiers several dollars later.
+    """
+    if not os.path.exists(characters_path):
+        return
+    try:
+        with open(characters_path) as f:
+            existing = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    curated = {
+        c["name"]: {k: c[k] for k in CURATED_CHARACTER_FIELDS if k in c}
+        for c in existing.get("characters", []) if c.get("name")
+    }
+    kept = 0
+    for char in characters_data.get("characters", []):
+        fields = curated.get(char.get("name"))
+        if fields:
+            char.update(fields)
+            kept += 1
+    if kept:
+        print(f"  Preserved hand-set fields on {kept} character(s)")
 
 
 def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot):
@@ -1306,7 +1447,7 @@ def run_stage3(args):
         print("Error: GEMINI_API_KEY not set")
         sys.exit(1)
 
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
 
     # --- TMDB supervised path ---
     tmdb_id = getattr(args, 'tmdb_id', None)
@@ -1362,6 +1503,7 @@ def run_stage3(args):
     characters = characters_data.get("characters", [])
 
     characters_path = manifest.characters_path(output_dir)
+    _preserve_curated_fields(characters_path, characters_data)
     with open(characters_path, "w") as f:
         json.dump(characters_data, f, indent=2)
 
@@ -1450,7 +1592,7 @@ def run_stage4(args):
     if not api_key:
         print("Error: GEMINI_API_KEY not set")
         sys.exit(1)
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
 
     BATCH_SIZE = 50
     assignments: dict[int, dict] = {}
