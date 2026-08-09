@@ -77,7 +77,7 @@ class TestCompareAudio:
 class TestVideoEvalNoOriginal:
     """An authored (non-source-film) manifest has no shot_index.json/shots.json
     original -- eval should skip cleanly, not crash. See docs/research/
-    0022-authored-manifest-verification/research.md."""
+    0024-authored-manifest-verification/research.md."""
 
     def test_missing_shot_index_exits_cleanly(self, tmp_path, monkeypatch, capsys):
         # shots.json present (as decode needs it) but shot_index.json (an

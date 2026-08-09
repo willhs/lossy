@@ -9,7 +9,6 @@ import pytest
 
 from decode import (
     AudioClipResult,
-    CAMERA_TERMS,
     ClipResult,
     ElevenLabsStrategy,
     FalSeedanceStrategy,
@@ -503,7 +502,7 @@ class TestFormatPromptSeedance:
 # never read on the decode side except temporal_segments, which is
 # consulted with .get() only for split (multi-part) shots -- absence must
 # fall back to vary_prompt_for_part, not error. See docs/research/
-# 0022-authored-manifest-verification/research.md.
+# 0024-authored-manifest-verification/research.md.
 # ---------------------------------------------------------------------------
 
 class TestFalSeedanceGenerateMissingEncodeFields:
@@ -1548,7 +1547,7 @@ class TestVaceStrategyIntegration:
 # run_speech — v2 global dialog path
 # ---------------------------------------------------------------------------
 
-import argparse  # noqa: E402 (already imported above, harmless re-import)
+import argparse  # noqa: E402,F811 (already imported above, harmless re-import)
 from decode import run_speech  # noqa: E402
 
 
@@ -1937,7 +1936,6 @@ class TestChainUploadIsNonFatal:
     """
 
     def _strategy(self, tmp_path, raiser):
-        import subprocess as sp
         from strategies_video import RunPodLtx2Strategy
         s = RunPodLtx2Strategy.__new__(RunPodLtx2Strategy)
 

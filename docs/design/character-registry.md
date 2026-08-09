@@ -20,7 +20,7 @@ Stage 3 reads all `description.subjects` fields from `shots.json`, sends them to
 **REQ-002**: `characters.json` shall contain a `"characters"` array at the top level.
 **REQ-003**: Each character entry shall have a `"name"` field: lowercase, underscores, no spaces.
 **REQ-004**: Each character entry shall have a `"display_name"` field: human-readable name.
-**REQ-005**: Each character entry shall have a `"description"` field: canonical appearance text.
+**REQ-005**: Each character entry shall have a `"description"` field: canonical appearance text describing stable identity (age, build, hair, eyes, features, bearing), not wardrobe. Per-shot descriptions already carry wardrobe accurately; a canonical description is prepended verbatim to every shot the character appears in, so a costume named here would follow them through the whole film even where it's wrong. Exception: characters whose costume or shell *is* their identity and never changes (droids, masked/armoured figures, non-human creatures) keep it in the canonical description — see `encode.py` stage 3 prompts.
 **REQ-006**: Each character entry shall have a `"shots"` field: a list of integer shot indices.
 **REQ-007**: Shot indices in the `"shots"` field shall correspond to indices present in `shots.json`.
 

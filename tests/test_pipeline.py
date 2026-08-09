@@ -4,7 +4,7 @@
 import argparse
 import pytest
 from unittest.mock import patch, MagicMock
-from pipeline import build_commands, STAGES
+from pipeline import build_commands
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ class TestBuildCommands:
 
     def test_speech_skipped_when_no_voice(self, base_args):
         """Speech stage auto-skipped when --speech-voice not provided."""
-        from pipeline import run_pipeline, STAGES
+        from pipeline import STAGES
         assert "speech" in STAGES
         # base_args has speech_voice=None, so speech gets auto-skipped
 

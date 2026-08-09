@@ -28,6 +28,7 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 
 | Strategy | Backend | Duration control | Cost |
 |---|---|---|---|
+| `runpod-ltx2` | RunPod LTX-2 (self-hosted, distilled FP8) — character identity + I2V long-shot chaining | Variable, 25fps | Hourly GPU rate, ~$0.006/shot marginal at 1280x704 |
 | `runpod-wan22` | RunPod Wan 2.2 TI2V-5B (self-hosted) — character identity + I2V long-shot chaining | Variable, 24fps | Hourly GPU rate |
 | `runpod-wan` | RunPod Wan 2.1 (self-hosted) | Fixed ~5s | Hourly GPU rate |
 | `runpod-wan-enriched` | As `runpod-wan`, with character descriptions injected into prompts | Fixed ~5s | Hourly GPU rate |
@@ -36,7 +37,7 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 | `fal-seedance` | fal.ai Seedance 1.0 | 2-12s | ~$0.02/s |
 | `fal-seedance-pro` | fal.ai Seedance Pro | 2-12s | ~$0.05/s |
 
-`runpod-wan22` is the current recommended strategy.
+`runpod-ltx2` is the current recommended strategy (dress-rehearsal go/no-go: `docs/research/0023-ltx2-dress-rehearsal/research.md`) — roughly 2.3x faster than `runpod-wan22` at matched resolution. RunPod strategies share pod lifecycle management (`runpod_pod.py`): automatic cloud/GPU fallback, re-provisioning on boot failure, and a stray-pod sweep on exit.
 
 ### Audio Strategies
 
@@ -106,7 +107,7 @@ Decode + stitch don't require an `encode.py` run at all -- they only need a
 `shots.json` (v2 format) and, optionally, a `characters.json` sitting in the
 output directory. This is a first-class mode, used for original films
 written from a screenplay rather than reconstructed from a source video (see
-`docs/research/0022-authored-manifest-verification/research.md` and
+`docs/research/0024-authored-manifest-verification/research.md` and
 [ADR-009](docs/design/adr/009-authored-manifest-retiming.md)).
 
 ```bash

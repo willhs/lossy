@@ -1,0 +1,64 @@
+{
+  "output": "over-the-line.mp4",
+  "resolution": "580p",
+  "aspect_ratio": "16:9",
+  "num_frames": 121,
+  "seed": 4400,
+  "negative": "text, watermark, subtitles, logo, blurry, distorted, deformed, duplicated, extra limbs, extra fingers",
+  "shots": [
+    {
+      "comment": "Shot 1 - the foul. Wide establishing shot down the lane.",
+      "prompt": "Wide shot down a dim, retro late-1970s American bowling alley lane toward the pins, seen from behind the foul line. A wiry man in his fifties with a thin mustache and a pastel-blue short-sleeve bowling shirt strides forward in a smooth bowling approach, releases the ball down the lane, and his sliding foot skids well past the foul line onto the polished lane wood as he follows through. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 2 - Walter reacts and rises. Chained continuation into standing + drawing the gun for a longer, escalating beat.",
+      "prompt": "Medium shot at a scuffed orange plastic bowling-alley scorers' table. A heavyset man in his forties with a thick horseshoe mustache, aviator sunglasses, a green bowling shirt, and a tan safari vest sits beside a shaggy-haired man in a rumpled cardigan sweater and bermuda shorts. The heavyset man's easy expression suddenly hardens, eyes narrowing, jaw clenching, as he watches something off-camera down the lane. He plants his hands on the table and begins pushing himself up out of his chair. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography.",
+      "continue": [
+        "The same heavyset man in his forties with a thick horseshoe mustache, aviator sunglasses, green bowling shirt, and tan safari vest rises fully to his feet at the scorers' table, chest heaving, and reaches into the vest to draw out a chrome revolver, leveling it out in front of him toward the lane. The shaggy-haired man beside him recoils, eyes widening in alarm. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+      ]
+    },
+    {
+      "comment": "Shot 3 - close-up on Walter, gun raised, shouting. Rewritten after retry 1: original prompt produced an unrelated shirtless man with no gun -- moved wardrobe/gun to the front of the sentence and dropped body-focused phrasing that was pulling the model off-identity.",
+      "prompt": "Tight chest-up close-up, slight low angle, of a heavyset man in his forties wearing a green bowling shirt, a tan safari vest, and aviator sunglasses, with a thick horseshoe mustache. Both his hands grip a chrome revolver held up at eye level, aimed across the bowling lane. He shouts furiously, mouth open, jaw clenched, brow furrowed in anger. Warm sodium overhead lighting, shallow depth of field, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 4 - the Dude tries to defuse, hands raised. Rewritten after retry 1: original prompt (two-shot, mention of 'the gun') produced the Dude grabbing at a rifle instead of a calming gesture -- simplified to a single-character medium shot and dropped the weapon reference.",
+      "prompt": "Medium shot, side-on, of a shaggy-haired man in his forties with sunglasses pushed up into his messy hair, wearing a loose beige cardigan sweater over a t-shirt and bermuda shorts, standing beside an orange bowling-alley scorers' table. He holds both palms up and open in a calm placating stop gesture toward someone off-camera, eyebrows raised pleadingly, mouth open as if urging calm. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 5 - Donny, bewildered reaction close-up.",
+      "prompt": "Close-up on a stocky balding man in his forties with a light mustache, wearing a plain maroon bowling shirt, seated at the scorers' table holding a marbled bowling ball in his lap, eyebrows raised and mouth slightly agape in complete bewilderment, glancing back and forth between people off-camera, utterly lost. Warm sodium overhead lighting, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 6 - wide standoff resolution. The foul-line bowler backs off, gun still raised, other players frozen.",
+      "prompt": "Wide shot across the bowling lane. A wiry man in his fifties with a thin mustache and pastel-blue bowling shirt backs slowly away from the foul line with both hands raised defensively, startled. In the foreground/midground, a heavyset man in a green bowling shirt and tan vest stands with a chrome revolver still leveled toward him, unmoving, while other bowlers at neighboring lanes freeze mid-motion and stare. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography, tense wide tableau."
+    },
+    {
+      "comment": "Shot 7 - the Dude and Donny react to a mention of the cops, both looking off toward the alley entrance.",
+      "prompt": "Medium two-shot at a bowling-alley scorers' table. A shaggy-haired man in his forties wearing a loose beige cardigan sweater and bermuda shorts, sunglasses pushed up into his messy hair, turns and glances anxiously toward the front entrance, gesturing with one open hand as if warning someone off. Beside him, a stocky balding man in his forties with a light mustache and a plain maroon bowling shirt looks the same direction, bowling ball still in his lap, brow furrowed in confusion. Warm sodium overhead lighting, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 8 - close-up on Walter, still aiming, insisting.",
+      "prompt": "Tight chest-up close-up, slight low angle, of a heavyset man in his forties wearing a green bowling shirt, a tan safari vest, and aviator sunglasses, with a thick horseshoe mustache. He keeps a chrome revolver held up at eye level, arm steady, mouth set in a hard line as he speaks forcefully, unmoved and resolute. Warm sodium overhead lighting, shallow depth of field, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 9 - Smokey relents, marks the scoresheet.",
+      "prompt": "Medium shot at a scuffed orange plastic bowling-alley scorers' table. A wiry man in his fifties with a thin mustache and a pastel-blue short-sleeve bowling shirt sits down heavily, defeated, snatches a marker pen from the tabletop, and scrawls angrily on a paper scoresheet, muttering under his breath, jaw clenched in frustration. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography.",
+      "continue": [
+        "The same wiry man in his fifties with a thin mustache and pastel-blue bowling shirt finishes writing on the scoresheet, tosses the marker pen down onto the orange table with a huff, and sits back, glaring across the table, still simmering with resentment. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+      ]
+    },
+    {
+      "comment": "Shot 10 - Walter lowers the gun, tucks it away, satisfied.",
+      "prompt": "Medium shot at the scorers' table. A heavyset man in his forties with a thick horseshoe mustache, aviator sunglasses, a green bowling shirt, and a tan safari vest slowly lowers the chrome revolver from eye level down to his side, exhaling, shoulders relaxing. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 11 - the Dude exasperated, Donny still lost.",
+      "prompt": "Medium two-shot beside the scorers' table. A shaggy-haired man in his forties wearing a loose beige cardigan sweater and bermuda shorts, sunglasses pushed up into his messy hair, closes his eyes and shakes his head slowly in disbelief and exhaustion. Beside him, a stocky balding man in his forties with a light mustache and a plain maroon bowling shirt still holds a marbled bowling ball in his lap, blinking, utterly lost, glancing between everyone. Warm sodium overhead lighting, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography."
+    },
+    {
+      "comment": "Shot 12 - wide closing shot, alley life resuming, mirrors the opening framing.",
+      "prompt": "Wide shot down a dim, retro late-1970s American bowling alley, multiple lanes visible, pins being reset by automatic pinsetters, other bowlers at neighboring lanes unfreezing and resuming their games, ambient normalcy returning. Warm sodium overhead lighting, waxed hardwood floor reflections, hazy cigarette-smoke atmosphere, handheld 16mm film grain, late-1970s cinematography, calm wide tableau."
+    }
+  ]
+}

@@ -78,7 +78,7 @@ def _stitch_audio(output_dir: str, audio_strategy: str, prompts: list[dict],
             if _stale_for_target(silence_path, target_duration):
                 _run_ffmpeg(
                     ["ffmpeg", "-y", "-f", "lavfi", "-i",
-                     f"anullsrc=r=44100:cl=stereo",
+                     "anullsrc=r=44100:cl=stereo",
                      "-t", str(target_duration),
                      silence_path],
                     f"silence generation for shot {idx}",
@@ -1002,6 +1002,6 @@ def stitch_clips(args):
                 scene_outputs.append((name, scene_result))
 
         if scene_outputs:
-            print(f"\nScene videos:")
+            print("\nScene videos:")
             for name, path in scene_outputs:
                 print(f"  {name}: {path}")

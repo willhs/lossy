@@ -1,5 +1,5 @@
 ---
-id: "0022"
+id: "0024"
 type: research
 purpose: "Verify whether lossy's decode/stitch/eval path works for hand-authored (non-source-film) manifests, before writing ~20 shots for the lumpy-blue-men short film against a guessed format."
 scope: ["decode", "stitch", "eval", "authored-manifests"]
