@@ -742,6 +742,49 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
     return output_path
 
 
+
+def _audio_matches_encode(output_dir: str, strategy: str) -> bool:
+    """Whether a strategy's audio belongs to the CURRENT encode.
+
+    Auto-discovery sweeps in every directory under audio/, and clips are keyed
+    only by shot index -- nothing in the filename says which encode produced
+    them. Re-encoding renumbers shots, so March audio for "shot 794" silently
+    became audio for entirely different footage, and the mux reported no
+    error. The middle-third render shipped with speech and ambience tracks
+    built from clips dated March, June and 1 August, none of which had ever
+    been generated for that encode.
+
+    manifest.check_encode_fingerprint already refuses mismatched *progress*
+    files; this closes the same hole on the stitch's mux path, which never
+    consulted it.
+    """
+    progress_path = manifest.audio_progress_path(output_dir, strategy)
+    if not os.path.exists(progress_path):
+        # No progress file means no run-identity to check. Fall back to
+        # mtime: audio older than the shot list it claims to describe cannot
+        # belong to it.
+        audio_root = manifest.audio_dir(output_dir, strategy)
+        shots = manifest.shots_path(output_dir)
+        if os.path.isdir(audio_root) and os.path.exists(shots):
+            if os.path.getmtime(audio_root) < os.path.getmtime(shots):
+                print(f"  Skipping {strategy} audio: predates the current encode.")
+                return False
+        return True
+
+    try:
+        with open(progress_path) as f:
+            progress = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    progress["_mtime"] = os.path.getmtime(progress_path)
+    if not manifest.check_encode_fingerprint(
+            progress, output_dir, f"{strategy} audio"):
+        print(f"  Skipping {strategy} audio: built from a different encode.")
+        return False
+    return True
+
+
 def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
                prompts_full: list[dict], audio_strategy: str | None,
                speech_voice: str | None, music_strategy: str | None = None):
@@ -795,6 +838,8 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
             )
         else:
             strategies = []
+
+    strategies = [s for s in strategies if _audio_matches_encode(output_dir, s)]
 
     for strat in strategies:
         track = _stitch_audio(output_dir, strat, stitched_prompts, None)

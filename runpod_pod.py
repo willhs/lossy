@@ -57,6 +57,26 @@ POD_SETUP_ATTEMPTS = 4
 POD_SETUP_BACKOFF_S = 30
 
 
+
+# RunPod reports "balance too low" through the same generic exception path as
+# "no instances available", so a run that simply ran out of money reported
+# "no capacity on any of 5 GPU types across 2 cloud(s)" and then dutifully
+# retried four times against something no retry can fix. That happened 16
+# hours into a 690-shot render: the pod was killed when the balance hit zero,
+# and the message pointed at the wrong problem entirely.
+_OUT_OF_FUNDS_MARKERS = ("balance is too low", "add funds", "insufficient funds")
+
+
+def _is_out_of_funds(exc: Exception) -> bool:
+    """Whether a provisioning failure is about money rather than capacity."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _OUT_OF_FUNDS_MARKERS)
+
+
+class OutOfFundsError(RuntimeError):
+    """The account cannot afford a pod. NOT retryable -- a human must top up."""
+
+
 class PodSetupError(RuntimeError):
     """A pod could not be provisioned or brought up. Retryable on a new pod."""
 
@@ -242,6 +262,15 @@ class RunPodSession:
                 print(f"  Got {gpu_type} @ ${rate}/hr")
                 break
             except Exception as e:
+                if _is_out_of_funds(e):
+                    # Not a capacity problem, and no amount of retrying or
+                    # cycling GPU types fixes it. Say so immediately.
+                    raise OutOfFundsError(
+                        f"RunPod account balance is too low to rent a pod "
+                        f"({label}). Add funds at "
+                        f"https://www.runpod.io/console/billing and resume -- "
+                        f"completed shots are already on disk."
+                    ) from e
                 print(f"  {label} unavailable: {e}")
                 continue
 
@@ -476,6 +505,46 @@ class RunPodSession:
                       "at https://www.runpod.io/console/pods (or re-run with "
                       "LOSSY_RUNPOD_SWEEP=1).")
         return [p["id"] for p in strays]
+
+    def pod_alive(self) -> bool:
+        """Whether our pod still exists and is running.
+
+        Conservative on purpose: any doubt (no id, API error) reports alive,
+        so a flaky status call never triggers a needless re-provision.
+        """
+        if self.pod_id is None:
+            return False
+        if not os.environ.get("RUNPOD_API_KEY"):
+            return True
+        try:
+            import runpod
+            runpod.api_key = os.environ["RUNPOD_API_KEY"]
+            status = runpod.get_pod(self.pod_id)
+        except Exception:
+            return True
+        if not status:
+            return False
+        if status.get("desiredStatus") == "EXITED":
+            return False
+        runtime = status.get("runtime")
+        return bool(runtime and runtime.get("ports"))
+
+    def forget_pod(self) -> None:
+        """Drop all state for a pod that no longer exists.
+
+        Not terminate() -- there is nothing left to terminate, and calling it
+        only logs a misleading "pod not found to terminate" warning. This
+        clears the ids and the state file so the next ensure_pod provisions
+        rather than trying to reconnect to a corpse.
+        """
+        if self.pod_id:
+            self._owned_pod_ids.discard(self.pod_id)
+        self.pod_id = None
+        self.base_url = None
+        self.ssh_host = None
+        self.ssh_port = None
+        self.close_http()
+        self.remove_state()
 
     def terminate(self):
         """Terminate the pod and remove state file."""

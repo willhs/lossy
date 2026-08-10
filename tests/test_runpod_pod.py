@@ -519,3 +519,101 @@ class TestPooledHttpClient:
         client = session.http
         session._cleanup()  # no pod_id, so this is the pure teardown path
         assert client.is_closed
+
+
+class TestOutOfFundsIsNotACapacityProblem:
+    """Running out of money must not look like a GPU shortage.
+
+    RunPod reports "balance too low" through the same exception path as "no
+    instances available", so a render that simply ran out of credit reported
+    "no capacity on any of 5 GPU types across 2 cloud(s)" and retried four
+    times against something no retry can fix. It happened 16 hours into a
+    690-shot run when the balance hit zero and the pod was reclaimed.
+    """
+
+    def test_a_balance_error_is_recognised(self):
+        from runpod_pod import _is_out_of_funds
+
+        assert _is_out_of_funds(
+            Exception("Your account balance is too low to rent a pod. Please add funds"))
+
+    def test_a_capacity_error_is_not(self):
+        from runpod_pod import _is_out_of_funds
+
+        assert not _is_out_of_funds(
+            Exception("There are no longer any instances available with the requested specifications"))
+
+    def test_it_is_not_swallowed_by_the_setup_retry(self):
+        """PodSetupError is retried four times; this must not be."""
+        from runpod_pod import OutOfFundsError, PodSetupError
+
+        assert not issubclass(OutOfFundsError, PodSetupError)
+
+    def test_the_message_says_what_to_do(self):
+        from runpod_pod import OutOfFundsError
+
+        assert "OutOfFunds" in OutOfFundsError.__name__
+
+
+class TestPodLiveness:
+    """A pod that has gone away must be detectable, so the run can replace it."""
+
+    def test_no_pod_id_means_not_alive(self, tmp_path):
+        assert RunPodSession(str(tmp_path)).pod_alive() is False
+
+    def test_forget_pod_clears_every_trace(self, tmp_path):
+        s = RunPodSession(str(tmp_path))
+        s.pod_id = "dead"; s._owned_pod_ids.add("dead")
+        s.base_url = "http://x"; s.ssh_host = "1.2.3.4"; s.ssh_port = 22
+        s.write_state()
+
+        s.forget_pod()
+
+        assert s.pod_id is None and s.base_url is None and s.ssh_host is None
+        assert "dead" not in s._owned_pod_ids
+        assert not os.path.exists(s.state_path)  # next run provisions, not reconnects
+
+    def test_a_flaky_status_call_reports_alive(self, tmp_path, monkeypatch):
+        """Doubt must never trigger a needless re-provision."""
+        import runpod_pod
+
+        s = RunPodSession(str(tmp_path))
+        s.pod_id = "p1"
+        monkeypatch.setenv("RUNPOD_API_KEY", "k")
+
+        class Boom:
+            api_key = None
+            @staticmethod
+            def get_pod(_):
+                raise RuntimeError("network blip")
+
+        monkeypatch.setitem(__import__("sys").modules, "runpod", Boom)
+        assert s.pod_alive() is True
+
+    def test_an_exited_pod_is_not_alive(self, tmp_path, monkeypatch):
+        s = RunPodSession(str(tmp_path))
+        s.pod_id = "p1"
+        monkeypatch.setenv("RUNPOD_API_KEY", "k")
+
+        class Gone:
+            api_key = None
+            @staticmethod
+            def get_pod(_):
+                return {"desiredStatus": "EXITED"}
+
+        monkeypatch.setitem(__import__("sys").modules, "runpod", Gone)
+        assert s.pod_alive() is False
+
+    def test_a_pod_with_no_runtime_ports_is_not_alive(self, tmp_path, monkeypatch):
+        s = RunPodSession(str(tmp_path))
+        s.pod_id = "p1"
+        monkeypatch.setenv("RUNPOD_API_KEY", "k")
+
+        class Dead:
+            api_key = None
+            @staticmethod
+            def get_pod(_):
+                return {"desiredStatus": "RUNNING", "runtime": None}
+
+        monkeypatch.setitem(__import__("sys").modules, "runpod", Dead)
+        assert s.pod_alive() is False
