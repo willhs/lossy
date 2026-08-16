@@ -53,3 +53,7 @@ ext_weights/
 
 # personal agent workflows
 .gent/skills/
+
+# generate-scene skill intermediate clips (keep the stitched output)
+scenes/*/work/
+scenes/*/work-ltx2/

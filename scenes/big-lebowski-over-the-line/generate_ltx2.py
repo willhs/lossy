@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -35,7 +36,7 @@ def load_env(path):
 
 load_env(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"))
 
-from strategies_video import RunPodLtx2Strategy  # noqa: E402 (after load_env/sys.path setup)
+from strategies_video import RunPodLtx2Strategy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLIPS_DIR = os.path.join(HERE, "work-ltx2")
@@ -56,61 +57,109 @@ def clip_path(si: int, pi: int) -> str:
     return os.path.join(CLIPS_DIR, f"s{si:02d}_p{pi:02d}.mp4")
 
 
+def generate_with_retry(strategy, *args, retries=1, delay_s=20, **kwargs):
+    """_generate_one_clip, retrying once after a short delay.
+
+    First clip after a fresh pod boot has been observed to fail (JSON parse
+    error / 404 "no body") even though the ComfyUI health check already
+    passed -- looks like a readiness race right after model load. One retry
+    with a short delay clears it without re-provisioning a whole pod.
+    """
+    for attempt in range(retries + 1):
+        result = strategy._generate_one_clip(*args, **kwargs)
+        if result is not None:
+            return result
+        if attempt < retries:
+            print(f"  retrying after {delay_s}s...")
+            time.sleep(delay_s)
+    return None
+
+
+def sweep_leftover_pods():
+    """Safety net: terminate any lingering 'lossy-comfyui' pod by name.
+
+    RunPodSession's own atexit cleanup terminates by the pod_id it created,
+    but a run here hit a case where that id no longer matched anything
+    ('pod not found to terminate') while a pod under a different id was
+    still running and billing. Belt-and-suspenders check by name so this
+    script never leaves a pod running unnoticed.
+    """
+    try:
+        import runpod
+        runpod.api_key = os.environ.get("RUNPOD_API_KEY")
+        pods = runpod.get_pods()
+    except Exception as e:
+        print(f"  Pod sweep check failed ({e}) -- verify manually at runpod.io/console/pods")
+        return
+    leftover = [p for p in pods if p.get("name") == "lossy-comfyui"]
+    for p in leftover:
+        print(f"  Sweep: terminating leftover pod {p.get('id')}")
+        try:
+            runpod.terminate_pod(p["id"])
+        except Exception as e:
+            print(f"  Sweep: failed to terminate {p.get('id')} ({e}) -- terminate manually")
+    if not leftover:
+        print("  Pod sweep: none left running.")
+
+
 def main():
     strategy = RunPodLtx2Strategy(output_dir=CLIPS_DIR, keep_pod=False)
     seed = spec.get("seed", 4200)
     pod_ready = False
     all_paths = []  # (si, pi, path) in manifest order, for later stitching
 
-    for si, shot in enumerate(spec["shots"]):
-        base_path = clip_path(si, 0)
-        frames = strategy._target_frames(TARGET_S)
+    try:
+        for si, shot in enumerate(spec["shots"]):
+            base_path = clip_path(si, 0)
+            frames = strategy._target_frames(TARGET_S)
 
-        if os.path.exists(base_path):
-            print(f"shot {si + 1} part 0: skip (exists) {base_path}")
-        else:
-            if not pod_ready:
-                strategy._ensure_pod()
-                pod_ready = True
-            prompt = strategy.format_prompt(entry_for(shot["prompt"]))
-            print(f"shot {si + 1} part 0 seed={seed}")
-            result = strategy._generate_one_clip(
-                prompt, CLIPS_DIR, os.path.basename(base_path), frames, seed)
-            if result is None:
-                print(f"  FAILED shot {si + 1} part 0, skipping its continuations")
-                seed += len(shot.get("continue", [])) + 1
-                continue
-        all_paths.append((si, 0, base_path))
-        seed += 1
-        prev_path = base_path
+            if os.path.exists(base_path):
+                print(f"shot {si + 1} part 0: skip (exists) {base_path}")
+            else:
+                if not pod_ready:
+                    strategy._ensure_pod()
+                    pod_ready = True
+                prompt = strategy.format_prompt(entry_for(shot["prompt"]))
+                print(f"shot {si + 1} part 0 seed={seed}")
+                result = generate_with_retry(
+                    strategy, prompt, CLIPS_DIR, os.path.basename(base_path), frames, seed)
+                if result is None:
+                    print(f"  FAILED shot {si + 1} part 0, skipping its continuations")
+                    seed += len(shot.get("continue", [])) + 1
+                    continue
+            all_paths.append((si, 0, base_path))
+            seed += 1
+            prev_path = base_path
 
-        for ci, cont_prompt in enumerate(shot.get("continue", [])):
-            part_path = clip_path(si, ci + 1)
-            if os.path.exists(part_path):
-                print(f"shot {si + 1} part {ci + 1}: skip (exists) {part_path}")
+            for ci, cont_prompt in enumerate(shot.get("continue", [])):
+                part_path = clip_path(si, ci + 1)
+                if os.path.exists(part_path):
+                    print(f"shot {si + 1} part {ci + 1}: skip (exists) {part_path}")
+                    all_paths.append((si, ci + 1, part_path))
+                    seed += 1
+                    prev_path = part_path
+                    continue
+                if not pod_ready:
+                    strategy._ensure_pod()
+                    pod_ready = True
+                cont_formatted = strategy.format_prompt(entry_for(cont_prompt))
+                print(f"shot {si + 1} part {ci + 1} (I2V chained) seed={seed}")
+                start_image = strategy._upload_start_frame(prev_path, si, ci)
+                result = generate_with_retry(
+                    strategy, cont_formatted, CLIPS_DIR, os.path.basename(part_path), frames, seed,
+                    start_image=start_image)
+                if result is None:
+                    print(f"  FAILED shot {si + 1} part {ci + 1}, stopping this shot's chain")
+                    seed += 1
+                    break
                 all_paths.append((si, ci + 1, part_path))
                 seed += 1
                 prev_path = part_path
-                continue
-            if not pod_ready:
-                strategy._ensure_pod()
-                pod_ready = True
-            cont_formatted = strategy.format_prompt(entry_for(cont_prompt))
-            print(f"shot {si + 1} part {ci + 1} (I2V chained) seed={seed}")
-            start_image = strategy._upload_start_frame(prev_path, si, ci)
-            result = strategy._generate_one_clip(
-                cont_formatted, CLIPS_DIR, os.path.basename(part_path), frames, seed,
-                start_image=start_image)
-            if result is None:
-                print(f"  FAILED shot {si + 1} part {ci + 1}, stopping this shot's chain")
-                seed += 1
-                break
-            all_paths.append((si, ci + 1, part_path))
-            seed += 1
-            prev_path = part_path
 
-    if pod_ready:
-        strategy.mark_clean_exit()
+        if pod_ready:
+            strategy.mark_clean_exit()
+    finally:
+        sweep_leftover_pods()
 
     if not all_paths:
         sys.exit("No clips available -- nothing to stitch")
