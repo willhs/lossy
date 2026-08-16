@@ -2460,3 +2460,157 @@ class TestDesignNamesSurviveTheStrip:
         s = self._strategy()
         assert "Luke Skywalker" in s._all_character_names()
         assert "Stormtrooper" not in s._all_character_names()
+
+
+class TestStaleAudioIsRefusedAtStitch:
+    """The stitch must not mux audio from a different encode.
+
+    Auto-discovery sweeps every directory under audio/, and clips are keyed
+    only by shot index -- nothing in the filename says which encode made them.
+    Re-encoding renumbers shots, so March audio for "shot 794" silently became
+    audio for entirely different footage. The middle-third render shipped with
+    speech and ambience built from clips dated March, June and 1 August, none
+    of them generated for that encode, and the mux reported no error.
+    """
+
+    def _dirs(self, tmp_path, strategy="mmaudio"):
+        import manifest, os
+
+        os.makedirs(manifest.audio_dir(str(tmp_path), strategy), exist_ok=True)
+        return str(tmp_path)
+
+    def _shots(self, out):
+        import json, os
+
+        p = os.path.join(out, "shots.json")
+        with open(p, "w") as f:
+            json.dump({"format": "v2", "shots": [
+                {"index": 0, "start_s": 0.0, "end_s": 1.0, "duration_s": 1.0}],
+                "dialog": []}, f)
+        return p
+
+    def test_audio_from_the_current_encode_is_accepted(self, tmp_path):
+        import json, manifest, stitch
+
+        out = self._dirs(tmp_path)
+        self._shots(out)
+        with open(manifest.audio_progress_path(out, "mmaudio"), "w") as f:
+            json.dump({"encode_fingerprint": manifest.encode_fingerprint(out)}, f)
+
+        assert stitch._audio_matches_encode(out, "mmaudio") is True
+
+    def test_audio_from_a_different_encode_is_refused(self, tmp_path):
+        import json, manifest, stitch
+
+        out = self._dirs(tmp_path)
+        self._shots(out)
+        with open(manifest.audio_progress_path(out, "mmaudio"), "w") as f:
+            json.dump({"encode_fingerprint": "deadbeefcafe"}, f)
+
+        assert stitch._audio_matches_encode(out, "mmaudio") is False
+
+    def test_unstamped_audio_older_than_the_encode_is_refused(self, tmp_path):
+        """The March/June/August dirs had no progress file at all."""
+        import os, time, manifest, stitch
+
+        out = self._dirs(tmp_path)
+        audio = manifest.audio_dir(out, "mmaudio")
+        old = time.time() - 86_400
+        os.utime(audio, (old, old))
+        self._shots(out)  # written now, so newer than the audio
+
+        assert stitch._audio_matches_encode(out, "mmaudio") is False
+
+    def test_a_corrupt_progress_file_is_refused_rather_than_trusted(self, tmp_path):
+        import manifest, stitch
+
+        out = self._dirs(tmp_path)
+        self._shots(out)
+        with open(manifest.audio_progress_path(out, "mmaudio"), "w") as f:
+            f.write("{ not json")
+
+        assert stitch._audio_matches_encode(out, "mmaudio") is False
+
+
+class TestReprovisionWhenPodDiesMidRun:
+    """with_setup_retry only covers setup. A pod can die mid-generation.
+
+    16 hours into a 690-shot render the account balance hit zero and RunPod
+    reclaimed the pod. Every request 404'd, and the clip retry loop kept
+    retrying a host that no longer existed -- three attempts a shot, heading
+    for "Too many errors" 20 shots later.
+    """
+
+    def _strategy(self, alive, monkeypatch):
+        from strategies_video import RunPodWanStrategy
+
+        s = RunPodWanStrategy.__new__(RunPodWanStrategy)
+
+        class Session:
+            def __init__(self):
+                self.forgotten = False
+                self.pod_id = "p1"        # we had a pod; the question is whether it lives
+            def pod_alive(self):
+                return alive
+            def forget_pod(self):
+                self.forgotten = True
+                self.pod_id = None
+
+        s._session = Session()
+        s._setup_done = True
+        s.setup_calls = []
+        monkeypatch.setattr(type(s), "_ensure_pod",
+                            lambda self: self.setup_calls.append(1), raising=False)
+        return s
+
+    def test_a_dead_pod_is_replaced(self, monkeypatch):
+        s = self._strategy(alive=False, monkeypatch=monkeypatch)
+
+        assert s._reprovision_if_pod_gone() is True
+        assert s._session.forgotten is True      # no misleading terminate()
+        assert s._setup_done is False            # forces a real re-setup
+        assert s.setup_calls == [1]
+
+    def test_a_live_pod_is_left_alone(self, monkeypatch):
+        s = self._strategy(alive=True, monkeypatch=monkeypatch)
+
+        assert s._reprovision_if_pod_gone() is False
+        assert s._session.forgotten is False
+        assert s.setup_calls == []
+
+    def test_a_strategy_with_no_session_does_not_crash(self):
+        from strategies_video import RunPodWanStrategy
+
+        s = RunPodWanStrategy.__new__(RunPodWanStrategy)
+        assert s._reprovision_if_pod_gone() is False
+
+    def test_the_clip_loop_retries_once_on_the_new_pod(self, monkeypatch, tmp_path):
+        """A replaced pod gets an immediate attempt, not another 40s wait."""
+        from strategies_video import RunPodWanStrategy
+
+        s = self._strategy(alive=False, monkeypatch=monkeypatch)
+        attempts = []
+
+        def fake_attempt(prompt, clips_dir, clip_name, frames, seed, start_image=None):
+            attempts.append(len(attempts))
+            return "clip" if len(attempts) == 2 else None
+
+        monkeypatch.setattr(s, "_attempt_one_clip", fake_attempt)
+        monkeypatch.setattr("strategies_video.time.sleep", lambda _: None)
+
+        assert s._generate_one_clip("p", str(tmp_path), "c.mp4", 81, 7) == "clip"
+        assert len(attempts) == 2  # original, then straight onto the fresh pod
+
+    def test_a_session_that_never_had_a_pod_is_not_reprovisioned(self, monkeypatch):
+        """No pod id means setup has not run -- not that a pod died under us."""
+        from strategies_video import RunPodWanStrategy
+
+        s = RunPodWanStrategy.__new__(RunPodWanStrategy)
+
+        class NeverProvisioned:
+            pod_id = None
+            def pod_alive(self):
+                raise AssertionError("must not be consulted")
+
+        s._session = NeverProvisioned()
+        assert s._reprovision_if_pod_gone() is False

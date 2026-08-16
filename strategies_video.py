@@ -840,6 +840,14 @@ class RunPodWanStrategy(GenerationStrategy):
                 prompt, clips_dir, clip_name, frames, seed, start_image=start_image)
             if result is not None:
                 return result
+            # A pod that has gone away answers every request identically, so
+            # retrying the clip is pointless -- the run needs a new pod, not a
+            # fourth attempt at the same dead host.
+            if self._reprovision_if_pod_gone():
+                result = self._attempt_one_clip(
+                    prompt, clips_dir, clip_name, frames, seed, start_image=start_image)
+                if result is not None:
+                    return result
             if attempt < self.CLIP_ATTEMPTS:
                 delay = self.CLIP_RETRY_DELAY_S * attempt
                 print(f"  {clip_name}: attempt {attempt} failed, "
@@ -847,6 +855,35 @@ class RunPodWanStrategy(GenerationStrategy):
                       f"[attempt {attempt + 1}/{self.CLIP_ATTEMPTS}]...")
                 time.sleep(delay)
         return None
+
+    def _reprovision_if_pod_gone(self) -> bool:
+        """Get a fresh pod if ours has vanished. Returns True if re-provisioned.
+
+        with_setup_retry only covers failures during *setup*. Once generating,
+        a pod that dies mid-run just makes every request 404, and the clip
+        retry loop dutifully retried a host that no longer existed -- burning
+        three attempts a shot and heading for "Too many errors" 20 shots
+        later. That happened 16 hours into a 690-shot render when the account
+        balance hit zero and RunPod reclaimed the pod.
+
+        Out of funds is deliberately NOT handled here: a new pod cannot be
+        bought either, so it propagates and stops the run with a message that
+        names the real problem.
+        """
+        session = getattr(self, "_session", None)
+        # A session with no pod id never had one (or has already been told to
+        # forget it), which is not the same as a pod that died under us --
+        # only the latter warrants tearing setup down and starting again.
+        if session is None or getattr(session, "pod_id", None) is None:
+            return False
+        if session.pod_alive():
+            return False
+
+        print("  Pod is gone -- provisioning a replacement and retrying...")
+        session.forget_pod()
+        self._setup_done = False
+        self._ensure_pod()    # with_setup_retry, so a bad host is survivable
+        return True
 
     def _attempt_one_clip(
         self, prompt: str, clips_dir: str, clip_name: str, frames: int, seed: int,
