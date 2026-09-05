@@ -8,6 +8,7 @@ from prompt_format import (
     is_palindrome_word,
     ordinal_suffix,
     pluralize_count,
+    sanitize_filename,
 )
 
 
@@ -144,3 +145,34 @@ class TestOrdinalSuffix:
             ordinal_suffix("1")  # type: ignore[arg-type]
         with pytest.raises(ValueError):
             ordinal_suffix(1.5)  # type: ignore[arg-type]
+
+
+class TestSanitizeFilename:
+    def test_replaces_multiple_unsafe_chars(self):
+        assert sanitize_filename('shot: 01/review?') == "shot_ 01_review_"
+
+    def test_clean_name_unchanged(self):
+        assert sanitize_filename("scene-3 final") == "scene-3 final"
+
+    def test_strips_leading_and_trailing_whitespace(self):
+        assert sanitize_filename("  scene 3  ") == "scene 3"
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ('a<b', "a_b"),
+            ('a>b', "a_b"),
+            ('a:b', "a_b"),
+            ('a"b', "a_b"),
+            ('a/b', "a_b"),
+            ('a\\b', "a_b"),
+            ('a|b', "a_b"),
+            ('a?b', "a_b"),
+            ('a*b', "a_b"),
+        ],
+    )
+    def test_each_unsafe_char(self, name, expected):
+        assert sanitize_filename(name) == expected
+
+    def test_empty_string(self):
+        assert sanitize_filename("") == ""

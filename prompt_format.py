@@ -104,6 +104,25 @@ def ordinal_suffix(n: int) -> str:
         return "th"
     return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
+def sanitize_filename(name: str) -> str:
+    """Strip characters that are unsafe in filenames from a name.
+
+    Purely additive helper, not wired into any formatter or call site:
+
+      sanitize_filename('shot: 01/review?') -> 'shot_ 01_review_'
+      sanitize_filename('  scene 3  ')     -> 'scene 3'
+      sanitize_filename('scene-3')         -> 'scene-3'
+
+    Any of the characters <>:"/\\|?* is replaced with an underscore, and
+    leading/trailing whitespace is stripped. Everything else passes through
+    unchanged; safe characters (letters, digits, spaces, hyphens, etc.) are
+    never touched.
+    """
+    for ch in '<>:"/\\|?*':
+        name = name.replace(ch, "_")
+    return name.strip()
+
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",
