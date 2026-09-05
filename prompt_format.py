@@ -46,6 +46,26 @@ def pluralize_count(noun: str, count: int) -> str:
     """
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
+
+def is_palindrome_word(word: str) -> bool:
+    """Case-insensitively check whether a single alphabetic word is a palindrome.
+
+    Purely additive helper, not wired into any formatter:
+
+      is_palindrome_word("level")   -> True
+      is_palindrome_word("Level")   -> True
+      is_palindrome_word("droid")   -> False
+      is_palindrome_word("a")       -> True
+
+    Only single alphabetic words count: anything containing spaces,
+    punctuation, digits, or non-letter characters returns False, as does
+    an empty string. Case is ignored, so "Anna" is a palindrome.
+    """
+    if not isinstance(word, str) or not word.isalpha():
+        return False
+    lowered = word.lower()
+    return lowered == lowered[::-1]
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",

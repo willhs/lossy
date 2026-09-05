@@ -2,7 +2,11 @@
 
 import pytest
 
-from prompt_format import format_duration_hms, pluralize_count
+from prompt_format import (
+    format_duration_hms,
+    is_palindrome_word,
+    pluralize_count,
+)
 
 
 class TestFormatDurationHms:
@@ -49,3 +53,37 @@ class TestPluralizeCount:
     )
     def test_counts(self, noun, count, expected):
         assert pluralize_count(noun, count) == expected
+
+
+class TestIsPalindromeWord:
+    @pytest.mark.parametrize(
+        "word,expected",
+        [
+            # A straightforward palindrome.
+            ("level", True),
+            # A non-palindrome.
+            ("droid", False),
+            # Single characters read the same both ways.
+            ("a", True),
+            ("Z", True),
+            # Case-insensitive.
+            ("Level", True),
+            ("Anna", True),
+            ("Droid", False),
+            # Longer palindromes and near-misses.
+            ("racecar", True),
+            ("racecars", False),
+            # Empty string is not a word.
+            ("", False),
+            # Not a single alphabetic word.
+            ("a a", False),
+            ("level!", False),
+            ("a1a", False),
+        ],
+    )
+    def test_words(self, word, expected):
+        assert is_palindrome_word(word) == expected
+
+    def test_returns_bool(self):
+        assert is_palindrome_word("level") is True
+        assert is_palindrome_word("droid") is False
