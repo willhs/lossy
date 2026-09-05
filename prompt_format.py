@@ -66,6 +66,31 @@ def is_palindrome_word(word: str) -> bool:
     lowered = word.lower()
     return lowered == lowered[::-1]
 
+
+def ordinal_suffix(n: int) -> str:
+    """Return the ordinal suffix for a non-negative integer.
+
+    Purely additive helper for composing position labels ("Part 2 of 5"):
+
+      ordinal_suffix(1)   -> "st"
+      ordinal_suffix(2)   -> "nd"
+      ordinal_suffix(3)   -> "rd"
+      ordinal_suffix(4)   -> "th"
+      ordinal_suffix(11)  -> "th"   # 11th-13th break the 1st/2nd/3rd rule
+      ordinal_suffix(21)  -> "st"
+      ordinal_suffix(111) -> "th"
+
+    Only the last two digits matter, except teens (11-13) always take
+    "th". Raises ValueError for negative or non-integer input, which
+    callers should never produce (positions come from enumerate-style
+    indices).
+    """
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        raise ValueError(f"ordinal position must be a non-negative int, got {n!r}")
+    if 11 <= n % 100 <= 13:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",

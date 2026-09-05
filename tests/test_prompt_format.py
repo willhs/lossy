@@ -5,6 +5,7 @@ import pytest
 from prompt_format import (
     format_duration_hms,
     is_palindrome_word,
+    ordinal_suffix,
     pluralize_count,
 )
 
@@ -87,3 +88,44 @@ class TestIsPalindromeWord:
     def test_returns_bool(self):
         assert is_palindrome_word("level") is True
         assert is_palindrome_word("droid") is False
+
+
+class TestOrdinalSuffix:
+    @pytest.mark.parametrize(
+        "n,expected",
+        [
+            (0, "th"),
+            (1, "st"),
+            (2, "nd"),
+            (3, "rd"),
+            (4, "th"),
+            (11, "th"),
+            (12, "th"),
+            (13, "th"),
+            (14, "th"),
+            (20, "th"),
+            (21, "st"),
+            (22, "nd"),
+            (23, "rd"),
+            (100, "th"),
+            (101, "st"),
+            (111, "th"),
+            (112, "th"),
+            (113, "th"),
+            (121, "st"),
+            (123, "rd"),
+        ],
+    )
+    def test_suffixes(self, n, expected):
+        assert ordinal_suffix(n) == expected
+
+    @pytest.mark.parametrize("n", [-1, -11])
+    def test_negative_raises(self, n):
+        with pytest.raises(ValueError):
+            ordinal_suffix(n)
+
+    def test_non_int_raises(self):
+        with pytest.raises(ValueError):
+            ordinal_suffix("1")  # type: ignore[arg-type]
+        with pytest.raises(ValueError):
+            ordinal_suffix(1.5)  # type: ignore[arg-type]
