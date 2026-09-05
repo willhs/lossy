@@ -47,6 +47,19 @@ def pluralize_count(noun: str, count: int) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
+def is_leap_year(year: int) -> bool:
+    """Check whether a year is a Gregorian leap year.
+
+    Purely additive helper, not wired into any formatter:
+
+      is_leap_year(2000) -> True   # divisible by 400
+      is_leap_year(2024) -> True   # divisible by 4, not by 100
+      is_leap_year(1900) -> False  # divisible by 100 but not by 400
+      is_leap_year(2023) -> False  # not divisible by 4
+    """
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
 def is_palindrome_word(word: str) -> bool:
     """Case-insensitively check whether a single alphabetic word is a palindrome.
 

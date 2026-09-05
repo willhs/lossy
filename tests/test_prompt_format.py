@@ -4,6 +4,7 @@ import pytest
 
 from prompt_format import (
     format_duration_hms,
+    is_leap_year,
     is_palindrome_word,
     ordinal_suffix,
     pluralize_count,
@@ -54,6 +55,20 @@ class TestPluralizeCount:
     )
     def test_counts(self, noun, count, expected):
         assert pluralize_count(noun, count) == expected
+
+
+class TestIsLeapYear:
+    @pytest.mark.parametrize(
+        "year,expected",
+        [
+            (2000, True),   # divisible by 400
+            (1900, False),  # divisible by 100 but not by 400
+            (2024, True),   # divisible by 4, not by 100
+            (2023, False),  # not divisible by 4
+        ],
+    )
+    def test_years(self, year, expected):
+        assert is_leap_year(year) is expected
 
 
 class TestIsPalindromeWord:
