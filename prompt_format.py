@@ -338,6 +338,25 @@ def _format_prompt_seedance(entry: dict) -> str:
 # because the identity block prepended "<display_name>: <description>" to
 # every shot with a mapped character.
 
+def slugify_title(title: str) -> str:
+    """Slugify a title into a URL/filename-friendly string.
+
+    Purely additive helper, not wired into any formatter or call site:
+
+      slugify_title("The Empire Strikes Back")  -> "the-empire-strikes-back"
+      slugify_title("Star Wars: Episode IV")    -> "star-wars-episode-iv"
+      slugify_title("  A   New   Hope!  ")      -> "a-new-hope"
+
+    Lowercases the title, replaces every run of non-alphanumeric characters
+    (spaces, punctuation, etc.) with a single hyphen, and strips leading and
+    trailing hyphens. Empty or all-punctuation input yields an empty string.
+    """
+    import re
+
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())
+    return slug.strip("-")
+
+
 def strip_character_names(text: str, names) -> str:
     """Remove character names from a composed prompt, keeping it readable.
 

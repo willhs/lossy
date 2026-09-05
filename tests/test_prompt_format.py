@@ -9,6 +9,7 @@ from prompt_format import (
     ordinal_suffix,
     pluralize_count,
     sanitize_filename,
+    slugify_title,
 )
 
 
@@ -176,3 +177,32 @@ class TestSanitizeFilename:
 
     def test_empty_string(self):
         assert sanitize_filename("") == ""
+
+
+class TestSlugifyTitle:
+    def test_normal_title(self):
+        assert slugify_title("The Empire Strikes Back") == "the-empire-strikes-back"
+
+    def test_punctuation_is_replaced_with_hyphens(self):
+        assert slugify_title("Star Wars: Episode IV") == "star-wars-episode-iv"
+        assert slugify_title("Hello, World!") == "hello-world"
+
+    def test_multiple_consecutive_spaces_collapse_to_one_hyphen(self):
+        assert slugify_title("A   New   Hope") == "a-new-hope"
+
+    def test_lowercases_input(self):
+        assert slugify_title("Attack Of The Clones") == "attack-of-the-clones"
+
+    def test_strips_leading_and_trailing_hyphens(self):
+        assert slugify_title("  Return of the Jedi!  ") == "return-of-the-jedi"
+        assert slugify_title("--Revenge--") == "revenge"
+
+    def test_digits_are_kept(self):
+        assert slugify_title("Episode 7") == "episode-7"
+
+    def test_already_slugified_unchanged(self):
+        assert slugify_title("the-force-awakens") == "the-force-awakens"
+
+    @pytest.mark.parametrize("title", ["", "   ", "!!!", "---"])
+    def test_empty_result(self, title):
+        assert slugify_title(title) == ""
