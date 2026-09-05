@@ -104,6 +104,39 @@ def ordinal_suffix(n: int) -> str:
         return "th"
     return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
+
+def wrap_bullet(text: str, width: int) -> list[str]:
+    """Word-wrap text into lines no wider than ``width`` using greedy wrapping.
+
+    Purely additive helper, not wired into any formatter or call site:
+
+      wrap_bullet("a short line", 20)  -> ["a short line"]
+      wrap_bullet("one two three four", 7)
+          -> ["one two", "three", "four"]
+      wrap_bullet("extraordinarily", 5) -> ["extraordinarily"]
+
+    Words are packed onto the current line until adding the next word would
+    exceed ``width``. A single word longer than ``width`` is placed on its
+    own line and overflows -- it is never broken mid-word. Multiple spaces
+    between words collapse to one. Raises ValueError for width < 1.
+    """
+    if width < 1:
+        raise ValueError(f"width must be at least 1, got {width!r}")
+    words = text.split()
+    if not words:
+        return []
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        if len(current) + 1 + len(word) <= width:
+            current += " " + word
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
 def sanitize_filename(name: str) -> str:
     """Strip characters that are unsafe in filenames from a name.
 

@@ -10,6 +10,7 @@ from prompt_format import (
     pluralize_count,
     sanitize_filename,
     slugify_title,
+    wrap_bullet,
 )
 
 
@@ -177,6 +178,52 @@ class TestSanitizeFilename:
 
     def test_empty_string(self):
         assert sanitize_filename("") == ""
+
+
+class TestWrapBullet:
+    def test_short_text_under_width_stays_on_one_line(self):
+        assert wrap_bullet("a short line", 20) == ["a short line"]
+
+    def test_text_fitting_exactly_on_one_line(self):
+        assert wrap_bullet("a short line", 12) == ["a short line"]
+
+    def test_wraps_into_exactly_two_lines(self):
+        # "one two" is 7 chars; adding " three" would make 13 > 10.
+        assert wrap_bullet("one two three", 10) == ["one two", "three"]
+
+    def test_wraps_into_exactly_two_lines_multi_word(self):
+        assert wrap_bullet("alpha beta gamma delta", 11) == ["alpha beta", "gamma delta"]
+
+    def test_single_word_longer_than_width_overflows_whole(self):
+        # A word longer than width is never broken mid-word.
+        assert wrap_bullet("extraordinarily", 5) == ["extraordinarily"]
+
+    def test_long_word_with_surrounding_words(self):
+        assert wrap_bullet("hi supersupercalifragilistic hi", 10) == [
+            "hi",
+            "supersupercalifragilistic",
+            "hi",
+        ]
+
+    def test_all_lines_no_wider_than_width(self):
+        text = "the quick brown fox jumps over the lazy dog again and again"
+        for width in (5, 10, 20, 40):
+            for line in wrap_bullet(text, width):
+                assert len(line) <= width
+
+    def test_multiple_spaces_collapse(self):
+        assert wrap_bullet("a    b   c", 5) == ["a b c"]
+
+    def test_empty_text(self):
+        assert wrap_bullet("", 10) == []
+        assert wrap_bullet("   ", 10) == []
+
+    def test_width_one(self):
+        assert wrap_bullet("ab cd", 1) == ["ab", "cd"]
+
+    def test_zero_width_raises(self):
+        with pytest.raises(ValueError):
+            wrap_bullet("text", 0)
 
 
 class TestSlugifyTitle:
