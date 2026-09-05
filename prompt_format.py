@@ -4,6 +4,33 @@ Model-specific formatters that convert structured shot descriptions
 into optimized text prompts for different video generation backends.
 """
 
+
+def format_duration_hms(seconds: float) -> str:
+    """Format a duration in seconds as a human-readable timestamp.
+
+    Returns "H:MM:SS" for durations of an hour or more (minutes and seconds
+    zero-padded to two digits) and "M:SS" below an hour, matching the
+    timestamp convention players use:
+
+      0        -> "0:00"
+      3.6      -> "0:04"
+      62       -> "1:02"
+      3730     -> "1:02:10"
+
+    Sub-second precision is intentionally dropped: callers use this for
+    context lines and progress output, not for frame-accurate timing.
+    Raises ValueError for negative durations, which callers should never
+    produce (shot durations come from end_s - start_s).
+    """
+    if seconds < 0:
+        raise ValueError(f"duration must be non-negative, got {seconds!r}")
+    total = round(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",
