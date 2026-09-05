@@ -31,6 +31,21 @@ def format_duration_hms(seconds: float) -> str:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
 
+
+def pluralize_count(noun: str, count: int) -> str:
+    """Render '<count> <noun>' with a naive plural for counts other than 1.
+
+    Purely additive helper for composing subject counts in prompts:
+
+      pluralize_count("shot", 1)  -> "1 shot"
+      pluralize_count("shot", 3)  -> "3 shots"
+
+    Pluralization is the plain 's' suffix (no irregular forms), which is
+    fine for the nouns used here; callers with irregular nouns should pass
+    an already-pluralized string and a count of 1 or handle it themselves.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
 CAMERA_TERMS = {
     "slow zoom out": "slow dolly out",
     "slow zoom in": "slow dolly in",

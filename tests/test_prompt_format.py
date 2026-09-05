@@ -2,7 +2,7 @@
 
 import pytest
 
-from prompt_format import format_duration_hms
+from prompt_format import format_duration_hms, pluralize_count
 
 
 class TestFormatDurationHms:
@@ -33,3 +33,19 @@ class TestFormatDurationHms:
     def test_negative_raises(self):
         with pytest.raises(ValueError):
             format_duration_hms(-0.1)
+
+
+class TestPluralizeCount:
+    @pytest.mark.parametrize(
+        "noun,count,expected",
+        [
+            ("shot", 0, "0 shots"),
+            ("shot", 1, "1 shot"),
+            ("shot", 2, "2 shots"),
+            ("droid", 0, "0 droids"),
+            ("droid", 1, "1 droid"),
+            ("droid", 2, "2 droids"),
+        ],
+    )
+    def test_counts(self, noun, count, expected):
+        assert pluralize_count(noun, count) == expected
