@@ -855,7 +855,6 @@ def generate_prompts(
     wav_path: str | None = None,
 ) -> list[dict]:
     """Generate descriptive prompts for each shot via vision API."""
-    from google import genai
     from google.genai import types
 
     dialog = dialog or []
@@ -1415,7 +1414,6 @@ def _refine_shot_assignments(client, characters_data, prompts, subjects_by_shot)
 
 def run_stage3(args):
     """Stage 3: Build character registry from shots.json subjects."""
-    from google import genai
     from google.genai import types
 
     output_dir = args.output_dir
@@ -1562,7 +1560,6 @@ def _candidate_characters_for_line(line: dict, shots: list[dict],
 
 def run_stage4(args):
     """Stage 4: Attribute each dialog line to a character via Gemini."""
-    from google import genai
     from google.genai import types
 
     output_dir = args.output_dir

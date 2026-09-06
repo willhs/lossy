@@ -2474,13 +2474,15 @@ class TestStaleAudioIsRefusedAtStitch:
     """
 
     def _dirs(self, tmp_path, strategy="mmaudio"):
-        import manifest, os
+        import manifest
+        import os
 
         os.makedirs(manifest.audio_dir(str(tmp_path), strategy), exist_ok=True)
         return str(tmp_path)
 
     def _shots(self, out):
-        import json, os
+        import json
+        import os
 
         p = os.path.join(out, "shots.json")
         with open(p, "w") as f:
@@ -2490,7 +2492,9 @@ class TestStaleAudioIsRefusedAtStitch:
         return p
 
     def test_audio_from_the_current_encode_is_accepted(self, tmp_path):
-        import json, manifest, stitch
+        import json
+        import manifest
+        import stitch
 
         out = self._dirs(tmp_path)
         self._shots(out)
@@ -2500,7 +2504,9 @@ class TestStaleAudioIsRefusedAtStitch:
         assert stitch._audio_matches_encode(out, "mmaudio") is True
 
     def test_audio_from_a_different_encode_is_refused(self, tmp_path):
-        import json, manifest, stitch
+        import json
+        import manifest
+        import stitch
 
         out = self._dirs(tmp_path)
         self._shots(out)
@@ -2511,7 +2517,10 @@ class TestStaleAudioIsRefusedAtStitch:
 
     def test_unstamped_audio_older_than_the_encode_is_refused(self, tmp_path):
         """The March/June/August dirs had no progress file at all."""
-        import os, time, manifest, stitch
+        import os
+        import time
+        import manifest
+        import stitch
 
         out = self._dirs(tmp_path)
         audio = manifest.audio_dir(out, "mmaudio")
@@ -2522,7 +2531,8 @@ class TestStaleAudioIsRefusedAtStitch:
         assert stitch._audio_matches_encode(out, "mmaudio") is False
 
     def test_a_corrupt_progress_file_is_refused_rather_than_trusted(self, tmp_path):
-        import manifest, stitch
+        import manifest
+        import stitch
 
         out = self._dirs(tmp_path)
         self._shots(out)
@@ -2586,7 +2596,6 @@ class TestReprovisionWhenPodDiesMidRun:
 
     def test_the_clip_loop_retries_once_on_the_new_pod(self, monkeypatch, tmp_path):
         """A replaced pod gets an immediate attempt, not another 40s wait."""
-        from strategies_video import RunPodWanStrategy
 
         s = self._strategy(alive=False, monkeypatch=monkeypatch)
         attempts = []

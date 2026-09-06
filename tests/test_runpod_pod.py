@@ -563,8 +563,11 @@ class TestPodLiveness:
 
     def test_forget_pod_clears_every_trace(self, tmp_path):
         s = RunPodSession(str(tmp_path))
-        s.pod_id = "dead"; s._owned_pod_ids.add("dead")
-        s.base_url = "http://x"; s.ssh_host = "1.2.3.4"; s.ssh_port = 22
+        s.pod_id = "dead"
+        s._owned_pod_ids.add("dead")
+        s.base_url = "http://x"
+        s.ssh_host = "1.2.3.4"
+        s.ssh_port = 22
         s.write_state()
 
         s.forget_pod()
@@ -575,7 +578,6 @@ class TestPodLiveness:
 
     def test_a_flaky_status_call_reports_alive(self, tmp_path, monkeypatch):
         """Doubt must never trigger a needless re-provision."""
-        import runpod_pod
 
         s = RunPodSession(str(tmp_path))
         s.pod_id = "p1"
