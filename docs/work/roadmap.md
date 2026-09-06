@@ -10,11 +10,11 @@ related: []
 
 ## Now
 
-- **Full-run go/no-go on `runpod-ltx2`** — the dress rehearsal (shots 794-881, research 0023) gave a **conditional go**: ~$15-25 projected for all 2069 shots, all four blocking defects fixed (auto re-provision on pod failure, idle-pod timeout, costume-free canonical descriptions, encode-fingerprint pinning against stale artifacts). Still open before committing to the full run:
+- **Full run on `runpod-ltx2` — DECIDED 2026-09-06: GO**, once defects 5 and 6 land. Defects 7 and 11/12 are accepted as known v1 limits and do not block generation. The dress rehearsal (shots 794-881, research 0023) gave the **conditional go**: ~$15-25 projected for all 2069 shots, all four blocking defects fixed (auto re-provision on pod failure, idle-pod timeout, costume-free canonical descriptions, encode-fingerprint pinning against stale artifacts). Gating the run:
   - Defect 5 — identity bleed when >=3 characters are stacked in one shot (196/2069 shots, 9.5%); mitigation is capping identity blocks to the two most prominent characters.
   - Defect 6 — non-humanoid characters (C-3PO) render as a human in costume; reword the registry description to "mechanical robot", not "humanoid".
-  - Defect 7 — speaker attribution has a ~1.5% measured error floor (confirmed wrong-scene attributions); mitigation is routing low-confidence lines to a narrator voice.
-  - Defect 11/12 — 2.3% ambience-shot failure rate (not retried) and a final mux peaking at 98.8% FS despite the limiter; worth a look before mastering a full film.
+  - ~~Defect 7~~ (accepted for v1) — speaker attribution has a ~1.5% measured error floor (confirmed wrong-scene attributions); mitigation is routing low-confidence lines to a narrator voice.
+  - ~~Defect 11/12~~ (accepted for v1, revisit before mastering) — 2.3% ambience-shot failure rate (not retried) and a final mux peaking at 98.8% FS despite the limiter; worth a look before mastering a full film.
 
 ## Done
 
