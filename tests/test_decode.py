@@ -2462,6 +2462,63 @@ class TestDesignNamesSurviveTheStrip:
         assert "Stormtrooper" not in s._all_character_names()
 
 
+class TestIdentityBlockCapsToTwoMostProminent:
+    """Concatenating >=3 identity blocks blends them across figures --
+    the dress rehearsal rendered Luke with C-3PO's gold droid body and a
+    human head (research 0023, defect 5). Affects 196/2069 shots (9.5%).
+    """
+
+    def _strategy(self, character_shot_map):
+        from strategies_video import CharacterIdentityMixin
+
+        s = CharacterIdentityMixin.__new__(CharacterIdentityMixin)
+        s._init_character_identity(character_shot_map, {"characters": [
+            {"name": "luke", "display_name": "Luke Skywalker",
+             "description": "A young man with sandy hair.",
+             "shots": [1, 2, 3, 4, 5]},
+            {"name": "han", "display_name": "Han Solo",
+             "description": "A rugged smuggler.",
+             "shots": [1, 2, 3]},
+            {"name": "leia", "display_name": "Princess Leia",
+             "description": "A young woman with brown hair.",
+             "shots": [1, 2]},
+            {"name": "obi_wan", "display_name": "Obi-Wan Kenobi",
+             "description": "An old man with a grey beard.",
+             "shots": [1]},
+        ]})
+        return s
+
+    def test_only_two_blocks_survive_a_four_character_shot(self):
+        s = self._strategy({7: ["luke", "han", "leia", "obi_wan"]})
+        out = s._prepend_identity({"index": 7}, "Cinematic wide shot.")
+        assert "sandy hair" in out
+        assert "rugged smuggler" in out
+        assert "brown hair" not in out
+        assert "grey beard" not in out
+
+    def test_the_two_kept_are_the_most_prominent_by_total_shots(self):
+        # Reverse map order: least-prominent-first in the shot map should
+        # still keep Luke (5 shots) and Han (3 shots) over Leia (2) and
+        # Obi-Wan (1).
+        s = self._strategy({7: ["obi_wan", "leia", "han", "luke"]})
+        out = s._prepend_identity({"index": 7}, "Cinematic wide shot.")
+        assert "sandy hair" in out
+        assert "rugged smuggler" in out
+        assert "brown hair" not in out
+        assert "grey beard" not in out
+
+    def test_two_characters_are_unaffected(self):
+        s = self._strategy({7: ["luke", "han"]})
+        out = s._prepend_identity({"index": 7}, "Cinematic wide shot.")
+        assert "sandy hair" in out
+        assert "rugged smuggler" in out
+
+    def test_one_character_is_unaffected(self):
+        s = self._strategy({7: ["luke"]})
+        out = s._prepend_identity({"index": 7}, "Cinematic wide shot.")
+        assert "sandy hair" in out
+
+
 class TestStaleAudioIsRefusedAtStitch:
     """The stitch must not mux audio from a different encode.
 

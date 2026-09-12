@@ -106,7 +106,8 @@ class CharacterIdentityMixin(GenerationStrategy):
         identity_parts = []
         shot_idx = entry.get("index")
         if shot_idx is not None:
-            for name in self._character_shot_map.get(shot_idx, []):
+            names = self._cap_to_most_prominent(self._character_shot_map.get(shot_idx, []))
+            for name in names:
                 char = self._characters_by_name.get(name)
                 if char:
                     # For a person, the description alone carries the
@@ -130,6 +131,26 @@ class CharacterIdentityMixin(GenerationStrategy):
         # someone the shot map had not assigned to that shot -- Greedo in 757,
         # Vader in 1977.
         return strip_character_names(composed, self._all_character_names())
+
+    def _cap_to_most_prominent(self, names: list, limit: int = 2) -> list:
+        """Cap identity blocks to the `limit` most prominent characters in a shot.
+
+        Concatenating three or more verbatim identity blocks blends them --
+        the dress rehearsal rendered Luke with C-3PO's gold droid body and a
+        human head (research 0023). Affects 196 of 2069 shots (9.5%)
+        film-wide. There is no per-shot prominence signal, so total shot
+        count across the whole film stands in for it: whoever appears most
+        overall is the one the identity block most needs to get right, and
+        the shot description still carries whoever else is in frame.
+        """
+        if len(names) <= limit:
+            return names
+
+        def prominence(name: str) -> int:
+            char = self._characters_by_name.get(name)
+            return len(char.get("shots", [])) if char else 0
+
+        return sorted(names, key=prominence, reverse=True)[:limit]
 
     def _all_character_names(self) -> set:
         """Names to strip: personal names only, not design names.

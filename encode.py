@@ -577,7 +577,12 @@ IDENTITY_DESCRIPTION_SPEC = (
     "description is prepended to every shot they appear in, so a costume "
     "named here is wrong everywhere they wear something else. Exception: when "
     "the costume or shell IS the character and never changes (droids, masked "
-    "or armoured figures, non-human creatures), describe it."
+    "or armoured figures, non-human creatures), describe it. "
+    "For a character with no human skeleton (a droid or robot), describe it "
+    "as a mechanical robot -- plating, joints, lenses, vents -- and never as "
+    "'humanoid' or in terms of a human body. 'Humanoid' reliably renders as a "
+    "person in a costume rather than a machine, even when the rest of the "
+    "description is accurate."
 )
 
 

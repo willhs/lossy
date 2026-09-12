@@ -1699,6 +1699,15 @@ class TestCanonicalDescriptionsExcludeWardrobe:
         for trait in ("age range", "hair colour", "bearing"):
             assert trait in src or trait.replace("colour", "color") in src
 
+    def test_stage3_prompts_forbid_humanoid_wording_for_robots(self):
+        # C-3PO described as a "humanoid droid" reliably rendered as a human
+        # in a gold costume rather than a machine (research 0023, defect 6).
+        import encode
+
+        assert "mechanical robot" in encode.IDENTITY_DESCRIPTION_SPEC
+        assert "'humanoid'" in encode.IDENTITY_DESCRIPTION_SPEC
+        assert encode.IDENTITY_DESCRIPTION_SPEC in encode.STAGE3_SYSTEM_PROMPT
+
 
 class TestGeminiClientHasADeadline:
     """Every Gemini call must be able to give up.
