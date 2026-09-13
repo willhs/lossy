@@ -10,13 +10,18 @@ related: []
 
 ## Now
 
-- **Full run on `runpod-ltx2` — DECIDED 2026-09-06: GO**, once defects 5 and 6 land. Defects 7 and 11/12 are accepted as known v1 limits and do not block generation. The dress rehearsal (shots 794-881, research 0023) gave the **conditional go**: ~$15-25 projected for all 2069 shots, all four blocking defects fixed (auto re-provision on pod failure, idle-pod timeout, costume-free canonical descriptions, encode-fingerprint pinning against stale artifacts). Gating the run:
-  - Defect 5 — identity bleed when >=3 characters are stacked in one shot (196/2069 shots, 9.5%); mitigation is capping identity blocks to the two most prominent characters.
-  - Defect 6 — non-humanoid characters (C-3PO) render as a human in costume; reword the registry description to "mechanical robot", not "humanoid".
-  - ~~Defect 7~~ (accepted for v1) — speaker attribution has a ~1.5% measured error floor (confirmed wrong-scene attributions); mitigation is routing low-confidence lines to a narrator voice.
-  - ~~Defect 11/12~~ (accepted for v1, revisit before mastering) — 2.3% ambience-shot failure rate (not retried) and a final mux peaking at 98.8% FS despite the limiter; worth a look before mastering a full film.
+- **Resume the full run on `runpod-ltx2` for the remaining ~2000 shots.** Defects 5 and 6
+  landed 2026-09-12 (`aac8ee2`), the last gate the 2026-09-06 GO decision set — nothing
+  code-side blocks the run anymore. Defects 7 and 11/12 remain accepted as known v1
+  limits (7 and 11/12 get revisited before mastering, not before generating).
 
 ## Done
+
+- ~~**Fix defects 5 + 6**~~ — `aac8ee2` (2026-09-12): `CharacterIdentityMixin._prepend_identity`
+  now caps identity blocks to the two most prominent characters per shot (defect 5,
+  identity bleed on 196/2069 shots); `IDENTITY_DESCRIPTION_SPEC` now describes
+  droids/robots as mechanical rather than "humanoid" (defect 6). Both spot-checked
+  against `star_wars_iv_v2/characters.json`.
 
 - ~~**Pick a source film**~~ — Star Wars Episode IV (1080p, ~2h, 1,161 shots at time of pick; 2,069 shots after the July re-encode).
 - ~~**Build the encoder**~~ — PySceneDetect shot detection + Gemini Flash-Lite prompt generation. Full pipeline tested.

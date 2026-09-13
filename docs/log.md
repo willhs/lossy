@@ -37,3 +37,13 @@ as known v1 limits; 11/12 get revisited before mastering, not before generating.
 
 Board reflects this: `0b8d08c0` moved idea → week and rescoped to just 5 + 6, with the
 full run (`0725e309`) now declaring a dependency on it.
+
+## [2026-09-12] update | Defects 5 + 6 landed, full run unblocked
+
+`aac8ee2` fixed both defects gating the 2026-09-06 GO decision: `CharacterIdentityMixin`
+now caps identity blocks to the two most prominent characters per shot (defect 5,
+identity bleed on 196/2069 shots), and `IDENTITY_DESCRIPTION_SPEC` now describes
+droids/robots as mechanical rather than "humanoid" (defect 6). Both spot-checked
+against the real `star_wars_iv_v2` `characters.json`. `docs/work/roadmap.md` updated
+to move this out of "Now" into "Done" — resuming the full run for the remaining
+~2000 shots is the project's only remaining "Now" item.
