@@ -127,7 +127,7 @@ Browser-based side-by-side viewer served by `tools/serve.py` (static file server
 - **RunPod pod lifecycle is centralized.** `runpod_pod.RunPodSession` provisions across a configurable cloud x GPU fallback matrix (community exhausted before secure), re-provisions on a fresh pod up to `POD_SETUP_ATTEMPTS` times when a pod dies before the ComfyUI server is ready, and sweeps its own stray pods on exit. Every RunPod strategy shares this rather than handling pod failure itself.
 - **Single configuration surface.** `config.py` owns `.env` loading, Gemini model-id constants (`ENCODE_MODEL`, `EVAL_MODEL`), and the video-strategy registry (name → class + capability flags like `supports_concurrent_audio`); `encode.py`/`decode.py`/`eval.py`/`pipeline.py` import from it rather than reimplementing. `load_env()` is called once per CLI's `main()`, never from library functions, so tests exercising those functions directly stay isolated from the real `.env`.
 - **Strategy pattern for backends.** New video or audio backends plug in as subclasses of `GenerationStrategy` / `AudioStrategy` in `strategies_video.py` / `strategies_audio.py`.
-- **uv-managed dependencies.** `pyproject.toml` + `uv.lock` are the single install source (`uv sync`). New dependencies require discussion (see `CLAUDE.md`).
+- **uv-managed dependencies.** `pyproject.toml` + `uv.lock` are the single install source (`uv sync`). New dependencies require discussion (see `AGENTS.md`).
 
 ## Tech Stack
 

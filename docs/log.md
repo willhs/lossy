@@ -47,3 +47,7 @@ droids/robots as mechanical rather than "humanoid" (defect 6). Both spot-checked
 against the real `star_wars_iv_v2` `characters.json`. `docs/work/roadmap.md` updated
 to move this out of "Now" into "Done" — resuming the full run for the remaining
 ~2000 shots is the project's only remaining "Now" item.
+
+## [2026-10-09] update | AGENTS.md is the single agent instructions file
+
+`ab9775d` removed the `CLAUDE.md` and `docs/CLAUDE.md` stubs; `AGENTS.md` (a symlink to `.gent/rules.md`) is now the only agent instructions file. `docs/design/architecture.md` now points at it. References to `CLAUDE.md` in `docs/research/0024` and `docs/tasks/*/plan.md` are historical and left as written.
