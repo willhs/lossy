@@ -47,6 +47,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     RunPodWanEnrichedStrategy,
     RunPodVaceStrategy,
     RunPodLtx2Strategy,
+    RunPodLtx25Strategy,
 )
 
 
@@ -620,6 +621,7 @@ def main():
             "runpod-wan-enriched": lambda: _create_wan_enriched_strategy(args),
             "runpod-vace": lambda: _create_vace_strategy(args),
             "runpod-ltx2": lambda: _create_ltx2_strategy(args),
+            "runpod-ltx25": lambda: _create_ltx2_strategy(args, RunPodLtx25Strategy),
         }
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
@@ -648,7 +650,7 @@ def _create_wan_enriched_strategy(args):
     )
 
 
-def _create_ltx2_strategy(args):
+def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy):
     output_dir = args.output_dir
     characters_path = manifest.characters_path(output_dir)
 
@@ -662,7 +664,7 @@ def _create_ltx2_strategy(args):
     else:
         print("Warning: characters.json not found. Running without prompt enrichment.")
 
-    return RunPodLtx2Strategy(
+    return strategy_cls(
         output_dir=output_dir,
         keep_pod=getattr(args, "keep_pod", False),
         character_shot_map=character_shot_map,

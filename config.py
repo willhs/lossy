@@ -13,6 +13,7 @@ from strategies_video import (
     GenerationStrategy,
     ReplicateWanStrategy,
     RunPodLtx2Strategy,
+    RunPodLtx25Strategy,
     RunPodVaceStrategy,
     RunPodWan22Strategy,
     RunPodWanEnrichedStrategy,
@@ -82,6 +83,7 @@ VIDEO_STRATEGIES: dict[str, StrategySpec] = {
         StrategySpec("runpod-wan-enriched", RunPodWanEnrichedStrategy, supports_concurrent_audio=True),
         StrategySpec("runpod-vace", RunPodVaceStrategy, supports_concurrent_audio=True),
         StrategySpec("runpod-ltx2", RunPodLtx2Strategy, supports_concurrent_audio=False),
+        StrategySpec("runpod-ltx25", RunPodLtx25Strategy, supports_concurrent_audio=False),
     )
 }
 

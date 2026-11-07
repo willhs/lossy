@@ -13,6 +13,7 @@ import time
 
 import manifest
 from clip_types import AudioClipResult, ClipResult
+from runpod_pod import PinnedModel
 from prompt_format import (_format_prompt_wan, _format_prompt_seedance, format_prompt,
                            strip_character_names, vary_prompt_for_part)
 
@@ -939,8 +940,12 @@ class RunPodWanStrategy(GenerationStrategy):
                 return None
 
             # Save raw file, convert to MP4 via ffmpeg
+            # The ".raw" infix keeps raw_path distinct from clip_path when the
+            # pod already returns an .mp4 (LTX-2.5's SaveVideo does): otherwise
+            # ffmpeg is asked to convert a file onto itself, fails, and the
+            # fallback below deletes the only copy of the clip.
             raw_ext = os.path.splitext(output_file["filename"])[1] or ".webm"
-            raw_path = clip_path.replace(".mp4", raw_ext)
+            raw_path = clip_path[:-len(".mp4")] + ".raw" + raw_ext
             with open(raw_path, "wb") as f:
                 f.write(data)
 
@@ -1487,6 +1492,183 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
             wf["6"]["inputs"]["positive"] = ["15", 0]
             wf["6"]["inputs"]["negative"] = ["15", 1]
             wf["9"]["inputs"]["video_latent"] = ["15", 2]
+        return wf
+
+
+def ltx25_frames(target_s: float, fps: int = 25, lo: int = 25, hi: int = 121) -> int:
+    """Nearest valid LTX-2.5 frame count for a duration.
+
+    The model needs frames % 8 == 1 (25, 33, ... 121); anything else is
+    rejected or silently padded. Rounds to the nearest valid count, then clamps
+    to [lo, hi] (1s .. ~4.8s, the native clip length before quality degrades).
+    """
+    n = round((round(target_s * fps) - 1) / 8) * 8 + 1
+    return max(lo, min(hi, n))
+
+
+class RunPodLtx25Strategy(RunPodLtx2Strategy):
+    """RunPod self-hosted LTX-2.5 (22B distilled, int8-convrot) via ComfyUI.
+
+    The configuration research 0025 recommends: two-stage (stage 1 at half
+    resolution on the 8-step distilled schedule, x2 latent upsample, then a
+    3-sigma refine at full resolution) with the convolutional VAE decoder.
+    On 20 hard Star Wars IV shots it scored 2.7-2.8 against LTX-2.3's 2.05-2.1,
+    cut letterboxing from 6/20 shots to 1/20, and costs the same per film.
+
+    Differences from RunPodLtx2Strategy that matter:
+      * frames % 8 == 1 (LTX-2.3 tolerated any count).
+      * ComfyUI must be >= v0.32 for the nodes; the stock image is v0.30.0.
+      * Weights come from the comfyicu/LTX-2.5 mirror, pinned by revision and
+        sha256, because the official Lightricks/LTX-2.5 repo is gated behind a
+        consent-to-marketing click. The mirror's transformer, VAEs and upscaler
+        match the official LFS hashes byte for byte; its int8 text encoder
+        differs by 2,412 bytes (header-sized), so that one is pinned to the
+        mirror's own hash.
+      * The clip carries LTX-2.5's own synced audio (decoded, not discarded).
+      * No custom nodes: everything it uses is in core ComfyUI.
+    """
+
+    name = "runpod-ltx25"
+
+    COMFYUI_MIN_VERSION = (0, 32, 0)
+    COMFYUI_TAG = "v0.39.2"   # the version the pilot ran on
+
+    # 40GB of weights plus the ComfyUI image: the default 50GB does not fit.
+    DISK_GB = 120
+
+    MIRROR_REV = "1026e00f808dbd9601911479b22d65b760737dc8"
+    _MIRROR = f"https://huggingface.co/comfyicu/LTX-2.5/resolve/{MIRROR_REV}"
+
+    UNET = "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+    TEXT_ENCODER = "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
+    VIDEO_VAE = "ltx-2.5-video-vae-conv-bf16.safetensors"
+    AUDIO_VAE = "ltx-2.5-audio-vae-bf16.safetensors"
+    UPSCALER = "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+
+    PINNED_MODELS = [
+        PinnedModel(f"diffusion_models/{UNET}", f"{_MIRROR}/diffusion_models/{UNET}",
+                    "c4279eeff115cbeaca494bd2183e7d768c38fe85a184dc6afbb7159157c44334"),
+        PinnedModel(f"text_encoders/{TEXT_ENCODER}", f"{_MIRROR}/text_encoders/{TEXT_ENCODER}",
+                    "09a89e084de1a149c3de60cfe9dfd3e5161967eb09eea39e806fcdeffdd568de"),
+        PinnedModel(f"vae/{VIDEO_VAE}", f"{_MIRROR}/vae/{VIDEO_VAE}",
+                    "685b06ee3d9b2039647698fc4ea33175112462fc374e2777312c907897dfce8d"),
+        PinnedModel(f"vae/{AUDIO_VAE}", f"{_MIRROR}/vae/{AUDIO_VAE}",
+                    "c52733d37f6a7fb7949c3dc0fb468c6cb2169e4d836983a73babb9f0d54837a5"),
+        PinnedModel(f"latent_upscale_models/{UPSCALER}", f"{_MIRROR}/latent_upscale_models/{UPSCALER}",
+                    "eb5a71fe4068ee87ccdb1c3aa635e547ca76bd2d30ae20ae889f2c325c0677e8"),
+    ]
+
+    # Sigma schedules from the official ComfyUI text_to_video_ltx_2_5 blueprint.
+    STAGE1_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    STAGE2_SIGMAS = "0.85, 0.7250, 0.4219, 0.0"
+    NEGATIVE_PROMPT = "worst quality, blurry, distorted, low resolution, watermark, subtitles"
+
+    # Re-pin the chain's start frame to the upsampled latent before the refine
+    # pass. Stage 2 starts from sigma 0.85, which would otherwise re-noise the
+    # conditioned first frame.
+    REAPPLY_START_IMAGE_STAGE2 = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._session.disk_gb = self.DISK_GB
+
+    def _setup_pod_once(self):
+        if self._setup_done:
+            return
+        self._session.ensure_pod()
+        if self._session.ssh_host:
+            self._session.ssh_cmd('pkill -f "main.py" || true', timeout=10)
+            time.sleep(2)
+            print("  Waiting for SSH...")
+            time.sleep(10)
+            self._session.ensure_comfyui_version(self.COMFYUI_MIN_VERSION, self.COMFYUI_TAG)
+            self._session.download_pinned_models(self.PINNED_MODELS, timeout=1800)
+            self._session.restart_comfyui()
+        else:
+            print("  Warning: No SSH access. Waiting for ComfyUI without model setup.")
+            self._session.wait_for_comfyui()
+        self._setup_done = True
+
+    def _target_frames(self, target_s: float) -> int:
+        return ltx25_frames(target_s, self.FPS, self.MIN_FRAMES, self.MAX_FRAMES)
+
+    def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
+        """Two-stage T2V / I2V graph (API format) with native audio.
+
+        Mirrors tools/model_pilot/run_ltx25.py, which the pilot measured, plus
+        I2V chaining. The audio latent rides through both stages and is decoded
+        at the end; the checkpoint is an audio-video joint model, so the audio
+        scaffold is required regardless.
+        """
+        if length % 8 != 1:
+            raise ValueError(f"LTX-2.5 needs frames % 8 == 1, got {length}")
+        w1, h1 = self.WIDTH // 2, self.HEIGHT // 2
+        wf = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.UNET, "weight_dtype": "default"}},
+            "2": {"class_type": "CLIPLoader",
+                  "inputs": {"clip_name": self.TEXT_ENCODER, "type": "ltxv", "device": "default"}},
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": self.VIDEO_VAE}},
+            "4": {"class_type": "VAELoader", "inputs": {"vae_name": self.AUDIO_VAE}},
+            "5": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": self.NEGATIVE_PROMPT, "clip": ["2", 0]}},
+            "7": {"class_type": "LTXVConditioning",
+                  "inputs": {"positive": ["5", 0], "negative": ["6", 0], "frame_rate": float(self.FPS)}},
+            "8": {"class_type": "EmptyLTXVLatentVideo",
+                  "inputs": {"width": w1, "height": h1, "length": length, "batch_size": 1}},
+            "9": {"class_type": "LTXVEmptyLatentAudio",
+                  "inputs": {"audio_vae": ["4", 0], "frames_number": length,
+                             "frame_rate": self.FPS, "batch_size": 1}},
+            "10": {"class_type": "LTXVConcatAVLatent",
+                   "inputs": {"video_latent": ["8", 0], "audio_latent": ["9", 0]}},
+            "11": {"class_type": "LTXVDualCFGGuider",
+                   "inputs": {"model": ["1", 0], "positive": ["7", 0], "negative": ["7", 1],
+                              "video_cfg": 1.0, "audio_cfg": 1.0}},
+            "12": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler_ancestral"}},
+            "13": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+            "14": {"class_type": "ManualSigmas", "inputs": {"sigmas": self.STAGE1_SIGMAS}},
+            "15": {"class_type": "SamplerCustomAdvanced",
+                   "inputs": {"noise": ["13", 0], "guider": ["11", 0], "sampler": ["12", 0],
+                              "sigmas": ["14", 0], "latent_image": ["10", 0]}},
+            "16": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["15", 0]}},
+            "20": {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": self.UPSCALER}},
+            "21": {"class_type": "LTXVLatentUpsampler",
+                   "inputs": {"samples": ["16", 0], "upscale_model": ["20", 0], "vae": ["3", 0]}},
+            "22": {"class_type": "LTXVConcatAVLatent",
+                   "inputs": {"video_latent": ["21", 0], "audio_latent": ["16", 1]}},
+            # Stage 2 uses a fixed noise seed, as in the pilot's measured graph.
+            "23": {"class_type": "RandomNoise", "inputs": {"noise_seed": 42}},
+            "24": {"class_type": "ManualSigmas", "inputs": {"sigmas": self.STAGE2_SIGMAS}},
+            "25": {"class_type": "SamplerCustomAdvanced",
+                   "inputs": {"noise": ["23", 0], "guider": ["11", 0], "sampler": ["12", 0],
+                              "sigmas": ["24", 0], "latent_image": ["22", 0]}},
+            "26": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["25", 0]}},
+            "30": {"class_type": "VAEDecodeTiled",
+                   "inputs": {"samples": ["26", 0], "vae": ["3", 0], "tile_size": 512, "overlap": 64,
+                              "temporal_size": 64, "temporal_overlap": 16}},
+            "31": {"class_type": "LTXVAudioVAEDecode", "inputs": {"samples": ["26", 1], "audio_vae": ["4", 0]}},
+            "32": {"class_type": "CreateVideo", "inputs": {"images": ["30", 0], "audio": ["31", 0],
+                                                           "fps": float(self.FPS)}},
+            "33": {"class_type": "SaveVideo",
+                   "inputs": {"video": ["32", 0], "filename_prefix": "lossy", "format": "mp4", "codec": "h264"}},
+        }
+        if start_image:
+            # I2V chaining: condition this part's first frame on the previous
+            # part's last frame (see RunPodLtx2Strategy._build_workflow and
+            # research/0023). LTXVImgToVideo replaces EmptyLTXVLatentVideo at
+            # stage 1; its conditioning must flow through LTXVConditioning.
+            wf["40"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
+            wf["41"] = {"class_type": "LTXVImgToVideo",
+                        "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0],
+                                   "image": ["40", 0], "width": w1, "height": h1, "length": length,
+                                   "batch_size": 1, "strength": 1.0}}
+            wf["7"]["inputs"]["positive"] = ["41", 0]
+            wf["7"]["inputs"]["negative"] = ["41", 1]
+            wf["10"]["inputs"]["video_latent"] = ["41", 2]
+            if self.REAPPLY_START_IMAGE_STAGE2:
+                wf["42"] = {"class_type": "LTXVImgToVideoInplace",
+                            "inputs": {"vae": ["3", 0], "image": ["40", 0], "latent": ["21", 0],
+                                       "strength": 1.0, "bypass": False}}
+                wf["22"]["inputs"]["video_latent"] = ["42", 0]
         return wf
 
 

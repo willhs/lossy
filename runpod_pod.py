@@ -6,8 +6,10 @@ import os
 import signal
 import subprocess
 import sys
+import re
 import time
 import uuid
+from typing import NamedTuple
 
 
 # Default GPU preferences (cheapest first, with VRAM headroom preference)
@@ -99,6 +101,24 @@ class PodSetupError(RuntimeError):
     """A pod could not be provisioned or brought up. Retryable on a new pod."""
 
 
+class PinnedModel(NamedTuple):
+    """A weights file fetched from a fixed URL and checked against a sha256.
+
+    For files that come from a mirror rather than the vendor's own repo, the
+    hash is the only thing tying the bytes to what was evaluated.
+    """
+
+    dest: str      # path under ComfyUI's models/ dir, e.g. "vae/foo.safetensors"
+    url: str
+    sha256: str
+
+
+def parse_comfyui_version(text: str) -> tuple[int, ...] | None:
+    """Pull the version out of ComfyUI's comfyui_version.py, e.g. (0, 30, 0)."""
+    m = re.search(r'__version__\s*=\s*["\']v?(\d+(?:\.\d+)*)', text)
+    return tuple(int(p) for p in m.group(1).split(".")) if m else None
+
+
 class RunPodSession:
     """Manages a RunPod ComfyUI pod with state file persistence.
 
@@ -107,8 +127,13 @@ class RunPodSession:
     """
 
     def __init__(self, output_dir: str, keep_pod: bool | int = False,
-                 gpu_types: list[tuple[str, float]] | None = None):
+                 gpu_types: list[tuple[str, float]] | None = None,
+                 disk_gb: int | None = None):
         self.output_dir = output_dir
+        # Container disk for pods this session creates. None = the module
+        # default, read at create time so a caller overriding
+        # CONTAINER_DISK_GB still takes effect.
+        self.disk_gb = disk_gb
         # keep_pod is a duration, not a switch: True means the default TTL,
         # an int means that many minutes. There is deliberately no way to say
         # "keep forever" -- that contract is what produced a 10.5hr idle bill.
@@ -270,7 +295,7 @@ class RunPodSession:
                     gpu_type_id=gpu_type,
                     cloud_type=cloud_type,
                     gpu_count=1,
-                    container_disk_in_gb=CONTAINER_DISK_GB,
+                    container_disk_in_gb=self.disk_gb or CONTAINER_DISK_GB,
                     ports=f"{COMFYUI_PORT}/http,22/tcp",
                     support_public_ip=True,
                     start_ssh=True,
@@ -695,19 +720,55 @@ class RunPodSession:
         # initialise before ComfyUI starts), and a fresh pod usually works.
         raise PodSetupError("ComfyUI did not come up on this pod")
 
-    def restart_comfyui(self):
-        """Stop ComfyUI, then start it again. Used after installing custom nodes."""
-        print("  Restarting ComfyUI...")
-        self.ssh_cmd('pkill -f "main.py" || true', timeout=10)
-        time.sleep(2)
-
+    def comfyui_python_bin(self) -> str:
+        """The python that runs ComfyUI on the pod (its venv if it has one)."""
         find_python = self.ssh_cmd(
             f"if [ -x {COMFYUI_DIR}/.venv/bin/python ]; then echo .venv/bin/python; "
             f"elif command -v python3 >/dev/null; then echo python3; "
             f"else echo python; fi",
             timeout=10,
         )
-        python_bin = find_python.stdout.strip() if find_python.returncode == 0 else "python3"
+        return find_python.stdout.strip() if find_python.returncode == 0 else "python3"
+
+    def ensure_comfyui_version(self, minimum: tuple[int, ...], tag: str) -> None:
+        """Upgrade the pod's ComfyUI to `tag` if it is older than `minimum`.
+
+        The stock runpod/comfyui:latest image shipped v0.30.0, which predates
+        the LTX-2.5 nodes. Checking out a release tag (not master) keeps the
+        pod reproducible. Raises PodSetupError if the upgrade does not take,
+        so with_setup_retry can try a fresh pod. The caller restarts ComfyUI.
+        """
+        def current() -> tuple[int, ...] | None:
+            r = self.ssh_cmd(f"cat {COMFYUI_DIR}/comfyui_version.py", timeout=15)
+            return parse_comfyui_version(r.stdout or "") if r.returncode == 0 else None
+
+        have = current()
+        if have is not None and have >= minimum:
+            print(f"  ComfyUI v{'.'.join(map(str, have))}: new enough")
+            return
+        want = ".".join(map(str, minimum))
+        print(f"  ComfyUI is {have or 'unknown'}, need >= {want}; upgrading to {tag}...")
+        python_bin = self.comfyui_python_bin()
+        r = self.ssh_cmd(
+            f"cd {COMFYUI_DIR} && git fetch --tags origin 2>&1 | tail -2 "
+            f"&& git checkout -f {tag} 2>&1 | tail -2 "
+            f"&& {python_bin} -m pip install -q -r requirements.txt 2>&1 | tail -5 && echo UPGRADE_OK",
+            timeout=900,
+        )
+        if "UPGRADE_OK" not in (r.stdout or ""):
+            raise PodSetupError(f"ComfyUI upgrade to {tag} failed: {(r.stdout or r.stderr or '')[-300:]}")
+        have = current()
+        if have is None or have < minimum:
+            raise PodSetupError(f"ComfyUI still {have} after upgrade to {tag}")
+        print(f"  ComfyUI now v{'.'.join(map(str, have))}")
+
+    def restart_comfyui(self):
+        """Stop ComfyUI, then start it again. Used after installing custom nodes."""
+        print("  Restarting ComfyUI...")
+        self.ssh_cmd('pkill -f "main.py" || true', timeout=10)
+        time.sleep(2)
+
+        python_bin = self.comfyui_python_bin()
         self.ssh_bg(
             f"cd {COMFYUI_DIR} && {python_bin} main.py --listen 0.0.0.0 --port 8188 "
             f"</dev/null >/tmp/comfyui.log 2>&1"
@@ -748,6 +809,38 @@ class RunPodSession:
                 print(f"    {filename}: FAILED (exit {result.returncode})")
                 if result.stderr:
                     print(f"      {result.stderr[:200]}")
+
+    def download_pinned_models(self, models: list[PinnedModel], timeout: int = 1800) -> None:
+        """Download weights and verify each against its sha256.
+
+        Files land at `<dest>.part` and are only renamed into place once the
+        hash matches, so an interrupted or corrupt download can never be
+        mistaken for a finished one by the "already exists" check (plain
+        download_models leaves a truncated file behind on failure). A mismatch
+        raises PodSetupError: the pod is retryable, the bytes are not trusted.
+        """
+        models_dir = f"{COMFYUI_DIR}/models"
+        print(f"  Downloading {len(models)} pinned models via SSH ({self.ssh_host}:{self.ssh_port})...")
+        for m in models:
+            full = f"{models_dir}/{m.dest}"
+            name = os.path.basename(m.dest)
+            check = self.ssh_cmd(f"[ -s {full} ] && echo exists || echo missing")
+            if check.returncode == 0 and "exists" in check.stdout:
+                print(f"    {name}: already exists")
+                continue
+            print(f"    {name}: downloading...")
+            r = self.ssh_cmd(
+                f"mkdir -p {os.path.dirname(full)} && wget -q -O {full}.part '{m.url}' "
+                f"&& echo '{m.sha256}  {full}.part' | sha256sum -c --status "
+                f"&& mv {full}.part {full} && echo VERIFIED",
+                timeout=timeout,
+            )
+            if r.returncode != 0 or "VERIFIED" not in (r.stdout or ""):
+                self.ssh_cmd(f"rm -f {full}.part", timeout=30)
+                raise PodSetupError(
+                    f"{name}: download or sha256 check failed (exit {r.returncode}) "
+                    f"{(r.stderr or '')[:200]}")
+            print(f"    {name}: verified")
 
     def submit_workflow(self, workflow: dict, timeout: int = 600) -> dict | None:
         """Submit a ComfyUI workflow and wait for completion.

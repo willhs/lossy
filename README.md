@@ -28,6 +28,7 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 
 | Strategy | Backend | Duration control | Cost |
 |---|---|---|---|
+| `runpod-ltx25` | RunPod LTX-2.5 (self-hosted, distilled int8, two-stage, conv VAE) — character identity + I2V chaining + native audio in the clip | Variable, 25fps | Hourly GPU rate, ~$15/film on a community A6000 (research 0025) |
 | `runpod-ltx2` | RunPod LTX-2 (self-hosted, distilled FP8) — character identity + I2V long-shot chaining | Variable, 25fps | Hourly GPU rate, ~$0.006/shot marginal at 1280x704 |
 | `runpod-wan22` | RunPod Wan 2.2 TI2V-5B (self-hosted) — character identity + I2V long-shot chaining | Variable, 24fps | Hourly GPU rate |
 | `runpod-wan` | RunPod Wan 2.1 (self-hosted) | Fixed ~5s | Hourly GPU rate |
