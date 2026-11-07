@@ -24,6 +24,24 @@ GPU_TYPES = [
 # community first and fall back rather than failing the run.
 CLOUD_TYPES = [t for t in os.environ.get("LOSSY_RUNPOD_CLOUD", "COMMUNITY,SECURE").split(",") if t]
 CLOUD_TYPE = CLOUD_TYPES[0]  # back-compat for anything reading the old name
+
+# The (gpu, rate) tables above are COMMUNITY prices. SECURE costs more for the
+# same GPU (A6000: $0.59 vs $0.33 -- a pilot logged ~$1.22 against a real
+# $2.29). Known SECURE prices go here; any other GPU falls back to the
+# community rate times SECURE_MARKUP. A costPerHr on the created pod, if the
+# API returns one, beats both.
+SECURE_RATES = {"NVIDIA RTX A6000": 0.59}
+SECURE_MARKUP = 1.8
+
+
+def rate_for(cloud_type: str, gpu_type: str, community_rate: float, pod: dict | None = None) -> float:
+    """Hourly rate actually billed for a pod on `cloud_type`."""
+    reported = (pod or {}).get("costPerHr")
+    if isinstance(reported, (int, float)) and reported > 0:
+        return float(reported)
+    if cloud_type == "COMMUNITY":
+        return community_rate
+    return SECURE_RATES.get(gpu_type, round(community_rate * SECURE_MARKUP, 2))
 DOCKER_IMAGE = "runpod/comfyui:latest"
 
 # Every pod this project creates is named POD_NAME_PREFIX + "-" + a unique
@@ -258,8 +276,8 @@ class RunPodSession:
                     start_ssh=True,
                     env={"PUBLIC_KEY": ssh_pubkey} if ssh_pubkey else None,
                 )
-                gpu_rate = rate
-                print(f"  Got {gpu_type} @ ${rate}/hr")
+                gpu_rate = rate_for(cloud_type, gpu_type, rate, pod)
+                print(f"  Got {label} @ ${gpu_rate}/hr")
                 break
             except Exception as e:
                 if _is_out_of_funds(e):

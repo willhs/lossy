@@ -267,6 +267,38 @@ class TestCloudFallback:
         # every attempt on the cheap cloud must come before any on the pricier
         assert clouds_in_order[:len(gpus)] == [first] * len(gpus)
 
+    def test_secure_fallback_is_billed_at_secure_rate(self):
+        import runpod_pod
+        assert runpod_pod.rate_for("COMMUNITY", "NVIDIA RTX A6000", 0.33) == 0.33
+        assert runpod_pod.rate_for("SECURE", "NVIDIA RTX A6000", 0.33) == 0.59
+        # unknown GPU: marked up, never the community price
+        assert runpod_pod.rate_for("SECURE", "X", 0.50) > 0.50
+        # a price reported by the API wins
+        assert runpod_pod.rate_for("SECURE", "NVIDIA RTX A6000", 0.33, {"costPerHr": 0.64}) == 0.64
+
+    def test_create_pod_records_secure_rate(self, tmp_path, monkeypatch):
+        import sys, types
+        import runpod_pod
+        fake = types.SimpleNamespace(api_key=None)
+        def create_pod(**kw):
+            if kw["cloud_type"] == "COMMUNITY":
+                raise RuntimeError("no capacity")
+            return {"id": "p1"}
+        fake.create_pod = create_pod
+        monkeypatch.setitem(sys.modules, "runpod", fake)
+        monkeypatch.setenv("RUNPOD_API_KEY", "k")
+        monkeypatch.setattr(runpod_pod, "CLOUD_TYPES", ["COMMUNITY", "SECURE"])
+        s = RunPodSession(str(tmp_path), gpu_types=[("NVIDIA RTX A6000", 0.33)])
+        # stop right after the rate is recorded
+        class Stop(Exception):
+            pass
+        def stop():
+            raise Stop
+        monkeypatch.setattr(s, "_register_cleanup", stop)
+        with pytest.raises(Stop):
+            s.create_pod()
+        assert s.gpu_hourly_rate == 0.59
+
     def test_old_constant_still_resolves(self):
         import runpod_pod
         assert runpod_pod.CLOUD_TYPE == runpod_pod.CLOUD_TYPES[0]
