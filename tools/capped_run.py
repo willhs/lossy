@@ -106,6 +106,9 @@ def main() -> int:
     ap.add_argument("--progress", help="decode progress json, for the spend projection")
     ap.add_argument("--total-shots", type=int, help="shot count, for the spend projection")
     ap.add_argument("--shots", help="shots.json, to project spend per second of video instead of per shot")
+    ap.add_argument("--no-project", action="store_true",
+                    help="only stop on the spend line, never on a projection (the per-second "
+                         "projection ignores fixed per-shot cost and over-estimates early on)")
     ap.add_argument("--baseline", type=float,
                     help="balance the cap is measured from (default: the balance now); "
                          "pass the original one when taking over a run that has already spent")
@@ -160,7 +163,7 @@ def main() -> int:
             print(line, flush=True)
             if spent >= limit:
                 stop["reason"] = f"spend ${spent:.2f} reached the ${limit:.2f} stop line"
-            elif projected > a.cap:
+            elif projected > a.cap and not a.no_project:
                 stop["reason"] = f"projected ${projected:.2f} would cross the ${a.cap:.2f} cap"
             if stop["reason"]:
                 print(f"[capped_run] STOP: {stop['reason']}", flush=True)
