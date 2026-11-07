@@ -107,13 +107,8 @@ def main():
         print("No characters in characters.json; nothing to cast.")
         sys.exit(0)
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("Error: GEMINI_API_KEY not set")
-        sys.exit(1)
-
-    from google import genai
-    client = genai.Client(api_key=api_key)
+    from config import gemini_client
+    client = gemini_client()
 
     print(f"Proposing casting for {len(characters)} characters against a "
           f"{len(CURATED_VOICE_BANK)}-voice bank...")

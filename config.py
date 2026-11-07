@@ -61,8 +61,47 @@ def load_env() -> None:
 # encode used gemini-3.1-flash-lite-preview (EVAL_MODEL) instead; it must be
 # re-encoded with ENCODE_MODEL before the real full run so the film is encoded
 # with the same model throughout.
-ENCODE_MODEL = "gemini-2.5-flash-lite"
+#
+# Backend (2026-11-08): the AI Studio API-key path is project-throttled (429 on
+# every model, "API requests per minute per region"). LOSSY_GEMINI_BACKEND=vertex
+# sends the same calls through Vertex AI on the same GCP project instead, which
+# has its own quota. Vertex does not serve gemini-2.5-flash-lite or the
+# *-preview ids, so also set LOSSY_ENCODE_MODEL (e.g. gemini-3.1-flash-lite) --
+# that is a model change, so check descriptions against the pinned model first.
+ENCODE_MODEL = os.environ.get("LOSSY_ENCODE_MODEL", "gemini-2.5-flash-lite")
 EVAL_MODEL = "gemini-3.1-flash-lite-preview"
+
+GEMINI_BACKEND = os.environ.get("LOSSY_GEMINI_BACKEND", "aistudio")
+VERTEX_PROJECT = os.environ.get("LOSSY_VERTEX_PROJECT", "gen-lang-client-0146943418")
+VERTEX_LOCATION = os.environ.get("LOSSY_VERTEX_LOCATION", "global")
+
+
+def gemini_client(timeout_ms: int | None = None):
+    """Build a Gemini client for the configured backend (aistudio | vertex).
+
+    aistudio needs GEMINI_API_KEY; vertex uses Application Default Credentials
+    with VERTEX_PROJECT as the quota/billing project, so no key is needed.
+    Exits with a message if the chosen backend is not usable.
+    """
+    from google import genai
+    from google.genai import types
+
+    http_options = types.HttpOptions(timeout=timeout_ms) if timeout_ms else None
+    if GEMINI_BACKEND == "vertex":
+        import google.auth
+
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        creds = creds.with_quota_project(VERTEX_PROJECT)
+        return genai.Client(vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION,
+                            credentials=creds, http_options=http_options)
+    if GEMINI_BACKEND != "aistudio":
+        raise SystemExit(f"Error: LOSSY_GEMINI_BACKEND must be 'aistudio' or 'vertex', got {GEMINI_BACKEND!r}")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY environment variable not set.")
+        print("Get one at https://aistudio.google.com/apikey")
+        raise SystemExit(1)
+    return genai.Client(api_key=api_key, http_options=http_options)
 
 
 @dataclass(frozen=True)

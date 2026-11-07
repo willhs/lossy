@@ -23,7 +23,7 @@ import numpy as np
 from scenedetect import open_video, SceneManager, AdaptiveDetector, ContentDetector
 
 import manifest
-from config import ENCODE_MODEL, load_env
+from config import ENCODE_MODEL, GEMINI_BACKEND, gemini_client, load_env
 from manifest import _run_ffmpeg
 
 # Gemini Flash Lite pricing (per token)
@@ -603,6 +603,9 @@ GEMINI_TIMEOUT_MS = 180_000
 
 def _gemini_client(api_key: str):
     """Gemini client with a request deadline. Use instead of genai.Client."""
+    if GEMINI_BACKEND == "vertex":
+        return gemini_client(GEMINI_TIMEOUT_MS)
+
     from google import genai
     from google.genai import types
 
@@ -865,7 +868,7 @@ def generate_prompts(
     dialog = dialog or []
 
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not api_key and GEMINI_BACKEND != "vertex":
         print("Error: GEMINI_API_KEY environment variable not set.")
         print("Get one at https://aistudio.google.com/apikey")
         sys.exit(1)
@@ -1446,7 +1449,7 @@ def run_stage3(args):
         sys.exit(1)
 
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not api_key and GEMINI_BACKEND != "vertex":
         print("Error: GEMINI_API_KEY not set")
         sys.exit(1)
 
@@ -1591,7 +1594,7 @@ def run_stage4(args):
     shot_character_map = _build_shot_character_map(characters)
 
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not api_key and GEMINI_BACKEND != "vertex":
         print("Error: GEMINI_API_KEY not set")
         sys.exit(1)
     client = _gemini_client(api_key)
