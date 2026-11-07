@@ -10,7 +10,8 @@ related: []
 
 ## Now
 
-- **Resume the full run on `runpod-ltx2` for the remaining ~2000 shots.** Defects 5 and 6
+- **Seinfeld S01E03 first end-to-end run on `runpod-ltx25`** (~$4.50-7, 343 shots; research 0025). Not yet run as of 2026-11-07. Needs a re-encode with dialogue/`speakers.json` first.
+- **Resume the full Star Wars run for the remaining ~2000 shots**, on `runpod-ltx25` once the Seinfeld run validates it (otherwise `runpod-ltx2`). Defects 5 and 6
   landed 2026-09-12 (`aac8ee2`), the last gate the 2026-09-06 GO decision set — nothing
   code-side blocks the run anymore. Defects 7 and 11/12 remain accepted as known v1
   limits (7 and 11/12 get revisited before mastering, not before generating).
@@ -35,9 +36,11 @@ related: []
 - ~~**LTX-2 vs Wan22 trial + dress rehearsal**~~ — `runpod-ltx2` strategy built and live-verified (research 0022); end-to-end dress rehearsal on an 88-shot segment (research 0023) found and fixed real defects (resume dropping split shots, no identity conditioning, no I2V chaining causing internal jump-cuts, narrow GPU fallback chain) and produced the go/no-go numbers above. LTX-2 at matched resolution runs ~2.3x faster than Wan22, not the ~3x an earlier unmatched trial suggested.
 - ~~**Pod reliability**~~ — automatic re-provisioning on pod-boot failure (`RunPodSession.with_setup_retry`), cloud fallback (community exhausted before secure), exit-time stray-pod sweep, and a one-retry-per-clip recovery for the "server up but not yet sampleable" failure mode.
 
+- ~~**Video model refresh**~~ — research 0025 (2026-11-07): LTX-2.5 scored 2.7-2.8 vs LTX-2.3 2.1 in blind scoring; `runpod-ltx25` strategy landed (`4b8509d`); RunPodSession now bills the SECURE rate on cloud fallback (`3c348ce`).
+
 ## Next
 
-- **Ship the full run** once the "Now" defects are addressed or explicitly accepted — run decoder on all 2,069 shots of Star Wars IV with `runpod-ltx2`. Currently only the 88-shot rehearsal segment has been generated end-to-end.
+- **Ship the full run** once the "Now" defects are addressed or explicitly accepted — run decoder on all 2,069 shots of Star Wars IV with `runpod-ltx25` (or `runpod-ltx2`). Currently only the 88-shot rehearsal segment has been generated end-to-end.
 - **TI2V-5B evaluation** — kept as a fallback path if `runpod-ltx2` quality turns out insufficient at full-run scale (see research/0012). Lower priority now that the rehearsal gave LTX-2 a conditional go.
 
 ## Later

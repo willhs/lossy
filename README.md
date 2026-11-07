@@ -4,7 +4,7 @@ A "lossy codec" for films: encode a video into text descriptions, then decode th
 
 [![Original vs reconstruction — Moria, The Fellowship of the Ring](https://willhs.me/lossy/demos/lotr-moria-compare-poster.jpg)](https://willhs.me/posts/1mb-movie/)
 
-A feature film becomes ~2,000 shot descriptions (~320KB xz'd — under 1MB of text), then regenerates for ~$30 of rented GPU time: Wan 2.2 self-hosted on a RunPod A6000 at ~$0.33/hr, with MMAudio (SFX) and MusicGen (score) co-hosted on the same pod. The describe pass (Gemini Flash-Lite over ~10,000 sampled frames) costs about $1 per film.
+A feature film becomes ~2,000 shot descriptions (~320KB xz'd — under 1MB of text), then regenerates for ~$30 of rented GPU time: Wan 2.2 (now superseded by LTX-2.5 as the recommended model, see `docs/research/0025-video-model-refresh-nov-2026/`) self-hosted on a RunPod A6000 at ~$0.33/hr, with MMAudio (SFX) and MusicGen (score) co-hosted on the same pod. The describe pass (Gemini Flash-Lite over ~10,000 sampled frames) costs about $1 per film.
 
 Write-up with results and example reconstructions: [1mb movie](https://willhs.me/posts/1mb-movie/).
 

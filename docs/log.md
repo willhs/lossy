@@ -59,3 +59,9 @@ Commit ab9775d (2026-10-09) removed `CLAUDE.md` and `docs/CLAUDE.md`; `AGENTS.md
 
 ## [2026-11-07] code | `runpod-ltx25` strategy
 `RunPodLtx25Strategy` (`strategies_video.py`): LTX-2.5 distilled int8, two-stage + conv VAE, per research 0025; registered in `config.py` and `decode.py`. Pod setup upgrades ComfyUI to >= v0.32 (tag v0.39.2) and downloads weights from the `comfyicu/LTX-2.5` mirror pinned by revision and sha256 (`RunPodSession.download_pinned_models`, `.part` then verify then move). Frame counts are 8k+1. Fixed a shared bug found by the live smoke test: `_attempt_one_clip` deleted any clip the pod returned as `.mp4` (raw path equalled clip path). New `tools/seam_ratio.py` for the 0023 chaining measurement. Smoke-test results: `research/0025-video-model-refresh-nov-2026/smoke-test.md`.
+
+## [2026-11-07] cleanup | Docs tidy after the weekend burn
+Folded research 0025, `runpod-ltx25` and the SECURE-rate fix into `design/architecture.md` (strategy table; `runpod-ltx2` marked superseded), `ops/runbook.md`, `work/roadmap.md` (new Now item, Done entry) and `README.md`/`docs/index.md` (Wan/LTX-2 defaults flagged as superseded). Note: no Seinfeld S01E03 run results exist yet — research 0025 only recommends it as the first run; roadmap tracks it as pending. Historical research notes 0012/0017/0022/0023 left as point-in-time records.
+
+## [2026-11-07] lint | Docs audit
+0 broken inline links; 16 pre-existing frontmatter findings across 93 files (13 non-schema `type`/`id` values in research/experiments/design, 3 files without frontmatter) left for a human decision.
