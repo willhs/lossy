@@ -58,12 +58,42 @@ def terminate(pod_ids: list[str]) -> None:
             print(f"[capped_run] terminate {pid} failed: {e}", flush=True)
 
 
+class _Attached:
+    """Popen-alike for a process we did not start. Exit status is unknowable, so wait() returns 1."""
+
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    def poll(self):
+        try:
+            os.kill(self.pid, 0)
+            return None
+        except OSError:
+            return 1
+
+    def wait(self) -> int:
+        while self.poll() is None:
+            time.sleep(5)
+        return 1
+
+
 def done_shots(progress_path: str | None) -> int:
     try:
         with open(progress_path) as f:  # type: ignore[arg-type]
             return len(json.load(f).get("completed", []))
     except Exception:
         return 0
+
+
+def done_seconds(progress_path: str | None, shots_path: str | None) -> float:
+    """Seconds of source video whose shots are complete (cost follows duration, not shot count)."""
+    try:
+        with open(shots_path) as f:  # type: ignore[arg-type]
+            dur = {s["index"]: s["duration_s"] for s in json.load(f)["shots"]}
+        with open(progress_path) as f:  # type: ignore[arg-type]
+            return sum(dur.get(i, 0.0) for i in json.load(f).get("completed", []))
+    except Exception:
+        return 0.0
 
 
 def main() -> int:
@@ -75,14 +105,30 @@ def main() -> int:
     ap.add_argument("--retries", type=int, default=6)
     ap.add_argument("--progress", help="decode progress json, for the spend projection")
     ap.add_argument("--total-shots", type=int, help="shot count, for the spend projection")
+    ap.add_argument("--shots", help="shots.json, to project spend per second of video instead of per shot")
+    ap.add_argument("--baseline", type=float,
+                    help="balance the cap is measured from (default: the balance now); "
+                         "pass the original one when taking over a run that has already spent")
+    ap.add_argument("--attach-pid", type=int,
+                    help="supervise an already-running first attempt (a process-group leader) "
+                         "instead of starting one; `cmd` is then only used for retries")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     cmd = a.cmd[1:] if a.cmd and a.cmd[0] == "--" else a.cmd
 
     baseline, pods0 = balance_and_pods()
+    if a.baseline is not None:
+        baseline = a.baseline
+    if a.attach_pid:
+        pods0 = []  # the attached run owns any pod that exists now, so the final sweep ends it
     limit = a.cap - a.margin
     print(f"[capped_run] baseline ${baseline:.4f}, pods at start {pods0}, stop at ${limit:.2f} spent", flush=True)
 
+    total_s = 0.0
+    if a.shots:
+        with open(a.shots) as f:
+            total_s = sum(x["duration_s"] for x in json.load(f)["shots"])
+    ref: dict = {}
     stop: dict[str, str | None] = {"reason": None}
     child: dict = {"p": None}
 
@@ -99,8 +145,19 @@ def main() -> int:
             line = f"[capped_run] {time.strftime('%H:%M:%S')} spent ${spent:.2f}"
             if a.total_shots:
                 line += f", {done}/{a.total_shots} shots"
+            if total_s:
+                secs = done_seconds(a.progress, a.shots)
+                ref.setdefault("r", (spent, secs))  # first reading: excludes boot cost already paid
+                r_spent, r_secs = ref["r"]
+                line += f", {secs:.0f}/{total_s:.0f}s video"
+                if secs - r_secs >= 0.1 * (total_s - r_secs) and secs > r_secs:
+                    projected = spent + (spent - r_spent) / (secs - r_secs) * (total_s - secs)
+                    line += f", projected ${projected:.2f}"
+                else:
+                    projected = 0
+            else:
+                projected = spent * a.total_shots / done if (a.total_shots and done >= 0.1 * a.total_shots) else 0
             print(line, flush=True)
-            projected = spent * a.total_shots / done if (a.total_shots and done >= 0.1 * a.total_shots) else 0
             if spent >= limit:
                 stop["reason"] = f"spend ${spent:.2f} reached the ${limit:.2f} stop line"
             elif projected > a.cap:
@@ -123,9 +180,16 @@ def main() -> int:
         if stop["reason"]:
             rc = 3
             break
-        print(f"[capped_run] attempt {attempt}: {' '.join(cmd)}", flush=True)
-        child["p"] = subprocess.Popen(cmd, start_new_session=True)
-        code = child["p"].wait()
+        if attempt == 1 and a.attach_pid:
+            print(f"[capped_run] attaching to running pid {a.attach_pid}", flush=True)
+            child["p"] = _Attached(a.attach_pid)
+            code = child["p"].wait()
+            if code != 0 and a.total_shots and done_shots(a.progress) >= a.total_shots:
+                code = 0
+        else:
+            print(f"[capped_run] attempt {attempt}: {' '.join(cmd)}", flush=True)
+            child["p"] = subprocess.Popen(cmd, start_new_session=True)
+            code = child["p"].wait()
         if stop["reason"]:
             rc = 3
             break
