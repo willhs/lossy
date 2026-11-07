@@ -51,3 +51,5 @@ to move this out of "Now" into "Done" — resuming the full run for the remainin
 ## [2026-10-09] update | AGENTS.md is the single agent instructions file
 
 `ab9775d` removed the `CLAUDE.md` and `docs/CLAUDE.md` stubs; `AGENTS.md` (a symlink to `.gent/rules.md`) is now the only agent instructions file. `docs/design/architecture.md` now points at it. References to `CLAUDE.md` in `docs/research/0024` and `docs/tasks/*/plan.md` are historical and left as written.
+## [2026-10-15] reorg | CLAUDE.md retired in favour of AGENTS.md
+Commit ab9775d (2026-10-09) removed `CLAUDE.md` and `docs/CLAUDE.md`; `AGENTS.md` (-> `.gent/rules.md`) is now the single agent instructions file. Updated the live reference in `design/architecture.md`. Historical references in `research/0024` and `tasks/0012`, `0014`, `0016` left as-is (point-in-time records).
