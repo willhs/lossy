@@ -1,0 +1,31 @@
+no-Kramer-block first parts: 237 cartoon 25
+  chin             n=154 cartoon= 25 rate=0.16 lo=+3.49
+  mouth            n=162 cartoon= 25 rate=0.15 lo=+3.33
+  blazer           n= 11 cartoon=  5 rate=0.45 lo=+2.14
+  tense            n= 99 cartoon= 21 rate=0.21 lo=+2.10
+  leading          n= 23 cartoon=  9 rate=0.39 lo=+2.06
+  near             n= 17 cartoon=  7 rate=0.41 lo=+2.06
+  by               n=103 cartoon= 21 rate=0.20 lo=+2.02
+  another          n=  7 cartoon=  3 rate=0.43 lo=+1.98
+  wide             n=107 cartoon= 21 rate=0.20 lo=+1.94
+  doorway          n= 30 cartoon= 10 rate=0.33 lo=+1.85
+  appears          n= 87 cartoon= 19 rate=0.22 lo=+1.85
+  arched           n=100 cartoon= 20 rate=0.20 lo=+1.81
+  cheekbones       n=100 cartoon= 20 rate=0.20 lo=+1.81
+  large            n=100 cartoon= 20 rate=0.20 lo=+1.81
+  curly            n=100 cartoon= 20 rate=0.20 lo=+1.81
+  pointed          n=100 cartoon= 20 rate=0.20 lo=+1.81
+  heart-shaped     n=100 cartoon= 20 rate=0.20 lo=+1.81
+  brows            n=100 cartoon= 20 rate=0.20 lo=+1.81
+  she              n=100 cartoon= 20 rate=0.20 lo=+1.81
+  delicate         n=100 cartoon= 20 rate=0.20 lo=+1.81
+  framed           n=101 cartoon= 20 rate=0.20 lo=+1.79
+  features         n=101 cartoon= 20 rate=0.20 lo=+1.79
+  sharp            n=102 cartoon= 20 rate=0.20 lo=+1.77
+  high             n=102 cartoon= 20 rate=0.20 lo=+1.77
+  turtleneck       n=  8 cartoon=  3 rate=0.38 lo=+1.77
+flat: n=119 cartoon=18 rate=0.15
+sitcom: n=71 cartoon=16 rate=0.23
+studio: n=154 cartoon=20 rate=0.13
+bright: n=182 cartoon=20 rate=0.11
+even: n=155 cartoon=20 rate=0.13

@@ -1,0 +1,23 @@
+style by identity blocks:
+  benes {'photoreal': 33, '2d_animation': 1}
+  benes+costanza {'photoreal': 20, '3d_animation': 5, '2d_animation': 8}
+  benes+seinfeld {'photoreal': 27, '2d_animation': 2, '3d_animation': 4}
+  costanza {'photoreal': 45, '3d_animation': 4}
+  costanza+seinfeld {'3d_animation': 1, 'photoreal': 3}
+  kramer {'2d_animation': 5, '3d_animation': 33, 'photoreal': 7}
+  kramer+benes {'2d_animation': 3, '3d_animation': 11}
+  kramer+costanza {'3d_animation': 2, '2d_animation': 1}
+  none {'photoreal': 10}
+  seinfeld {'photoreal': 74}
+lookalikes by identity blocks:
+  benes [('Brooklyn Nine-Nine', 3), ('Lucifer', 2), ('Friends', 2), ('The Big Bang Theory', 2)]
+  benes+costanza [('Seinfeld', 8), ('The Sopranos', 2), ('The Mitchells vs. the Machines', 1), ('Chicago Party Aunt', 1)]
+  benes+seinfeld [('Seinfeld', 10), ('The Loud House', 1), ('Luca', 1), ('The Room', 1)]
+  costanza [('Seinfeld', 12), ('The Sopranos', 12), ("It's Always Sunny in Philadelphia", 2), ('Everybody Loves Raymond', 2)]
+  costanza+seinfeld [('The Garfield Show', 1), ('Seinfeld', 1)]
+  kramer [('Despicable Me', 8), ('Ratatouille', 7), ('The Secret Life of Pets', 3), ('Friends', 2)]
+  kramer+benes [('The Mitchells vs. the Machines', 5), ('The Addams Family', 2), ('The Mr. Peabody & Sherman Show', 1), ('The Fungies!', 1)]
+  kramer+costanza [('Wendell & Wild', 1), ('The Mr. Peabody & Sherman Show', 1), ('The Secret Life of Pets', 1)]
+  none [('The Leftovers', 1), ('The Neighbors', 1)]
+  seinfeld [('Friends', 5), ('Seinfeld', 3), ('Everybody Loves Raymond', 3), ('The Perfect Match', 2)]
+largest gaps between clip writes (s): [152, 132, 132, 131, 131, 131, 130, 130] span h 11.126666666666667

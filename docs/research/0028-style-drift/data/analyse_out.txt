@@ -1,0 +1,137 @@
+clips=427 shots=299 cartoon clips=126 cartoon first parts=80
+
+style counts (all clips): Counter({'photoreal': 301, '3d_animation': 93, '2d_animation': 33})
+
+multi-part shots=69, style flips within a shot=0 []
+
+identity blocks prepended (first parts)
+  benes                        n= 34 cartoon=  1 rate=0.03
+  benes+costanza               n= 33 cartoon= 13 rate=0.39
+  benes+seinfeld               n= 33 cartoon=  6 rate=0.18
+  costanza                     n= 49 cartoon=  4 rate=0.08
+  costanza+seinfeld            n=  4 cartoon=  1 rate=0.25
+  kramer                       n= 45 cartoon= 38 rate=0.84
+  kramer+benes                 n= 14 cartoon= 14 rate=1.00
+  kramer+costanza              n=  3 cartoon=  3 rate=1.00
+  none                         n= 10 cartoon=  0 rate=0.00
+  seinfeld                     n= 74 cartoon=  0 rate=0.00
+
+characters in shot (first parts)
+  benes                        n= 34 cartoon=  1 rate=0.03
+  benes+costanza               n= 25 cartoon= 10 rate=0.40
+  benes+costanza+seinfeld      n= 11 cartoon=  2 rate=0.18
+  benes+seinfeld               n= 15 cartoon=  4 rate=0.27
+  costanza                     n= 49 cartoon=  4 rate=0.08
+  costanza+seinfeld            n=  4 cartoon=  1 rate=0.25
+  kramer                       n= 45 cartoon= 38 rate=0.84
+  kramer+benes                 n= 14 cartoon= 14 rate=1.00
+  kramer+benes+costanza        n=  8 cartoon=  3 rate=0.38
+  kramer+benes+costanza+seinfeld n=  3 cartoon=  0 rate=0.00
+  kramer+benes+seinfeld        n=  4 cartoon=  0 rate=0.00
+  kramer+costanza              n=  3 cartoon=  3 rate=1.00
+  none                         n= 10 cartoon=  0 rate=0.00
+  seinfeld                     n= 74 cartoon=  0 rate=0.00
+
+Kramer block prepended (first parts)
+  0                            n=237 cartoon= 25 rate=0.11
+  1                            n= 62 cartoon= 55 rate=0.89
+
+character count (first parts)
+  0                            n= 10 cartoon=  0 rate=0.00
+  1                            n=202 cartoon= 43 rate=0.21
+  2                            n= 61 cartoon= 32 rate=0.52
+  3                            n= 23 cartoon=  5 rate=0.22
+  4                            n=  3 cartoon=  0 rate=0.00
+
+pod session (first parts)
+  0                            n=299 cartoon= 80 rate=0.27
+
+has dialogue (first parts)
+  0                            n= 15 cartoon=  3 rate=0.20
+  1                            n=284 cartoon= 77 rate=0.27
+
+duration (first parts)
+  2-4.84s                      n=103 cartoon= 22 rate=0.21
+  <2s                          n=120 cartoon= 34 rate=0.28
+  >4.84s                       n= 76 cartoon= 24 rate=0.32
+
+prompt length (words) (first parts)
+  80-110                       n=  7 cartoon=  1 rate=0.14
+  <80                          n=  5 cartoon=  0 rate=0.00
+  >110                         n=287 cartoon= 79 rate=0.28
+
+seed parity (first parts)
+  0                            n=150 cartoon= 37 rate=0.25
+  1                            n=149 cartoon= 43 rate=0.29
+
+comedy-club setting (first parts)
+  0                            n=265 cartoon= 80 rate=0.30
+  1                            n= 34 cartoon=  0 rate=0.00
+
+episode half (first parts)
+  shots<150                    n=150 cartoon= 51 rate=0.34
+  shots>=150                   n=149 cartoon= 29 rate=0.19
+
+controlled cuts (first parts, non-club settings)
+  Kramer block                                 n= 62 cartoon= 55 rate=0.89
+  no Kramer block                              n=203 cartoon= 25 rate=0.12
+  no Kramer, 1 identity block                  n=126 cartoon=  5 rate=0.04
+  no Kramer, 2 identity blocks                 n= 70 cartoon= 20 rate=0.29
+  Jerry block only                             n= 46 cartoon=  0 rate=0.00
+  Kramer in shot, block dropped by 2-cap       n= 15 cartoon=  3 rate=0.20
+
+style switches between consecutive shots=84 of 298 (independent draws would give ~117)
+
+words most associated with cartoon (log-odds, first parts, n>=8):
+  mouth            n=224 cartoon= 80 rate=0.36 lo=+4.43
+  lanky            n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  mop              n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  deep-set         n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  very             n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  distinctive      n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  angular          n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  hunched          n= 62 cartoon= 55 rate=0.89 lo=+4.12
+  tall             n= 69 cartoon= 55 rate=0.80 lo=+3.43
+  posture          n= 75 cartoon= 56 rate=0.75 lo=+3.17
+  wide             n=169 cartoon= 76 rate=0.45 lo=+3.14
+  up               n= 79 cartoon= 57 rate=0.72 lo=+3.07
+  cheekbones       n=162 cartoon= 75 rate=0.46 lo=+3.03
+  curly            n=162 cartoon= 75 rate=0.46 lo=+3.03
+  pointed          n=162 cartoon= 75 rate=0.46 lo=+3.03
+  sharp            n=164 cartoon= 75 rate=0.46 lo=+3.00
+  high             n=164 cartoon= 75 rate=0.46 lo=+3.00
+  brow             n=255 cartoon= 79 rate=0.31 lo=+2.57
+  he               n=258 cartoon= 79 rate=0.31 lo=+2.48
+  that             n=107 cartoon= 61 rate=0.57 lo=+2.47
+  his              n=259 cartoon= 79 rate=0.31 lo=+2.45
+  stands           n=145 cartoon= 69 rate=0.48 lo=+2.43
+  of               n=213 cartoon= 76 rate=0.36 lo=+2.32
+  man              n=264 cartoon= 79 rate=0.30 lo=+2.29
+  expressive       n=289 cartoon= 80 rate=0.28 lo=+2.09
+  hair             n=289 cartoon= 80 rate=0.28 lo=+2.09
+  face             n=289 cartoon= 80 rate=0.28 lo=+2.09
+  nose             n=289 cartoon= 80 rate=0.28 lo=+2.09
+  has              n=289 cartoon= 80 rate=0.28 lo=+2.09
+  specifically     n= 21 cartoon= 14 rate=0.67 lo=+1.82
+
+words most associated with photoreal:
+  heavy            n=111 cartoon=  7 rate=0.06 lo=-2.18
+  fair             n=111 cartoon=  7 rate=0.06 lo=-2.18
+  styled           n=111 cartoon=  7 rate=0.06 lo=-2.18
+  wavy             n=111 cartoon=  7 rate=0.06 lo=-2.18
+  appearance       n=111 cartoon=  7 rate=0.06 lo=-2.18
+  engaging         n= 11 cartoon=  0 rate=0.00 lo=-2.18
+  lips             n=113 cartoon=  7 rate=0.06 lo=-2.22
+  skin             n=123 cartoon=  8 rate=0.07 lo=-2.24
+  someone          n= 13 cartoon=  0 rate=0.00 lo=-2.35
+  deep             n= 37 cartoon=  1 rate=0.03 lo=-2.36
+  audience         n= 14 cartoon=  0 rate=0.00 lo=-2.43
+  comedian         n= 14 cartoon=  0 rate=0.00 lo=-2.43
+  performative     n= 15 cartoon=  0 rate=0.00 lo=-2.50
+  booth            n= 15 cartoon=  0 rate=0.00 lo=-2.50
+  spotlight        n= 18 cartoon=  0 rate=0.00 lo=-2.69
+  high-contrast    n= 22 cartoon=  0 rate=0.00 lo=-2.91
+  club             n= 29 cartoon=  0 rate=0.00 lo=-3.22
+  stage            n= 31 cartoon=  0 rate=0.00 lo=-3.29
+  comedy           n= 33 cartoon=  0 rate=0.00 lo=-3.36
+  red              n= 44 cartoon=  0 rate=0.00 lo=-3.71

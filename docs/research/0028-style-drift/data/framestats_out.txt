@@ -1,0 +1,3 @@
+sat     AUC(cartoon higher)=0.48  mean photoreal=98.33 cartoon=91.87
+lapvar  AUC(cartoon higher)=0.79  mean photoreal=99.86 cartoon=329.18
+tex     AUC(cartoon higher)=0.48  mean photoreal=0.32 cartoon=0.32

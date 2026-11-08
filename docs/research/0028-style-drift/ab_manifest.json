@@ -1,0 +1,177 @@
+{
+ "style_prefix": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting.",
+ "kramer_photo_block": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble.",
+ "n_clips": 21,
+ "est_gpu_minutes": 24.3,
+ "est_cost_usd": 0.44,
+ "jobs": [
+  {
+   "shot": 98,
+   "arm": "control_rerender",
+   "seed": 98,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0098.mp4",
+   "prompt": "A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium shot, static. The man is standing in an apartment doorway, gesturing with his right arm as he speaks, moving his hand from high to low while looking off-camera. Bright, even, flat studio lighting, casting soft shadows on the wall behind the subject. Color palette: Brown, cream, grey, tan, black.. Mood: Casual, conversational, slightly animated.. An apartment interior, specifically near a doorway with a door featuring a brass knocker."
+  },
+  {
+   "shot": 79,
+   "arm": "A_prefix",
+   "seed": 79,
+   "frames": 25,
+   "baseline_clip": "clips/runpod-ltx25/0079.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium close-up shot, static. The man looks slightly off-camera, his mouth opening and closing as if speaking, with his expression shifting from a look of mild surprise or confusion to a more neutral, engaged state. Bright, even, flat studio lighting typical of a sitcom, creating soft, minimal shadows on the face. Color palette: Brown, black, white, and muted grey.. Mood: Casual, conversational, and lighthearted.. An indoor living space with a framed picture of a black car on the wall behind the subject."
+  },
+  {
+   "shot": 79,
+   "arm": "B_photo_block",
+   "seed": 79,
+   "frames": 25,
+   "baseline_clip": "clips/runpod-ltx25/0079.mp4",
+   "prompt": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium close-up shot, static. The man looks slightly off-camera, his mouth opening and closing as if speaking, with his expression shifting from a look of mild surprise or confusion to a more neutral, engaged state. Bright, even, flat studio lighting typical of a sitcom, creating soft, minimal shadows on the face. Color palette: Brown, black, white, and muted grey.. Mood: Casual, conversational, and lighthearted.. An indoor living space with a framed picture of a black car on the wall behind the subject."
+  },
+  {
+   "shot": 79,
+   "arm": "C_prefix_and_block",
+   "seed": 79,
+   "frames": 25,
+   "baseline_clip": "clips/runpod-ltx25/0079.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium close-up shot, static. The man looks slightly off-camera, his mouth opening and closing as if speaking, with his expression shifting from a look of mild surprise or confusion to a more neutral, engaged state. Bright, even, flat studio lighting typical of a sitcom, creating soft, minimal shadows on the face. Color palette: Brown, black, white, and muted grey.. Mood: Casual, conversational, and lighthearted.. An indoor living space with a framed picture of a black car on the wall behind the subject."
+  },
+  {
+   "shot": 98,
+   "arm": "A_prefix",
+   "seed": 98,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0098.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium shot, static. The man is standing in an apartment doorway, gesturing with his right arm as he speaks, moving his hand from high to low while looking off-camera. Bright, even, flat studio lighting, casting soft shadows on the wall behind the subject. Color palette: Brown, cream, grey, tan, black.. Mood: Casual, conversational, slightly animated.. An apartment interior, specifically near a doorway with a door featuring a brass knocker."
+  },
+  {
+   "shot": 98,
+   "arm": "B_photo_block",
+   "seed": 98,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0098.mp4",
+   "prompt": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man is standing in an apartment doorway, gesturing with his right arm as he speaks, moving his hand from high to low while looking off-camera. Bright, even, flat studio lighting, casting soft shadows on the wall behind the subject. Color palette: Brown, cream, grey, tan, black.. Mood: Casual, conversational, slightly animated.. An apartment interior, specifically near a doorway with a door featuring a brass knocker."
+  },
+  {
+   "shot": 98,
+   "arm": "C_prefix_and_block",
+   "seed": 98,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0098.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man is standing in an apartment doorway, gesturing with his right arm as he speaks, moving his hand from high to low while looking off-camera. Bright, even, flat studio lighting, casting soft shadows on the wall behind the subject. Color palette: Brown, cream, grey, tan, black.. Mood: Casual, conversational, slightly animated.. An apartment interior, specifically near a doorway with a door featuring a brass knocker."
+  },
+  {
+   "shot": 106,
+   "arm": "A_prefix",
+   "seed": 106,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0106.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium shot, static. The man in the tan jacket gestures emphatically with his hands while speaking, his expression shifting from animated to shocked with his mouth wide open, while the man in the brown shirt gestures slightly with his hand. Bright, flat, even studio lighting that minimizes deep shadows. Color palette: Tan, brown, black, grey, cream.. Mood: Comedic, frantic, energetic.. An apartment interior, specifically near a doorway."
+  },
+  {
+   "shot": 106,
+   "arm": "B_photo_block",
+   "seed": 106,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0106.mp4",
+   "prompt": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man in the tan jacket gestures emphatically with his hands while speaking, his expression shifting from animated to shocked with his mouth wide open, while the man in the brown shirt gestures slightly with his hand. Bright, flat, even studio lighting that minimizes deep shadows. Color palette: Tan, brown, black, grey, cream.. Mood: Comedic, frantic, energetic.. An apartment interior, specifically near a doorway."
+  },
+  {
+   "shot": 106,
+   "arm": "C_prefix_and_block",
+   "seed": 106,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0106.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man in the tan jacket gestures emphatically with his hands while speaking, his expression shifting from animated to shocked with his mouth wide open, while the man in the brown shirt gestures slightly with his hand. Bright, flat, even studio lighting that minimizes deep shadows. Color palette: Tan, brown, black, grey, cream.. Mood: Comedic, frantic, energetic.. An apartment interior, specifically near a doorway."
+  },
+  {
+   "shot": 152,
+   "arm": "A_prefix",
+   "seed": 152,
+   "frames": 33,
+   "baseline_clip": "clips/runpod-ltx25/0152.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium close-up shot, static. The man is talking, his mouth moving as he speaks, while he maintains a steady gaze slightly off-camera. Bright, even, high-key studio lighting that produces soft, minimal shadows on the subject's face. Color palette: Brown, black, beige, and off-white.. Mood: Casual, conversational, and lighthearted.. An interior space with plain, light-colored walls."
+  },
+  {
+   "shot": 152,
+   "arm": "B_photo_block",
+   "seed": 152,
+   "frames": 33,
+   "baseline_clip": "clips/runpod-ltx25/0152.mp4",
+   "prompt": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium close-up shot, static. The man is talking, his mouth moving as he speaks, while he maintains a steady gaze slightly off-camera. Bright, even, high-key studio lighting that produces soft, minimal shadows on the subject's face. Color palette: Brown, black, beige, and off-white.. Mood: Casual, conversational, and lighthearted.. An interior space with plain, light-colored walls."
+  },
+  {
+   "shot": 152,
+   "arm": "C_prefix_and_block",
+   "seed": 152,
+   "frames": 33,
+   "baseline_clip": "clips/runpod-ltx25/0152.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium close-up shot, static. The man is talking, his mouth moving as he speaks, while he maintains a steady gaze slightly off-camera. Bright, even, high-key studio lighting that produces soft, minimal shadows on the subject's face. Color palette: Brown, black, beige, and off-white.. Mood: Casual, conversational, and lighthearted.. An interior space with plain, light-colored walls."
+  },
+  {
+   "shot": 246,
+   "arm": "A_prefix",
+   "seed": 246,
+   "frames": 33,
+   "baseline_clip": "clips/runpod-ltx25/0246.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium shot, static. The man in the tan shirt is animatedly gesturing with his hands while speaking, his expression shifting from an open-mouthed look of realization to a more focused, serious expression as he continues his explanation. Bright, even, high-key studio lighting that casts soft shadows. Color palette: Beige, tan, dark blue, and muted grey.. Mood: Casual, conversational, and slightly inquisitive.. The interior of an apartment, specifically near a doorway with a bookshelf visible in the background."
+  },
+  {
+   "shot": 246,
+   "arm": "B_photo_block",
+   "seed": 246,
+   "frames": 33,
+   "baseline_clip": "clips/runpod-ltx25/0246.mp4",
+   "prompt": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man in the tan shirt is animatedly gesturing with his hands while speaking, his expression shifting from an open-mouthed look of realization to a more focused, serious expression as he continues his explanation. Bright, even, high-key studio lighting that casts soft shadows. Color palette: Beige, tan, dark blue, and muted grey.. Mood: Casual, conversational, and slightly inquisitive.. The interior of an apartment, specifically near a doorway with a bookshelf visible in the background."
+  },
+  {
+   "shot": 246,
+   "arm": "C_prefix_and_block",
+   "seed": 246,
+   "frames": 33,
+   "baseline_clip": "clips/runpod-ltx25/0246.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man in the tan shirt is animatedly gesturing with his hands while speaking, his expression shifting from an open-mouthed look of realization to a more focused, serious expression as he continues his explanation. Bright, even, high-key studio lighting that casts soft shadows. Color palette: Beige, tan, dark blue, and muted grey.. Mood: Casual, conversational, and slightly inquisitive.. The interior of an apartment, specifically near a doorway with a bookshelf visible in the background."
+  },
+  {
+   "shot": 256,
+   "arm": "A_prefix",
+   "seed": 256,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0256.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A tall, lanky man in his 30s with a very thin, angular build. He has a distinctive, voluminous mop of dark, curly hair that stands up high. His face is long and narrow with a sharp, pointed nose, high cheekbones, and a wide, expressive mouth. He has deep-set eyes, a prominent brow, and a lean, slightly hunched posture. Cinematic medium close-up shot, static. The man is looking off-screen to the right, his expression animated and slightly surprised. He brings both hands up to his neck, touching his throat as if checking for a swallow, while his mouth moves as if speaking. Bright, even, high-key studio lighting, casting soft, minimal shadows on the face and background. Color palette: Tan, off-white, muted grey-blue, and dark brown.. Mood: Conversational, slightly comedic, and inquisitive.. An interior room, likely an apartment, with a door frame visible in the background."
+  },
+  {
+   "shot": 256,
+   "arm": "B_photo_block",
+   "seed": 256,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0256.mp4",
+   "prompt": "A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium close-up shot, static. The man is looking off-screen to the right, his expression animated and slightly surprised. He brings both hands up to his neck, touching his throat as if checking for a swallow, while his mouth moves as if speaking. Bright, even, high-key studio lighting, casting soft, minimal shadows on the face and background. Color palette: Tan, off-white, muted grey-blue, and dark brown.. Mood: Conversational, slightly comedic, and inquisitive.. An interior room, likely an apartment, with a door frame visible in the background."
+  },
+  {
+   "shot": 256,
+   "arm": "C_prefix_and_block",
+   "seed": 256,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0256.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium close-up shot, static. The man is looking off-screen to the right, his expression animated and slightly surprised. He brings both hands up to his neck, touching his throat as if checking for a swallow, while his mouth moves as if speaking. Bright, even, high-key studio lighting, casting soft, minimal shadows on the face and background. Color palette: Tan, off-white, muted grey-blue, and dark brown.. Mood: Conversational, slightly comedic, and inquisitive.. An interior room, likely an apartment, with a door frame visible in the background."
+  },
+  {
+   "shot": 125,
+   "arm": "A_prefix",
+   "seed": 125,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0125.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A man in his 30s, short and stocky with a balding head and thinning dark hair on the sides. He has a round face, a soft jawline, and wears thick-rimmed glasses. His nose is rounded, and he has a slightly receding chin. He often appears with a furrowed brow and a tense, expressive mouth. A woman in her 30s with a slender, athletic build and dark, voluminous, curly hair. She has a heart-shaped face, high cheekbones, and a pointed chin. Her eyes are large and dark, framed by arched brows. She has a straight, delicate nose and a wide, expressive mouth. Her features are sharp and defined. Cinematic medium close-up shot, static. The man is talking, gesturing with his left hand as he turns his head slightly to the left, away from the woman. Bright, flat, even studio lighting that creates soft shadows, typical of a 90s sitcom. Color palette: Beige, light grey, dark brown, and muted purple.. Mood: Casual, conversational, and mundane.. An indoor apartment living area with a window and a metal shelving unit in the background."
+  },
+  {
+   "shot": 221,
+   "arm": "A_prefix",
+   "seed": 221,
+   "frames": 41,
+   "baseline_clip": "clips/runpod-ltx25/0221.mp4",
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A man in his 30s, short and stocky with a balding head and thinning dark hair on the sides. He has a round face, a soft jawline, and wears thick-rimmed glasses. His nose is rounded, and he has a slightly receding chin. He often appears with a furrowed brow and a tense, expressive mouth. A woman in her 30s with a slender, athletic build and dark, voluminous, curly hair. She has a heart-shaped face, high cheekbones, and a pointed chin. Her eyes are large and dark, framed by arched brows. She has a straight, delicate nose and a wide, expressive mouth. Her features are sharp and defined. Cinematic medium shot, static. The man is gesturing wildly with his hands, looking frustrated and agitated, while the woman stands relatively still, listening and holding a small object. Soft, flat studio lighting, typical of a sitcom set, illuminating the subjects evenly from the front. Color palette: Muted green, brown, off-white, and navy blue.. Mood: Tense, argumentative, and mildly comedic.. An indoor apartment hallway or entryway with a doorway leading to a bathroom in the background."
+  }
+ ]
+}

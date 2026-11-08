@@ -65,3 +65,6 @@ Folded research 0025, `runpod-ltx25` and the SECURE-rate fix into `design/archit
 
 ## [2026-11-07] lint | Docs audit
 0 broken inline links; 16 pre-existing frontmatter findings across 93 files (13 non-schema `type`/`id` values in research/experiments/design, 3 files without frontmatter) left for a human decision.
+
+## [2026-11-08] research | 0028 style drift
+`research/0028-style-drift/` classifies all 427 clips of the Seinfeld S01E03 runpod-ltx25 run (Gemini 3.1 flash-lite, ~$0.18, no GPU) and finds the photoreal/cartoon drift is driven by Kramer's identity block (55/62 shots cartoon vs 25/237 without; 3/15 when the 2-character cap drops it), plus stacked Elaine+George blocks. No prompt carries a live-action anchor; the negative prompt is inert at LTX-2.5's cfg 1.0; seed, length, pod and chaining are not drivers (chained parts never flip). Proposes a per-film style prefix and photographic identity-block spec, and a 21-clip ~$0.44 A/B (`ab_manifest.json`) awaiting Will's approval.
