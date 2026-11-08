@@ -22,6 +22,9 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 - `runpod_pod.py` -- shared RunPod pod lifecycle (`RunPodSession`): provisions across a cloud x GPU fallback matrix, `with_setup_retry` re-provisions on boot failure, exit-time stray-pod sweep. Every RunPod strategy builds on this.
 - `manifest.py` -- single source of truth for on-disk filename conventions and the `shots.json` v2 schema; also owns `encode_fingerprint`/`check_encode_fingerprint`, which stamp progress files so a resumed run detects and refuses output from a since-changed encode.
 - `config.py` -- `.env` loading, Gemini model-id constants, and the video/audio strategy registries (name -> class + capability flags).
+- `tools/capped_run.py` -- supervisor for unattended RunPod runs: hard spend cap measured from the account balance, retries, pod sweep. Use it for any long `decode.py` run
+- `tools/pgs_to_srt.py` -- OCRs a bitmap (PGS) subtitle track to SRT; BluRay rips need it before encode stage 2 (ffmpeg cannot convert them)
+- Gemini backend: `LOSSY_GEMINI_BACKEND=vertex` (with `LOSSY_ENCODE_MODEL=gemini-3.1-flash-lite`) routes encode/voice-casting calls through Vertex AI on the same GCP project when the AI Studio key is rate-limited. Default is `aistudio`
 - `tools/seam_ratio.py` -- measures I2V chaining seams (boundary frame delta / normal motion) in a clips dir, the research 0023 method
 - `stitch.py` -- FFmpeg stitching (video concat, audio/speech track building, muxing)
 - `eval.py` -- evaluation CLI (re-encodes output, compares to original, writes quality reports)
