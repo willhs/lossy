@@ -161,7 +161,10 @@ class RunPodSession:
         self._http = None
         # Pod ids this session provisioned or adopted. Belt-and-braces
         # alongside the name check: either one identifying a pod as ours is
-        # enough to terminate it.
+        # enough to terminate it. Append-only: the exit sweep is gated on it
+        # being non-empty, so an id is never removed when a pod is terminated
+        # or forgotten -- that would let an abandoned pod whose terminate
+        # failed escape the one check that exists to catch it.
         self._owned_pod_ids: set[str] = set()
 
     def _register_cleanup(self):
@@ -271,6 +274,11 @@ class RunPodSession:
         if not runpod.api_key:
             print("Error: RUNPOD_API_KEY not set in .env or environment.")
             sys.exit(1)
+
+        if self.pod_id is not None:
+            # Overwriting the handle would orphan a pod that is still billing.
+            print(f"  Replacing pod {self.pod_id}: terminating it first.")
+            self.terminate()
 
         pod = None
         gpu_rate = self.gpu_types[0][1]
@@ -404,9 +412,11 @@ class RunPodSession:
         before ComfyUI started and one attempt found no capacity at all, and
         every one of them stalled the run until a human reissued the command.
 
-        Each retry starts from scratch -- the failed pod is already terminated
-        by the time PodSetupError is raised, and the stale state file is
-        cleared so the next attempt provisions rather than reconnects.
+        Each retry starts from scratch -- the failed pod is terminated here
+        (not every PodSetupError site does it: a failed ComfyUI upgrade or a
+        sha256 mismatch leaves a healthy-looking, billing pod behind), and the
+        stale state file is cleared so the next attempt provisions rather than
+        reconnects.
         """
         last: Exception | None = None
         for attempt in range(1, attempts + 1):
@@ -415,6 +425,7 @@ class RunPodSession:
                 return
             except PodSetupError as e:
                 last = e
+                self.terminate()  # no-op if the raising site already did
                 self.pod_id = None
                 self.base_url = None
                 self.ssh_host = None
@@ -573,21 +584,38 @@ class RunPodSession:
         return bool(runtime and runtime.get("ports"))
 
     def forget_pod(self) -> None:
-        """Drop all state for a pod that no longer exists.
+        """Abandon the current pod and clear all state so the next ensure_pod
+        provisions rather than reconnecting to it.
 
-        Not terminate() -- there is nothing left to terminate, and calling it
-        only logs a misleading "pod not found to terminate" warning. This
-        clears the ids and the state file so the next ensure_pod provisions
-        rather than trying to reconnect to a corpse.
+        Tries to terminate the pod first. pod_alive() reports False for a pod
+        that is merely not exposing ports at that instant (restarting, status
+        API lagging), so "forgotten" does not mean "gone": a run once dropped
+        its handle on a pod that was still polling a job and billed for it
+        alongside the replacement. Terminating an already-gone pod just fails,
+        which is fine -- that failure is quiet because it is the expected case.
+
+        The id stays in _owned_pod_ids either way, so if the terminate call
+        failed on a pod that is in fact alive, the exit sweep still finds it.
         """
-        if self.pod_id:
-            self._owned_pod_ids.discard(self.pod_id)
+        pod_id = self.pod_id
+        if pod_id:
+            self._terminate_quietly(pod_id)
         self.pod_id = None
         self.base_url = None
         self.ssh_host = None
         self.ssh_port = None
         self.close_http()
         self.remove_state()
+
+    def _terminate_quietly(self, pod_id: str) -> None:
+        try:
+            import runpod
+            runpod.api_key = os.environ.get("RUNPOD_API_KEY")
+            runpod.terminate_pod(pod_id)
+            print(f"  Terminated abandoned pod {pod_id}.")
+        except Exception as e:
+            print(f"  Abandoned pod {pod_id} not terminated ({e}); presumed gone, "
+                  f"the exit sweep will confirm.")
 
     def terminate(self):
         """Terminate the pod and remove state file."""
