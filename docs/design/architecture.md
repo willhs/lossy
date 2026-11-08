@@ -77,14 +77,15 @@ Reads `shots.json` via `manifest.load_shots`. Dispatches each shot to a selected
 
 | Name | Provider | Clip length | Notes |
 |---|---|---|---|
-| `replicate-wan` | Replicate (hosted) | ~5s fixed | Wan 2.2 Fast, cheapest hosted (ADR-004). |
+| `replicate-wan` | Replicate (hosted) | ~5s fixed | Legacy: Wan 2.2 Fast, cheapest hosted (ADR-004). |
 | `fal-seedance` | fal.ai (hosted) | 2-12s | Seedance 1.0 Pro Fast, duration control. |
 | `fal-seedance-pro` | fal.ai (hosted) | 2-12s | Full Pro tier variant. |
 | `runpod-wan` | RunPod (self-hosted ComfyUI) | ~5s | Wan 2.1 1.3B fp16 via ComfyUI HTTP API (ADR-008). Manages pod lifecycle automatically. |
 | `runpod-wan22` | RunPod (self-hosted ComfyUI) | ~5s | Same infra with Wan 2.2 TI2V-5B. |
 | `runpod-wan-enriched` | RunPod (self-hosted ComfyUI) | ~5s | Character-name injection from the registry, no reference image. |
 | `runpod-vace` | RunPod (self-hosted ComfyUI) | ~5s | VACE conditioning with character portraits as reference images. Requires encode stage 3 (SPEC-220). |
-| `runpod-ltx2` | RunPod (self-hosted ComfyUI) | Variable | LTX-2 (distilled FP8, joint audio-video architecture used video-only). Character-identity conditioning + I2V chaining of split-shot parts. Current recommended strategy — see `docs/research/0023-ltx2-dress-rehearsal/research.md`. |
+| `runpod-ltx2` | RunPod (self-hosted ComfyUI) | Variable | LTX-2 (distilled FP8, joint audio-video architecture used video-only). Character-identity conditioning + I2V chaining of split-shot parts. Previous recommended strategy (LTX-2.3); superseded for new runs by `runpod-ltx25` — see `docs/research/0023-ltx2-dress-rehearsal/research.md`. |
+| `runpod-ltx25` | RunPod (self-hosted ComfyUI) | Variable (8k+1 frames) | LTX-2.5 distilled int8, two-stage + conv VAE. Pod setup upgrades ComfyUI to >= v0.32 and downloads weights pinned by revision and sha256. Current recommended strategy — see `docs/research/0025-video-model-refresh-nov-2026/research.md`. Not yet run end-to-end at full length. |
 
 Long shots that exceed the strategy's max clip duration are split into multiple parts (`NNNN-01.mp4`, `NNNN-02.mp4`, ...) and mapped to distinct prompt segments via the `temporal_segments` produced in encode stage 2.
 

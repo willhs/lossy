@@ -14,7 +14,7 @@ Document how to operate, monitor, and recover the system during incidents.
 ## RunPod pod failures
 
 RunPod strategies (`runpod-wan`, `runpod-wan22`, `runpod-wan-enriched`, `runpod-vace`,
-`runpod-ltx2`) share pod lifecycle handling in `runpod_pod.RunPodSession`:
+`runpod-ltx2`, `runpod-ltx25`) share pod lifecycle handling in `runpod_pod.RunPodSession`:
 
 - **Pod dies before ComfyUI is ready** (CUDA init failure, no capacity on a GPU type,
   ComfyUI never comes up) — `RunPodSession.with_setup_retry` re-provisions on a fresh
@@ -24,7 +24,7 @@ RunPod strategies (`runpod-wan`, `runpod-wan22`, `runpod-wan-enriched`, `runpod-
 - **GPU/cloud fallback order** — `LOSSY_RUNPOD_CLOUD` controls the cloud fallback order
   (default `COMMUNITY,SECURE`; community is tried first and fully exhausted across all
   configured GPU types before escalating to secure cloud, which costs more but is
-  guaranteed). Set `LOSSY_RUNPOD_CLOUD=SECURE` to pin to secure cloud, or reorder to
+  guaranteed; the cost tracker bills the SECURE rate on fallback, via `runpod_pod.rate_for` — A6000 $0.59/hr vs $0.33 community, other GPUs community x1.8 unless the API reports `costPerHr`). Set `LOSSY_RUNPOD_CLOUD=SECURE` to pin to secure cloud, or reorder to
   change preference.
 - **Stray pods left running** — on exit, a session asks RunPod what's still running:
   its own leftovers are terminated automatically; a pod from a different session is
