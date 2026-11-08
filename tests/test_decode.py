@@ -2680,3 +2680,39 @@ class TestReprovisionWhenPodDiesMidRun:
 
         s._session = NeverProvisioned()
         assert s._reprovision_if_pod_gone() is False
+
+
+class TestRunAudioSpeechOnlyShots:
+    """An all-speech sound description is a skip, not a failure."""
+
+    def test_speech_only_shots_are_skipped_not_failed(self, tmp_path):
+        from decode import run_audio
+
+        def shot(i, sound):
+            return {"index": i, "start_s": i * 3.0, "end_s": i * 3.0 + 3.0, "duration_s": 3.0,
+                    "description": {"sound": sound}}
+
+        (tmp_path / "shots.json").write_text(json.dumps({
+            "format": "v2",
+            "shots": [shot(0, "Ambient room noise, faint clinking."),
+                      shot(1, "Dialogue between two people."),
+                      shot(2, "Dialogue between two people.")],
+            "dialog": [],
+        }))
+        assert filter_speech_from_sound("Dialogue between two people.") is None
+
+        strategy = MagicMock()
+        strategy.name = "runpod-mmaudio"
+        strategy.filters_speech = True
+        strategy.uses_music_field = False
+        strategy.generate.return_value = [AudioClipResult(
+            path=str(tmp_path / "0000.flac"), actual_duration_s=3.0, cost=0.0)]
+
+        args = MagicMock(output_dir=str(tmp_path), start_index=None, limit=None)
+        run_audio(args, strategy)
+
+        assert strategy.generate.call_count == 1
+        progress = json.loads((tmp_path / "audio_progress_runpod-mmaudio.json").read_text())
+        assert progress["completed"] == [0]
+        assert sorted(progress["skipped"]) == [1, 2]
+        assert progress["failed"] == []

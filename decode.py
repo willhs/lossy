@@ -358,6 +358,16 @@ def run_audio(args, strategy: AudioStrategy):
             skipped_set.add(idx)
             continue
 
+        # An all-speech description has nothing for an ambience model to make;
+        # the strategy would return [] and the loop would count it as a failure.
+        if strategy.filters_speech and filter_speech_from_sound(sound) is None:
+            skipped += 1
+            progress["skipped"].append(idx)
+            skipped_set.add(idx)
+            if idx in progress["failed"]:
+                progress["failed"].remove(idx)
+            continue
+
         # Skip if already generated
         ext = ".mp3" if isinstance(strategy, ElevenLabsStrategy) else ".flac"
         if manifest.clip_exists_for_shot(audio_dir, idx, ext=ext):

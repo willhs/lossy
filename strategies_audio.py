@@ -163,6 +163,9 @@ class AudioStrategy:
     """Base class for audio generation backends."""
 
     name: str = "base"
+    # True when generate() drops speech cues and returns [] for an all-speech
+    # description. run_audio then records those shots as skipped, not failed.
+    filters_speech: bool = False
 
     def generate(
         self,
@@ -252,6 +255,7 @@ class MMAudioStrategy(AudioStrategy):
     """MMAudio V2 text-to-audio via fal.ai -- $0.001/sec, max 10s."""
 
     name = "mmaudio"
+    filters_speech = True
     MODEL_ID = "fal-ai/mmaudio-v2/text-to-audio"
     MAX_DURATION = 10
     MIN_DURATION = 5
@@ -328,6 +332,7 @@ class RunPodMMAudioStrategy(AudioStrategy):
     """MMAudio V2 text-to-audio via self-hosted ComfyUI on RunPod -- ~$0/marginal."""
 
     name = "runpod-mmaudio"
+    filters_speech = True
     MAX_DURATION = 10
     MIN_DURATION = 5
     GENERATION_TIMEOUT = 120  # 2 min per clip (MMAudio is fast)
