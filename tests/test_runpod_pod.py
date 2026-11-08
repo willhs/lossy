@@ -605,7 +605,7 @@ class TestPodLiveness:
         s.forget_pod()
 
         assert s.pod_id is None and s.base_url is None and s.ssh_host is None
-        assert "dead" not in s._owned_pod_ids
+        assert "dead" in s._owned_pod_ids  # stays recorded so the exit sweep covers it
         assert not os.path.exists(s.state_path)  # next run provisions, not reconnects
 
     def test_a_flaky_status_call_reports_alive(self, tmp_path, monkeypatch):
@@ -651,3 +651,216 @@ class TestPodLiveness:
 
         monkeypatch.setitem(__import__("sys").modules, "runpod", Dead)
         assert s.pod_alive() is False
+
+
+class _FleetRunpod:
+    """Fake RunPod account that tracks which pods are live.
+
+    Unlike _FakeRunpod it models the whole lifecycle -- create, status, list,
+    terminate -- so a test can end by asserting the one thing that costs money:
+    no pod left running.
+    """
+
+    def __init__(self):
+        self.api_key = None
+        self.live: dict[str, dict] = {}
+        self.created = 0
+        self.fail_terminate: set[str] = set()   # ids whose terminate call raises
+        self.ports_ready = True                 # whether new pods expose ports
+        self.name_of_created: list[str] = []
+
+    def create_pod(self, name, **kwargs):
+        self.created += 1
+        pod_id = f"pod-{self.created}"
+        self.live[pod_id] = {"id": pod_id, "name": name, "desiredStatus": "RUNNING",
+                             "ports_ready": self.ports_ready}
+        self.name_of_created.append(name)
+        return {"id": pod_id, "costPerHr": 0.5}
+
+    def get_pod(self, pod_id):
+        pod = self.live.get(pod_id)
+        if pod is None:
+            return None
+        runtime = None
+        if pod["ports_ready"]:
+            runtime = {"ports": [{"privatePort": 22, "isIpPublic": True,
+                                  "ip": "1.2.3.4", "publicPort": 22}]}
+        return {**pod, "runtime": runtime}
+
+    def get_pods(self):
+        return list(self.live.values())
+
+    def terminate_pod(self, pod_id):
+        if pod_id in self.fail_terminate:
+            raise RuntimeError("API unavailable")
+        if pod_id not in self.live:
+            raise RuntimeError("pod not found to terminate")
+        del self.live[pod_id]
+
+
+class TestNoAbandonedPodStaysLive:
+    """Every path that abandons a pod ends with zero live pods.
+
+    Research 0026/0027: re-provisioning dropped its handle on a pod without
+    terminating it, and the pod billed until a human noticed. The invariant
+    here is account-level (nothing left running), not call-level.
+    """
+
+    @pytest.fixture
+    def fleet(self, monkeypatch):
+        import sys
+        import runpod_pod
+
+        fleet = _FleetRunpod()
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+        monkeypatch.setitem(sys.modules, "runpod", fleet)
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda _s: None)
+        # Real registration would hook atexit/signals of the test process.
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", lambda self: None)
+        return fleet
+
+    def _session(self, tmp_path, **kw):
+        return RunPodSession(str(tmp_path), **kw)
+
+    def test_reprovision_terminates_the_pod_it_replaces(self, tmp_path, fleet):
+        """pod_alive() can be wrong: a pod without ports yet is still billing."""
+        s = self._session(tmp_path)
+        s.create_pod()
+        first = s.pod_id
+        fleet.live[first]["ports_ready"] = False   # looks "gone" to pod_alive()
+        assert s.pod_alive() is False
+
+        s.forget_pod()
+        assert first not in fleet.live             # terminated, not just dropped
+        s.create_pod()
+        assert s.pod_id != first and len(fleet.live) == 1
+
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_forgetting_a_pod_that_is_really_gone_is_quiet(self, tmp_path, fleet, capsys):
+        s = self._session(tmp_path)
+        s.create_pod()
+        del fleet.live[s.pod_id]                   # genuinely dead
+
+        s.forget_pod()                             # must not raise
+        assert s.pod_id is None
+        assert fleet.live == {}
+
+    def test_failed_terminate_on_reprovision_is_caught_by_the_exit_sweep(self, tmp_path, fleet):
+        s = self._session(tmp_path)
+        s.create_pod()
+        first = s.pod_id
+        fleet.fail_terminate.add(first)            # API hiccup during forget
+
+        s.forget_pod()
+        assert first in fleet.live                 # still billing right now
+        fleet.fail_terminate.clear()               # API recovers
+
+        s._cleanup()                               # run ends
+        assert fleet.live == {}
+
+    def test_run_ending_right_after_forget_still_sweeps(self, tmp_path, fleet):
+        """forget_pod used to drop the id, which disarmed the sweep entirely."""
+        s = self._session(tmp_path)
+        s.create_pod()
+        fleet.fail_terminate.add(s.pod_id)
+        s.forget_pod()                             # no replacement is ever created
+        fleet.fail_terminate.clear()
+
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_provision_timeout_terminates_the_pod(self, tmp_path, fleet, monkeypatch):
+        import runpod_pod
+        from runpod_pod import PodSetupError
+
+        fleet.ports_ready = False                  # never comes up
+        monkeypatch.setattr(runpod_pod, "POD_READY_TIMEOUT", 0)
+        s = self._session(tmp_path)
+
+        with pytest.raises(PodSetupError):
+            s.create_pod()
+        assert fleet.live == {}
+
+    def test_setup_retry_after_timeout_ends_with_one_live_pod_then_none(self, tmp_path, fleet, monkeypatch):
+        import runpod_pod
+
+        s = self._session(tmp_path)
+        calls = []
+
+        def setup():
+            s.create_pod()
+            calls.append(s.pod_id)
+            if len(calls) == 1:
+                raise runpod_pod.PodSetupError("ComfyUI did not come up")  # pod NOT terminated
+
+        s.with_setup_retry(setup, attempts=2)
+        assert len(calls) == 2
+        assert list(fleet.live) == [calls[1]]      # first one was terminated, not leaked
+
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_every_setup_attempt_failing_leaves_nothing_live(self, tmp_path, fleet):
+        from runpod_pod import PodSetupError
+
+        s = self._session(tmp_path)
+
+        def setup():
+            s.create_pod()
+            raise PodSetupError("sha256 mismatch")
+
+        with pytest.raises(PodSetupError):
+            s.with_setup_retry(setup, attempts=3)
+        assert fleet.live == {}
+        assert fleet.created == 3
+
+    def test_create_pod_over_a_held_pod_terminates_the_old_one(self, tmp_path, fleet):
+        s = self._session(tmp_path)
+        s.create_pod()
+        first = s.pod_id
+
+        s.create_pod()                             # a second provision, first never released
+        assert first not in fleet.live
+        assert list(fleet.live) == [s.pod_id]
+
+    def test_crash_mid_job_leaves_nothing_live(self, tmp_path, fleet):
+        s = self._session(tmp_path)
+        with pytest.raises(RuntimeError, match="boom"):
+            try:
+                s.create_pod()
+                raise RuntimeError("boom")         # e.g. unhandled error while generating
+            finally:
+                s._cleanup()                       # what atexit/signal handlers run
+        assert fleet.live == {}
+
+    def test_crash_with_a_drifted_pod_id_leaves_nothing_live(self, tmp_path, fleet):
+        """The recorded id is stale; only the name identifies the live pod."""
+        s = self._session(tmp_path)
+        s.create_pod()
+        fleet.live["pod-ghost"] = {"id": "pod-ghost", "name": s.pod_name,
+                                   "desiredStatus": "RUNNING", "ports_ready": True}
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_normal_exit_leaves_nothing_live(self, tmp_path, fleet):
+        s = self._session(tmp_path)
+        s.create_pod()
+        s.mark_clean_exit()
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_a_concurrent_runs_pod_is_never_touched(self, tmp_path, fleet):
+        import runpod_pod
+
+        other = f"{runpod_pod.POD_NAME_PREFIX}-deadbeef"
+        fleet.live["pod-theirs"] = {"id": "pod-theirs", "name": other,
+                                    "desiredStatus": "RUNNING", "ports_ready": True}
+        s = self._session(tmp_path)
+        s.create_pod()
+        s.forget_pod()
+        s.create_pod()
+        s._cleanup()
+        assert list(fleet.live) == ["pod-theirs"]

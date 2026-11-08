@@ -19,7 +19,7 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 - `prompt_format.py` -- prompt formatting functions (CAMERA_TERMS, format_prompt, model-specific variants)
 - `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod WAN T2V, RunPod VACE, RunPod LTX-2, RunPod LTX-2.5)
 - `strategies_audio.py` -- audio/speech generation strategies (AudioStrategy base + ElevenLabs, MMAudio, RunPod, SpeechStrategy)
-- `runpod_pod.py` -- shared RunPod pod lifecycle (`RunPodSession`): provisions across a cloud x GPU fallback matrix, `with_setup_retry` re-provisions on boot failure, exit-time stray-pod sweep. Every RunPod strategy builds on this.
+- `runpod_pod.py` -- shared RunPod pod lifecycle (`RunPodSession`): provisions across a cloud x GPU fallback matrix, `with_setup_retry` re-provisions on boot failure, exit-time stray-pod sweep. Invariant: every path that abandons a pod (`forget_pod`, setup retry, re-create) terminates it, and `_owned_pod_ids` is append-only so the exit sweep still covers a failed terminate. Every RunPod strategy builds on this.
 - `manifest.py` -- single source of truth for on-disk filename conventions and the `shots.json` v2 schema; also owns `encode_fingerprint`/`check_encode_fingerprint`, which stamp progress files so a resumed run detects and refuses output from a since-changed encode.
 - `config.py` -- `.env` loading, Gemini model-id constants, and the video/audio strategy registries (name -> class + capability flags).
 - `tools/capped_run.py` -- supervisor for unattended RunPod runs: hard spend cap measured from the account balance, retries, pod sweep. Use it for any long `decode.py` run
