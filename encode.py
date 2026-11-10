@@ -562,6 +562,13 @@ def detect_audio_labels(
 # names gone the description has to carry the whole load, and specificity has
 # to come from geometry -- face shape, brow, nose, jaw, skin -- rather than
 # from adjectives about temperament.
+#
+# The second failure is register. Kramer's block ("very thin, angular build",
+# "voluminous mop of dark, curly hair that stands up high", "wide, expressive
+# mouth") is a caricature, and 55 of the 62 shots carrying it came out
+# cartoon against 25 of 237 without (research 0028). So for humans the spec
+# asks for a real actor in photographic terms and bans the intensifiers that
+# make a model draw a character instead of a person.
 IDENTITY_DESCRIPTION_SPEC = (
     "a canonical IDENTITY description (~50-80 words) that a text-to-image "
     "model could draw from cold. Give concrete, visible geometry: age range, "
@@ -582,7 +589,17 @@ IDENTITY_DESCRIPTION_SPEC = (
     "as a mechanical robot -- plating, joints, lenses, vents -- and never as "
     "'humanoid' or in terms of a human body. 'Humanoid' reliably renders as a "
     "person in a costume rather than a machine, even when the rest of the "
-    "description is accurate."
+    "description is accurate. "
+    "For a human, describe a real actor as a photographer would: natural skin "
+    "texture, visible age, ordinary asymmetries, hair as it lies. Open with "
+    "'A real man' or 'A real woman' and an age. Do NOT use caricature "
+    "intensifiers -- 'very', 'extremely', 'exaggerated', 'wild', 'sharp', "
+    "'pointed', 'angular', 'lanky', 'gangly', 'hunched', 'mop' of hair, "
+    "'wide expressive mouth', hair that 'stands up' -- because an image or "
+    "video model reads them as a drawn character: a 'very thin, angular' man "
+    "with a 'mop of hair' rendered as a cartoon. Say 'tall and slim, thick "
+    "dark curly hair brushed back from a high forehead, natural skin "
+    "texture' instead."
 )
 
 

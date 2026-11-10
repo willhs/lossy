@@ -293,6 +293,109 @@ def run_decode(args, strategy: GenerationStrategy):
 
 
 # ---------------------------------------------------------------------------
+# A/B manifest runner (research 0028)
+# ---------------------------------------------------------------------------
+
+AB_JOB_KEYS = ("shot", "arm", "seed", "frames", "prompt")
+
+
+def load_ab_jobs(path: str) -> list[dict]:
+    """Read an A/B manifest (``{"jobs": [...]}``) and check every job is runnable."""
+    with open(path) as f:
+        raw = json.load(f)
+    jobs = raw.get("jobs") if isinstance(raw, dict) else None
+    if not jobs:
+        raise ValueError(f"{path}: expected {{'jobs': [...]}} with at least one job")
+    seen = set()
+    for i, job in enumerate(jobs):
+        missing = [k for k in AB_JOB_KEYS if k not in job]
+        if missing:
+            raise ValueError(f"{path}: job {i} is missing {missing}")
+        key = ab_job_key(job)
+        if key in seen:
+            raise ValueError(f"{path}: job {i} repeats {key}")
+        seen.add(key)
+    return jobs
+
+
+def ab_job_key(job: dict) -> str:
+    return f"{job['arm']}/{job['shot']}"
+
+
+def dry_run_ab(strategy_cls, jobs: list[dict]) -> None:
+    """Print the jobs and build each one's ComfyUI graph. No pod, no network, no spend.
+
+    Building the graph is what rejects a bad frame count or a malformed prompt,
+    so a clean dry run means the real run will not fail at submit.
+    """
+    probe = object.__new__(strategy_cls)  # skip __init__: it creates a RunPod session
+    for job in jobs:
+        probe._build_workflow(job["prompt"], job["seed"], length=job["frames"])
+        print(f"  {ab_job_key(job):<28} seed {job['seed']:<5} {job['frames']:>3} frames  "
+              f"{job['prompt'][:60]}...")
+    print(f"Dry run OK: {len(jobs)} jobs build valid workflows. Nothing was submitted.")
+
+
+def run_ab_manifest(args, strategy: GenerationStrategy, jobs: list[dict]):
+    """Render an A/B manifest's jobs: each prompt verbatim at its own seed and frame count.
+
+    Bypasses ``strategy.generate`` and ``format_prompt`` on purpose: the manifest
+    carries the exact prompt per arm, and the arms are only comparable if nothing
+    rewrites them. Clips land in one directory per arm (``manifest.ab_clips_dir``)
+    because arms share shot indices. Progress is saved after every clip, so
+    ``tools/capped_run.py`` can restart this after a pod death and pick up where
+    it stopped.
+    """
+    output_dir = args.output_dir
+    progress_path = manifest.ab_progress_path(output_dir, strategy.name)
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            progress = json.load(f)
+    else:
+        progress = {"completed": [], "failed": [], "total_cost_estimate": 0.0}
+    done = set(progress["completed"])
+
+    def save():
+        with open(progress_path, "w") as f:
+            json.dump(progress, f, indent=2)
+
+    print(f"A/B manifest: {len(jobs)} jobs via {strategy.name} ({len(done)} already done)...")
+    for job in jobs:
+        key = ab_job_key(job)
+        clips_dir = manifest.ab_clips_dir(output_dir, strategy.name, job["arm"])
+        clip_name = manifest.clip_filename(job["shot"], None, ".mp4")
+        if key in done:
+            continue
+        if os.path.exists(os.path.join(clips_dir, clip_name)):
+            done.add(key)
+            progress["completed"].append(key)
+            continue
+        os.makedirs(clips_dir, exist_ok=True)
+        print(f"  {key} (seed {job['seed']}, {job['frames']} frames)...")
+        strategy._ensure_pod()
+        result = strategy._generate_one_clip(
+            job["prompt"], clips_dir, clip_name, job["frames"], job["seed"])
+        if result is None:
+            if key not in progress["failed"]:
+                progress["failed"].append(key)
+            save()
+            continue
+        done.add(key)
+        progress["completed"].append(key)
+        progress["failed"] = [k for k in progress["failed"] if k != key]
+        progress["total_cost_estimate"] += result.cost
+        save()
+
+    save()
+    strategy.mark_clean_exit()
+    print(f"\nDone. {len(progress['completed'])}/{len(jobs)} completed, "
+          f"{len(progress['failed'])} failed. Clips under "
+          f"{manifest.ab_clips_dir(output_dir, strategy.name, '<arm>')}")
+    if progress["failed"]:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Audio generation loop
 # ---------------------------------------------------------------------------
 
@@ -591,6 +694,19 @@ def main():
                         help="Music generation strategy to overlay on stitch (music-bucket shots only)")
     parser.add_argument("--concurrent-audio", action="store_true",
                         help="Generate audio concurrently with video on RunPod (requires >=24GB VRAM)")
+    parser.add_argument("--style-prefix", default=None,
+                        help="One sentence placed at the front of every video prompt, ahead of the "
+                             "identity blocks, to anchor the film's look (e.g. 'Live-action 1990s "
+                             "sitcom footage of real actors, photographed on 35mm film.'). Default: "
+                             "the optional top-level style_prefix in shots.json. LTX strategies only.")
+    parser.add_argument("--ab-manifest", default=None, metavar="JSON",
+                        help="Render the jobs of an A/B manifest (e.g. "
+                             "docs/research/0028-style-drift/ab_manifest.json) instead of the shot "
+                             "list: each job's prompt verbatim at its own seed and frame count, "
+                             "clips under clips/<strategy>-ab/<arm>/. LTX strategies only.")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With --ab-manifest: validate the jobs and build their workflows, "
+                             "then exit. No pod is created and nothing is spent.")
     args = parser.parse_args()
 
     load_env()
@@ -633,8 +749,23 @@ def main():
             "runpod-ltx2": lambda: _create_ltx2_strategy(args),
             "runpod-ltx25": lambda: _create_ltx2_strategy(args, RunPodLtx25Strategy),
         }
+        if args.ab_manifest:
+            _run_ab(args, strategies)
+            return
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
+
+
+def _run_ab(args, strategies: dict):
+    """Dispatch --ab-manifest: validate, then dry-run or render."""
+    if args.strategy not in ("runpod-ltx2", "runpod-ltx25"):
+        sys.exit("--ab-manifest supports the LTX strategies only (runpod-ltx2, runpod-ltx25)")
+    jobs = load_ab_jobs(args.ab_manifest)
+    if args.dry_run:
+        strategy_cls = RunPodLtx25Strategy if args.strategy == "runpod-ltx25" else RunPodLtx2Strategy
+        dry_run_ab(strategy_cls, jobs)
+        return
+    run_ab_manifest(args, strategies[args.strategy](), jobs)
 
 
 def _create_wan_enriched_strategy(args):
@@ -674,11 +805,16 @@ def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy):
     else:
         print("Warning: characters.json not found. Running without prompt enrichment.")
 
+    style_prefix = getattr(args, "style_prefix", None) or manifest.load_style_prefix(output_dir)
+    if style_prefix:
+        print(f"Style prefix: {style_prefix}")
+
     return strategy_cls(
         output_dir=output_dir,
         keep_pod=getattr(args, "keep_pod", False),
         character_shot_map=character_shot_map,
         characters_data=characters_data,
+        style_prefix=style_prefix,
     )
 
 

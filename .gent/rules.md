@@ -15,7 +15,7 @@ lossy is a Python CLI pipeline that encodes films into text descriptions and dec
 
 - `encode.py` -- encoder CLI (stage1: shots+keyframes, stage2: prompts via Gemini, stage3: character registry via Gemini, stage4: dialog-line speaker attribution via Gemini -> `speakers.json`; supports `--tmdb-id` for TMDB-seeded supervised discovery)
 - `voice_casting.py` -- proposes a per-character voice map (`voice_map.json`) from `characters.json` via Gemini, with `--sample` to render one short clip per voice for review. A proposal only -- casting is a human call, made by editing `voice_map.json`
-- `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols. Speech generation reads `speakers.json`/`voice_map.json` if present (falls back to the single `--speech-voice` otherwise)
+- `decode.py` -- decoder CLI entry point, run loops, re-exports all public symbols. `--style-prefix` (or `style_prefix` in `shots.json`) puts a per-film look anchor ahead of the identity blocks (LTX strategies); `--ab-manifest JSON [--dry-run]` renders an A/B manifest's jobs verbatim (research 0028). Speech generation reads `speakers.json`/`voice_map.json` if present (falls back to the single `--speech-voice` otherwise)
 - `prompt_format.py` -- prompt formatting functions (CAMERA_TERMS, format_prompt, model-specific variants)
 - `strategies_video.py` -- video generation strategies (GenerationStrategy base + Replicate, fal.ai, RunPod WAN T2V, RunPod VACE, RunPod LTX-2, RunPod LTX-2.5)
 - `strategies_audio.py` -- audio/speech generation strategies (AudioStrategy base + ElevenLabs, MMAudio, RunPod, SpeechStrategy)

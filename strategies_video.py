@@ -86,11 +86,13 @@ class CharacterIdentityMixin(GenerationStrategy):
         self,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
+        style_prefix: str | None = None,
     ) -> None:
         self._character_shot_map = character_shot_map or {}
         self._characters_by_name = {
             c["name"]: c for c in (characters_data or {}).get("characters", [])
         }
+        self.style_prefix = (style_prefix or "").strip()
 
     def format_prompt(self, entry: dict) -> str:
         """Prepend the locked verbatim character identity blocks, then base."""
@@ -126,7 +128,12 @@ class CharacterIdentityMixin(GenerationStrategy):
                     else:
                         identity_parts.append(char["description"])
 
-        composed = " ".join(identity_parts + [base]) if identity_parts else base
+        # The film's style anchor goes first, ahead of the identity blocks: a
+        # block full of caricature cues ("very thin, angular, mop of hair")
+        # pulled shots toward cartoon, and nothing in the prompt said
+        # "live-action" (research 0028). Same string on every shot.
+        parts = ([self.style_prefix] if self.style_prefix else []) + identity_parts + [base]
+        composed = " ".join(parts) if len(parts) > 1 else base
         # Strip on every path, including shots with no identity block at all.
         # Returning those early leaked a name whenever the describe pass named
         # someone the shot map had not assigned to that shot -- Greedo in 757,
@@ -1318,11 +1325,12 @@ class RunPodLtx2Strategy(CharacterIdentityMixin, RunPodWanStrategy):
         keep_pod: bool | int = False,
         character_shot_map: dict | None = None,
         characters_data: dict | None = None,
+        style_prefix: str | None = None,
     ):
         # No concurrent-audio pipelining for this spike -- LTX-2's own audio
         # path is evaluated separately (see class docstring).
         super().__init__(output_dir, keep_pod, concurrent_audio=False)
-        self._init_character_identity(character_shot_map, characters_data)
+        self._init_character_identity(character_shot_map, characters_data, style_prefix)
         from runpod_pod import RunPodSession
         self._session = RunPodSession(output_dir, keep_pod=keep_pod, gpu_types=self.LTX_GPU_TYPES)
 

@@ -49,6 +49,10 @@ def decode_progress_path(output_dir: str, strategy: str) -> str:
     return os.path.join(output_dir, f"decode_progress_{strategy}.json")
 
 
+def ab_progress_path(output_dir: str, strategy: str) -> str:
+    return os.path.join(output_dir, f"ab_progress_{strategy}.json")
+
+
 def audio_progress_path(output_dir: str, strategy: str) -> str:
     return os.path.join(output_dir, f"audio_progress_{strategy}.json")
 
@@ -78,6 +82,11 @@ def reconstructed_path(output_dir: str, strategy: str, audio_strategy: str | Non
 
 def clips_dir(output_dir: str, strategy: str) -> str:
     return os.path.join(output_dir, "clips", strategy)
+
+
+def ab_clips_dir(output_dir: str, strategy: str, arm: str) -> str:
+    """Clips of one A/B arm. Arms share shot indices, so each gets its own dir."""
+    return os.path.join(output_dir, "clips", f"{strategy}-ab", arm)
 
 
 def audio_dir(output_dir: str, strategy: str) -> str:
@@ -198,7 +207,8 @@ def existing_clip_parts(clips_dir_path: str, shot_idx: int,
 #                  "camera_motion_detected": ..., "audio_detected": ...,
 #                  "temporal_segments"?: [...] },
 #                ... ],
-#     "dialog":  [ { "text", "start_s", "end_s" }, ... ]
+#     "dialog":  [ { "text", "start_s", "end_s" }, ... ],
+#     "style_prefix"?: "Live-action ... footage ..."   (hand-set, optional)
 #   }
 #
 # ``shots`` is the per-shot list. ``dialog`` is a global subtitle timeline
@@ -227,9 +237,30 @@ def load_shots(output_dir: str) -> tuple[list[dict], list[dict]]:
     return raw["shots"], raw.get("dialog", [])
 
 
+def load_style_prefix(output_dir: str) -> str:
+    """The film's style prefix from shots.json's optional top-level ``style_prefix``.
+
+    One sentence that anchors the render's look ("Live-action 1990s sitcom
+    footage ... photographed on 35mm film"), placed ahead of the identity
+    blocks on every shot. Empty when absent or the file is missing.
+    """
+    try:
+        with open(shots_path(output_dir)) as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return ""
+    value = raw.get("style_prefix", "") if isinstance(raw, dict) else ""
+    return value.strip() if isinstance(value, str) else ""
+
+
 def save_shots(output_dir: str, shots: list[dict], dialog: list[dict]) -> str:
     path = shots_path(output_dir)
     data = {"format": PROMPTS_FORMAT_VERSION, "shots": shots, "dialog": dialog}
+    # A re-encode rewrites this file wholesale; the style prefix is hand-set
+    # and must survive it.
+    prefix = load_style_prefix(output_dir)
+    if prefix:
+        data["style_prefix"] = prefix
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
     return path
