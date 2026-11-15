@@ -14,6 +14,7 @@ import os
 import sys
 import time
 
+from keyframes import KeyframeSetupError  # noqa: E402
 from runpod_pod import GatedModelError, check_gated_access  # noqa: E402
 
 from config import (  # noqa: E402 -- re-export for backwards compat
@@ -52,6 +53,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     RunPodLtx2Strategy,
     RunPodLtx25Strategy,
     RunPodLtx25IngredientsStrategy,
+    RunPodLtx25KeyframeStrategy,
 )
 
 
@@ -224,6 +226,10 @@ def run_decode(args, strategy: GenerationStrategy) -> list[int]:
     errors = 0
 
     print(f"Generating {total} clips via {strategy.name} ({len(completed_set)} already done)...")
+
+    # Inputs a strategy makes ahead of the video pass (keyframes). Runs before any
+    # pod exists, so a missing prerequisite stops the run before anything bills.
+    strategy.prepare([p for p in prompts if p["index"] not in completed_set])
 
     for entry in prompts:
         idx = entry["index"]
@@ -762,7 +768,15 @@ def main():
                              "clips under clips/<strategy>-ab/<arm>/. LTX strategies only.")
     parser.add_argument("--dry-run", action="store_true",
                         help="With --ab-manifest: validate the jobs and build their workflows, "
-                             "then exit. No pod is created and nothing is spent.")
+                             "then exit. With --strategy runpod-ltx25-keyframe: print which shots "
+                             "get a keyframe and which fall back to text. No pod is created, no "
+                             "network call is made and nothing is spent.")
+    parser.add_argument("--keyframe-fal-cap", type=float, default=RunPodLtx25KeyframeStrategy.FAL_CAP_USD,
+                        metavar="USD",
+                        help="runpod-ltx25-keyframe: hard cap on the estimated fal spend (sheets and "
+                             "keyframes) in one run; shots past it decode from text (default: %(default)s). "
+                             "tools/capped_run.py caps RunPod only, so this is the fal cap. Spend "
+                             "already in <output_dir>/keyframes/cost.jsonl counts against it.")
     args = parser.parse_args()
 
     load_env()
@@ -804,6 +818,7 @@ def main():
             "runpod-vace": lambda: _create_vace_strategy(args),
             "runpod-ltx2": lambda: _create_ltx2_strategy(args),
             "runpod-ltx25": lambda: _create_ltx2_strategy(args, RunPodLtx25Strategy),
+            "runpod-ltx25-keyframe": lambda: _create_keyframe_strategy(args),
             "runpod-ltx25-ingredients": lambda: _create_ltx2_strategy(args, RunPodLtx25IngredientsStrategy),
         }
         if args.ab_manifest:
@@ -811,9 +826,43 @@ def main():
             return
         if VIDEO_STRATEGIES[args.strategy].ab_manifest_only:
             sys.exit(f"{args.strategy} only runs with --ab-manifest (its inputs are per clip).")
+        if args.dry_run:
+            if args.strategy != RunPodLtx25KeyframeStrategy.name:
+                sys.exit("--dry-run needs --ab-manifest, or --strategy runpod-ltx25-keyframe "
+                         "(it would otherwise start a real decode).")
+            dry_run_keyframes(args)
+            return
         strategy = strategies[args.strategy]()
-        if run_decode(args, strategy):
+        try:
+            incomplete = run_decode(args, strategy)
+        except KeyframeSetupError as e:   # raised by prepare(), before any pod exists
+            sys.exit(f"Error: {e}")
+        if incomplete:
             sys.exit(1)  # shots remain failed/undecoded: not a finished film
+
+
+def dry_run_keyframes(args) -> None:
+    """Print which shots would get a keyframe and which fall back to text. No network, no files written."""
+    try:
+        prompts, _ = manifest.load_shots(args.output_dir)
+    except FileNotFoundError:
+        sys.exit(f"Error: {manifest.shots_path(args.output_dir)} not found. Run encoder first.")
+    if args.start_index:
+        prompts = [p for p in prompts if p["index"] >= args.start_index]
+    if args.limit:
+        prompts = prompts[:args.limit]
+    characters_data = {}
+    if os.path.exists(manifest.characters_path(args.output_dir)):
+        with open(manifest.characters_path(args.output_dir)) as f:
+            characters_data = json.load(f)
+    probe = object.__new__(RunPodLtx25KeyframeStrategy)   # skip __init__: it creates a RunPod session
+    probe._init_character_identity(
+        build_character_shot_map(characters_data), characters_data,
+        getattr(args, "style_prefix", None) or manifest.load_style_prefix(args.output_dir))
+    probe._fal_cap_usd = args.keyframe_fal_cap
+    print(f"Keyframe plan for {len(prompts)} shots of {args.output_dir} (dry run):")
+    print("\n".join(probe.describe_plan(prompts)))
+    print("Dry run OK. No network call was made and nothing was written.")
 
 
 def _run_ab(args, strategies: dict):
@@ -821,7 +870,7 @@ def _run_ab(args, strategies: dict):
     strategy_cls = VIDEO_STRATEGIES[args.strategy].cls
     if not issubclass(strategy_cls, RunPodLtx2Strategy):
         sys.exit("--ab-manifest supports the LTX strategies only "
-                 "(runpod-ltx2, runpod-ltx25, runpod-ltx25-ingredients)")
+                 "(runpod-ltx2, runpod-ltx25, runpod-ltx25-keyframe, runpod-ltx25-ingredients)")
     jobs = load_ab_jobs(args.ab_manifest)
     if args.dry_run:
         dry_run_ab(strategy_cls, jobs)
@@ -855,7 +904,12 @@ def _create_wan_enriched_strategy(args):
     )
 
 
-def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy):
+def _create_keyframe_strategy(args):
+    return _create_ltx2_strategy(args, RunPodLtx25KeyframeStrategy,
+                                 fal_cap_usd=args.keyframe_fal_cap)
+
+
+def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):
     output_dir = args.output_dir
     characters_path = manifest.characters_path(output_dir)
 
@@ -879,6 +933,7 @@ def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy):
         character_shot_map=character_shot_map,
         characters_data=characters_data,
         style_prefix=style_prefix,
+        **extra,
     )
 
 

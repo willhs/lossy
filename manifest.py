@@ -45,6 +45,16 @@ def characters_path(output_dir: str) -> str:
     return os.path.join(output_dir, "characters.json")
 
 
+def character_sheets_dir(output_dir: str) -> str:
+    """Per-character reference sheets (``<name>_sheet.png``), a decode cache, next to the portraits."""
+    return os.path.join(output_dir, "characters")
+
+
+def keyframes_dir(output_dir: str) -> str:
+    """Per-shot first frames (``kf_NNNN.png``) for the keyframe strategy, a decode cache."""
+    return os.path.join(output_dir, "keyframes")
+
+
 def decode_progress_path(output_dir: str, strategy: str) -> str:
     return os.path.join(output_dir, f"decode_progress_{strategy}.json")
 

@@ -720,6 +720,100 @@ docs/research/0029-character-reference-continuity/trial/run_arm_i.sh RUN_DIR 1.0
   keep it, as K did. Compare the shot's wardrobe against the clips.
 - **Prompt cost.** Sheet text plus the repeated looks makes the prompt about 2x as long as T's.
 
+### Keyframe strategy built
+
+Built and mock-tested in job `0163ceb5` (no pod, no fal, no Gemini, no spend). Decisions are in
+`decisions.tsv` (rows `kf-*`).
+
+**What exists**
+
+- `--strategy runpod-ltx25-keyframe` (`RunPodLtx25KeyframeStrategy`, a subclass of
+  `RunPodLtx25Strategy`). Opt-in: no default, no schedule, no other strategy's behaviour changed.
+- `keyframes.py` holds the logic. Before the video pass, `prepare()` (called by `run_decode`
+  before any pod exists) draws one sheet per person and one first frame per keyframe shot, cached
+  under `characters/<name>_sheet.png` and `keyframes/kf_NNNN.png` (keyed on prompt, generator and
+  sheets, so a re-encode regenerates). `generate` then runs the unchanged LTX-2.5 I2V graph with
+  that frame as **part 0's** start image; later parts chain as before.
+- **Routing.** A shot gets a keyframe only if every character in it is a person with a description.
+  Any `keep_name` design character in the shot (droid, Vader, trooper), no character, or a missing
+  description sends the whole shot to the text path. I chose "any" rather than "only design
+  characters" because the editor would have to invent the droid and I2V would lock the clip to it.
+  This will cost coverage on Star Wars shots with Luke and a droid together; the dry run prints
+  the count.
+- **Fix 1, wardrobe.** Sheets are head-and-shoulders only, framed on head and neck with no clothing
+  in frame (the full-body panel and the grey t-shirt are gone), and the keyframe prompt now leads
+  with the scene, which carries the shot's wardrobe, and takes only face, hair, skin, age and
+  build from the sheet. The trial had the clothes instruction last.
+- **Fix 2, look-alikes.** Sheets are drawn most-prominent character first. Each new sheet's
+  face centroid (OpenCV-zoo YuNet + SFace, as the scorer used) is compared with every accepted
+  sheet. Cosine over 0.5 means a redraw with a new seed, three draws in all, and then the sheet is
+  dropped: that character's shots use text rather than ship a look-alike. A sheet with no
+  detectable face gets the same treatment.
+- **Failure handling.** One failed or blank editor call, a missing sheet, a spent budget or a
+  failed upload leaves that shot on text. The shot is never failed. A missing `FAL_KEY` or missing
+  face models stops the run in `prepare()`, before any pod.
+- **Generator interface.** `KeyframeGenerator` (`preflight`, `make_sheet`, `make_keyframe`).
+  `FalKleinGenerator` is the trial's fal klein call. A self-hosted klein is a second
+  implementation; its ComfyUI graph is not built here.
+- **fal cap.** `--keyframe-fal-cap USD` (default 1.00) is an estimated-spend hard stop that counts
+  what `keyframes/cost.jsonl` already holds, because `capped_run` caps RunPod only and restarts
+  decode as a new process.
+- **Dry run, free:** `uv run python decode.py OUTPUT_DIR --strategy runpod-ltx25-keyframe --dry-run
+  [--start-index N --limit M]` prints each shot as `KEYFRAME <characters>` or `text <reason>`, the
+  sheets it would draw, one sample editor prompt and a fal upper bound. No network call, nothing
+  written, works with no `FAL_KEY`. (`--dry-run` on any other strategy without `--ab-manifest` now
+  exits with an error; before, it was ignored and started a real decode.)
+- Checked with `tests/test_keyframes.py` (60 mock tests): keyframe passed as part 0's start image,
+  later parts still chaining, fallbacks for design characters, nobody, no description, a failed
+  edit, a failed upload and a dropped sheet, both sheet fixes, the fal call and its cap, the
+  decode-loop hook, and the dry run with sockets blocked. The dry run was also driven through
+  `decode.py` on a synthetic 9-shot output directory (`evidence/keyframe_dry_run.txt` in the job
+  workspace). No Seinfeld or Star Wars output directory was available to the job, so it has **not**
+  been run on real manifest shots.
+
+**What is unverified** (everything that needs a paid call or a real model file)
+
+1. The fal calls are the trial's own (`subscribe`, `upload_file`, same models and arguments) but
+   were not run here; only fakes ran.
+2. The OpenCV face embedder is a port of the scorer's `Faces` class. It has not run: the ONNX
+   models are not in the repo or this workspace (`LOSSY_FACE_MODELS`, default `models/face`).
+3. The head-and-shoulders sheet prompt has never been drawn. klein may still show a collar, or
+   draw a worse likeness without the full-body panel.
+4. That the reordered keyframe prompt stops the grey-t-shirt leak. The gate checks distinctness
+   and that a face exists, not that the sheet is clothing-free.
+5. Star Wars coverage: how many shots survive the "no design character" rule.
+6. Shots over ~3 s, split shots (keyframe is part 0 only), wide shots with small faces, and a
+   keyframe whose composition fights the camera move, as before.
+
+**The paid check, for Will to approve** (not run; filed as an attended Steady task)
+
+One short Star Wars IV segment, about 30 shots, with the text strategy as the control.
+
+1. Free first. Put `yunet.onnx` and `sface.onnx` in `models/face/`. Run the dry run above on the
+   v2 output and pick a 30-shot window with at least 20 `KEYFRAME` shots (and a few droid shots,
+   to see the fallback). Check the sheet list and the sample prompt.
+2. K arm: `uv run python tools/capped_run.py --cap 1.0 --margin 0.05 --no-project -- uv run python
+   decode.py output/star_wars_iv_v2 --strategy runpod-ltx25-keyframe --start-index S --limit 30
+   --keyframe-fal-cap 1.0 --style-prefix ...` (same style prefix as the T arm).
+3. T arm: the same window with `--strategy runpod-ltx25` under its own `capped_run --cap 1.0`
+   (skip it if clips from this encode and prefix already exist).
+4. Look at `characters/*_sheet.png` and a contact sheet of `keyframes/` before judging the clips:
+   clothing-free sheets, distinct faces, no droid keyframes. Then score K against T with the §3
+   rule (face cosine K ≥ T + 0.10; blind grid ≥ +1.0; adherence ≥ T − 0.3). `trial/score.py` reads
+   a trial plan, so it needs a small SW4 plan file first (a free step).
+
+| Line | Estimate |
+|---|---|
+| RunPod, K arm (30 clips of ~3.5 s, one ~20 min boot, the 0026 model at $0.59/h) | ~$0.70 |
+| RunPod, T arm, same shape | ~$0.70 |
+| fal klein: ≤ 6 sheets × 3 draws ≈ $0.09, ≤ 30 keyframes × ≤ $0.03 | ≤ $1.00 (the cap) |
+| Gemini judge (`gemini-3.1-flash-lite`, the trial's $0.06) | ~$0.10 |
+| **Total** | **~$2.5, hard-capped at about $3.0** |
+
+The trial measured $0.60 of RunPod for 32 shorter clips including boot, so the RunPod lines are
+likely high. Both RunPod runs are under `capped_run`; fal is under `--keyframe-fal-cap`. If K
+fails the rule, SW4 runs on text on 30 Nov, as planned.
+
 ### Trial files
 
 - `trial/make_trial_manifest.py`, `trial/make_refs.py`, `trial/score.py`: the builder, the

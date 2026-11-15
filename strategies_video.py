@@ -13,6 +13,9 @@ import time
 
 import manifest
 from clip_types import AudioClipResult, ClipResult
+from keyframes import (SHEET_ATTEMPTS, DiskCache, FaceEmbedder, Fallback, FalKleinGenerator,
+                       KeyframeGenerator, KeyframeJob, OpenCVFaceEmbedder, ShotRoute,
+                       keyframe_prompt, make_keyframes, make_sheets, plan_route)
 from runpod_pod import PinnedModel, check_gated_access
 from prompt_format import (_format_prompt_wan, _format_prompt_seedance, format_prompt,
                            strip_character_names, vary_prompt_for_part)
@@ -68,6 +71,12 @@ class GenerationStrategy:
 
     def mark_clean_exit(self) -> None:
         """Signal a clean run completion, e.g. for pod-lifecycle bookkeeping. No-op default."""
+        pass
+
+    def prepare(self, entries: list[dict]) -> None:
+        """Called once by the decode loop, before the first shot and before any pod
+        exists, with the shot entries that still need generating. No-op default; a
+        strategy that must make inputs ahead of the video pass overrides it."""
         pass
 
 
@@ -1025,6 +1034,22 @@ class RunPodWanStrategy(GenerationStrategy):
             print(f"  Error generating {clip_name}: {e}")
             return None
 
+    def _part_prompt(self, prompt: str, entry: dict | None, part_idx: int, n_parts: int) -> str:
+        """Per-part prompt: the encoded temporal segment if there is one, else generic cues."""
+        temporal_segs = (entry or {}).get("temporal_segments") if n_parts > 1 else None
+        if temporal_segs:
+            seg_idx = round(part_idx * (len(temporal_segs) - 1) / max(n_parts - 1, 1))
+            return self.format_prompt(dict(entry, description=temporal_segs[seg_idx]))
+        return vary_prompt_for_part(prompt, part_idx, n_parts)
+
+    def _first_part_start_image(self, shot_index: int) -> str | None:
+        """Pod-side filename to condition a shot's first part on, or None for text-to-video.
+
+        Later parts chain from the previous part's last frame. None here, so part 0
+        is text-only unless a strategy supplies a keyframe (RunPodLtx25KeyframeStrategy).
+        """
+        return None
+
     def generate(
         self,
         prompt: str,
@@ -1048,20 +1073,13 @@ class RunPodWanStrategy(GenerationStrategy):
         # Chain split parts via I2V when the model supports it (Wan 2.2 TI2V):
         # each part after the first is seeded with the previous part's last frame.
         chaining = self._supports_i2v and self._chaining and len(frame_counts) > 1
-        start_image = None
+        start_image = self._first_part_start_image(shot_index)
 
         for part_idx, frames in enumerate(frame_counts):
             clip_name = manifest.clip_filename(
                 shot_index, None if len(frame_counts) == 1 else part_idx + 1, ".mp4")
 
-            # Per-part prompt: use encoded temporal segments if available, else generic cues
-            temporal_segs = (entry or {}).get("temporal_segments") if len(frame_counts) > 1 else None
-            if temporal_segs:
-                seg_idx = round(part_idx * (len(temporal_segs) - 1) / max(len(frame_counts) - 1, 1))
-                part_entry = dict(entry, description=temporal_segs[seg_idx])
-                part_prompt = self.format_prompt(part_entry)
-            else:
-                part_prompt = vary_prompt_for_part(prompt, part_idx, len(frame_counts))
+            part_prompt = self._part_prompt(prompt, entry, part_idx, len(frame_counts))
 
             clip_result = self._generate_one_clip(
                 part_prompt, clips_dir, clip_name, frames, effective_seed + part_idx,
@@ -1800,6 +1818,137 @@ class RunPodLtx25IngredientsStrategy(RunPodLtx25Strategy):
                                "video_cfg": 1.0, "audio_cfg": 1.0}}
         wf["25"]["inputs"]["guider"] = ["56", 0]
         return wf
+
+
+class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
+    """LTX-2.5 that starts each human-character shot from a drawn first frame (research 0029, arm K).
+
+    Before the video pass, ``prepare`` draws one head-and-shoulders reference sheet
+    per person (each checked against the others so no two look alike) and, for every
+    shot whose characters are all sheeted people, one first frame from those sheets
+    and the shot's own prompt. ``generate`` then runs the usual LTX-2.5 two-stage
+    graph with that frame as part 0's start image. In the 16-shot Seinfeld trial this
+    took the blind "same person" score from 3.5 to 5.0 and face cosine from 0.23 to 0.55.
+
+    Everything the shot map or the image editor cannot cover decodes exactly as
+    ``runpod-ltx25`` would: shots with no character, with a ``keep_name`` design
+    character (droid, Vader, trooper), with a person who has no sheet, and any shot
+    whose keyframe could not be made or uploaded. A failed keyframe never fails a shot.
+    A missing prerequisite (FAL_KEY, face models) does stop the run, before any pod:
+    silently decoding a whole film from text would hide the misconfiguration.
+
+    Opt-in: ``--strategy runpod-ltx25-keyframe``. Nothing else changes.
+    """
+
+    name = "runpod-ltx25-keyframe"
+
+    FAL_CAP_USD = 1.0      # estimated fal spend this run may make; RunPod has its own cap
+
+    def __init__(self, output_dir: str = "", *args, generator: KeyframeGenerator | None = None,
+                 embedder: FaceEmbedder | None = None, fal_cap_usd: float = FAL_CAP_USD, **kwargs):
+        super().__init__(output_dir, *args, **kwargs)
+        self._output_dir = output_dir
+        self._generator = generator
+        self._embedder = embedder
+        self._fal_cap_usd = fal_cap_usd
+        self._keyframes: dict[int, str] = {}        # shot -> local PNG, set by prepare()
+        self.fallbacks: dict[int, Fallback] = {}    # shot -> why it decodes from text
+
+    def _get_generator(self) -> KeyframeGenerator:
+        if self._generator is None:
+            self._generator = FalKleinGenerator(
+                self._fal_cap_usd,
+                cost_log=os.path.join(manifest.keyframes_dir(self._output_dir), "cost.jsonl"))
+        return self._generator
+
+    def _get_embedder(self) -> FaceEmbedder:
+        if self._embedder is None:
+            self._embedder = OpenCVFaceEmbedder(os.environ.get("LOSSY_FACE_MODELS", "models/face"))
+        return self._embedder
+
+    def plan(self, entries: list[dict]) -> list[ShotRoute]:
+        """Which shots get a keyframe and why the rest do not. Pure: no files, no network."""
+        return [plan_route(e["index"], self._character_shot_map.get(e["index"], []),
+                           self._characters_by_name, self._cap_to_most_prominent)
+                for e in entries]
+
+    def _editor_prompt(self, entry: dict, route: ShotRoute) -> str:
+        """The editor's prompt for a shot's first frame: its part-0 video prompt, reframed."""
+        n_parts = len(self._target_durations(entry["duration_s"]))
+        text = self._part_prompt(self.format_prompt(entry), entry, 0, n_parts)
+        return keyframe_prompt(text, len(route.characters))
+
+    def _sheet_order(self, routes: list[ShotRoute]) -> list[str]:
+        """Most-prominent first, so the lead characters keep their first draw and any
+        reseeding falls on the minor ones."""
+        names = {c for r in routes if r.keyframe for c in r.characters}
+        return sorted(names, key=lambda n: (-len(self._characters_by_name[n].get("shots", [])), n))
+
+    def prepare(self, entries: list[dict]) -> None:
+        routes = self.plan(entries)
+        self.fallbacks = {r.shot: r.fallback for r in routes if not r.keyframe}
+        self._keyframes = {}
+        todo = [r for r in routes if r.keyframe]
+        print(f"Keyframes: {len(todo)} of {len(routes)} shots start from a drawn first frame; "
+              f"{len(routes) - len(todo)} decode from text.")
+        if not todo:
+            return
+        generator, embedder = self._get_generator(), self._get_embedder()
+        generator.preflight()
+        embedder.preflight()
+        names = self._sheet_order(routes)
+        sheets = make_sheets(names, {n: self._characters_by_name[n]["description"] for n in names},
+                             generator, embedder, DiskCache(manifest.character_sheets_dir(self._output_dir)))
+        by_shot = {e["index"]: e for e in entries}
+        jobs = [KeyframeJob(r.shot, r.characters, self._editor_prompt(by_shot[r.shot], r)) for r in todo]
+        self._keyframes, failed = make_keyframes(
+            jobs, sheets, generator, DiskCache(manifest.keyframes_dir(self._output_dir)),
+            (self.WIDTH, self.HEIGHT))
+        self.fallbacks.update(failed)
+        if failed:
+            print(f"Keyframes: {len(failed)} shots fall back to text "
+                  f"({', '.join(sorted({f.value for f in failed.values()}))}).")
+
+    def _first_part_start_image(self, shot_index: int) -> str | None:
+        local = self._keyframes.get(shot_index)
+        if local is None:
+            return None
+        remote = self._upload_image(local)
+        if remote is None:
+            self.fallbacks[shot_index] = Fallback.UPLOAD_FAILED
+            print(f"  Shot {shot_index}: keyframe upload failed; generating from text")
+        return remote
+
+    def describe_plan(self, entries: list[dict]) -> list[str]:
+        """The dry-run report: one line per shot, then what a real run would make and cost."""
+        routes = self.plan(entries)
+        by_shot = {e["index"]: e for e in entries}
+        lines = []
+        for r in routes:
+            if r.keyframe:
+                lines.append(f"  shot {r.shot:<5} KEYFRAME  {'+'.join(r.characters)}")
+            else:
+                lines.append(f"  shot {r.shot:<5} text      {r.fallback.value}")
+        todo = [r for r in routes if r.keyframe]
+        names = self._sheet_order(routes)
+        w, h = self.WIDTH, self.HEIGHT
+        sheet_usd = len(names) * FalKleinGenerator.price_sheet() * SHEET_ATTEMPTS
+        frame_usd = sum(FalKleinGenerator.price_keyframe(len(r.characters), (w, h)) for r in todo)
+        by_reason: dict[str, int] = {}
+        for r in routes:
+            if r.fallback:
+                by_reason[r.fallback.value] = by_reason.get(r.fallback.value, 0) + 1
+        lines.append(f"{len(todo)} keyframe shots, {len(routes) - len(todo)} text shots "
+                     f"({', '.join(f'{k} {v}' for k, v in sorted(by_reason.items())) or 'none'}).")
+        lines.append(f"Sheets to draw ({len(names)}, head-and-shoulders, most prominent first): "
+                     f"{', '.join(names) or 'none'}")
+        if todo:
+            lines.append(f"First keyframe prompt (shot {todo[0].shot}): "
+                         f"{self._editor_prompt(by_shot[todo[0].shot], todo[0])}")
+        lines.append(f"fal estimate, upper bound: sheets <= ${sheet_usd:.2f} "
+                     f"({SHEET_ATTEMPTS} draws each), keyframes <= ${frame_usd:.2f}; "
+                     f"capped at ${self._fal_cap_usd:.2f}. RunPod cost is the same as runpod-ltx25.")
+        return lines
 
 
 class RunPodVaceStrategy(CharacterIdentityMixin, RunPodWanStrategy):

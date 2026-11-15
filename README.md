@@ -29,6 +29,7 @@ Source Film -> [Encode] -> Scene Manifest (JSON) -> [Decode] -> Reconstructed Fi
 | Strategy | Backend | Duration control | Cost |
 |---|---|---|---|
 | `runpod-ltx25` | RunPod LTX-2.5 (self-hosted, distilled int8, two-stage, conv VAE) — character identity + I2V chaining + native audio in the clip | Variable, 25fps | Hourly GPU rate, ~$15/film on a community A6000 (research 0025) |
+| `runpod-ltx25-keyframe` | Opt-in. As `runpod-ltx25`, but each human-character shot starts from a first frame drawn from the character's sheet (research 0029 arm K); other shots decode from text. Not yet checked on Star Wars. `--dry-run` prints the plan | `runpod-ltx25` cost + fal klein, ≤ `--keyframe-fal-cap` (default $1) |
 | `runpod-ltx2` | RunPod LTX-2 (self-hosted, distilled FP8) — character identity + I2V long-shot chaining | Variable, 25fps | Hourly GPU rate, ~$0.006/shot marginal at 1280x704 |
 | `runpod-wan22` | RunPod Wan 2.2 TI2V-5B (self-hosted) — character identity + I2V long-shot chaining | Variable, 24fps | Hourly GPU rate |
 | `runpod-wan` | RunPod Wan 2.1 (self-hosted) | Fixed ~5s | Hourly GPU rate |
@@ -151,7 +152,8 @@ Environment variables (in `.env`):
 - `GEMINI_API_KEY` -- Gemini API key (encode stage 3; same value as GOOGLE_API_KEY)
 - `TMDB_API_KEY` -- TMDB API key (encode stage 3 with `--tmdb-id`; free at themoviedb.org/settings/api)
 - `REPLICATE_API_TOKEN` -- Replicate API token (replicate-wan strategy)
-- `FAL_KEY` -- fal.ai API key (fal-seedance strategies)
+- `FAL_KEY` -- fal.ai API key (fal-seedance strategies, and the keyframe sheets/frames of `runpod-ltx25-keyframe`)
+- `LOSSY_FACE_MODELS` -- directory with OpenCV-zoo `yunet.onnx` and `sface.onnx` (default `models/face`); `runpod-ltx25-keyframe` uses them to keep sheets from looking alike
 - `RUNPOD_API_KEY` -- RunPod API key (runpod-wan strategy)
 - `HF_TOKEN` -- Hugging Face Read token (only `runpod-ltx25-ingredients`, whose adapter is gated; see research 0029)
 
