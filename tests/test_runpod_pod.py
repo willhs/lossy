@@ -883,6 +883,7 @@ class TestPodLeakReview:
     @pytest.fixture
     def fleet(self, monkeypatch):
         import sys
+
         import runpod_pod
 
         fleet = _FleetRunpod()
@@ -950,6 +951,7 @@ class TestPodLeakReview:
     def test_unknown_id_create_failure_registers_exit_cleanup(
             self, tmp_path, fleet, monkeypatch):
         import atexit
+
         from runpod_pod import PodSetupError
 
         callbacks = []
