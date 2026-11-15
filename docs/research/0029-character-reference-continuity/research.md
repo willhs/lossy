@@ -1,0 +1,552 @@
+---
+id: 0029-character-reference-continuity
+type: note
+purpose: "Survey how to give the decoder one reference look per character (sheets made once, fed to every shot) so a recurring character stops looking like a new person each shot; compare reference-to-video, keyframe-first and face-swap routes on identity evidence, multi-character support, cost per film, self-hosting and code change; recommend a small trial. No paid generation."
+scope: ["research", "decode", "characters", "ltx-2.5", "video-generation", "continuity"]
+tags: ["research", "character-consistency", "reference-images", "ic-lora", "keyframe", "ltx-2.5", "seinfeld"]
+related:
+  - "research/0011-character-continuity/research.md"
+  - "research/0020-wan22-identity-i2v-verification/research.md"
+  - "research/0021-training-data-contamination/research.md"
+  - "research/0025-video-model-refresh-nov-2026/research.md"
+  - "research/0026-seinfeld-s01e03-first-end-to-end-run/research.md"
+  - "research/0028-style-drift/research.md"
+  - "research/experiments/0004-vace-continuity-test.md"
+  - "research/experiments/0005-vace-3condition-continuity-test.md"
+---
+
+# Character continuity via reference images
+
+Vision alignment: Have an online presence (goal: complete a movie or TV show reconstruction,
+Star Wars IV headline run with a control title)
+
+Steady task `05bd15af`. Will, 15 Nov: before the full Star Wars IV run (job `08db840b`,
+scheduled 30 Nov), make each character keep one look across shots. No paid generation in this
+job; the trial below needs his go-ahead.
+
+Confidence tags: **[Direct]** read in code or measured here; **[Supported]** a dated external
+source says so (I did not reproduce it); **[Inferred]** my reasoning from those;
+**[Speculative]** a guess, flagged as one. Prices were read on 2026-11-15 unless a date is
+given, and many come from fal.ai pages or resellers, so recheck before spending.
+
+## Answer
+
+- **Most of the drift is not solvable by text.** Today a shot's first frame comes from text
+  alone. The identity block is byte-identical across shots (0020), but the same 260 characters
+  of description can be drawn as many different faces. [Direct: `strategies_video.py`
+  `RunPodWanStrategy.generate`, part 0 has `start_image=None`]
+- **Recommended route, first: keyframe-first on the current LTX-2.5 path.**
+  1. Make one reference sheet per human character, once per decode.
+  2. Compose each character shot's first frame with an open image editor that takes those
+     references: FLUX.2 [klein] 4B, Apache-2.0, or Qwen-Image-Edit-2511, Apache-2.0.
+  3. Feed that frame into the I2V hook LTX-2.5 already has (`LTXVImgToVideo`, used today only
+     for chaining split parts).
+
+  Projected cost: about **+$1-11 a film** over today's ~$15. It is the smallest code change of
+  the options. It should also pin the photoreal style, the 0028 problem, as a side effect.
+  [Inferred]
+- **Recommended second arm: LTX-2.5's own reference-sheet adapter.** It exists:
+  `Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients`, file `ltx-2.5-22b-ic-lora-ingredients-0.9`
+  (1.31 GB), created 2026-09-10. It is gated by an access click and covered by the LTX-2.x
+  community licence. It conditions every frame on one composite sheet that can hold several
+  characters, which suits 2-3 person shots. Its cost multiplier and identity quality are
+  unpublished. [Direct: HF API, `evidence/ltx25_ingredients_hf_api.txt`]
+- **Hosted reference-to-video APIs are 10-50x over budget for the film.** Kling O3, Vidu Q2,
+  Veo 3.1 and Seedance 2.0 come to about $520-3,200 for Star Wars IV and $100-500 for the
+  Seinfeld episode, against a $50-60 goal ceiling. They are only for hero shots, or as a
+  measuring stick in the trial. [Supported + arithmetic]
+- **Open Wan-based R2V has the best published identity scores**: Phantom-14B, VACE-14B,
+  BindWeave, MAGREF and Lynx. Two things count against it: it would mean leaving LTX-2.5, which
+  won the 0025 bake-off and carries synced audio, and it costs roughly $80-330 a film.
+  [Supported + Inferred]
+- **Face swap after generation is a fallback only.** The best-known swapper,
+  `inswapper_128`, is licensed for non-commercial research only. All the common swappers are
+  weak on small and profile faces, which most film shots have. [Supported]
+- **Do not use real-film stills as references.** A still ships the source's pixels, so the
+  payload stops being text. It injects the real actor's face, which is the opposite of 0021's
+  stance. And the output becomes a likeness of a real person. This overrides 0011's suggestion
+  to cut canonical frames from the source. [Inferred, argued below]
+- **Payload: 0 bytes if sheets are regenerated at decode, about 14-48 KB per character if
+  shipped.** Star Wars IV's ~10 human characters come to about 0.5 MB as shipped AVIF sheets,
+  more than the whole brotli-compressed text (366 KB, 0005). [Direct: `size_probe.py`]
+- **Trial: Seinfeld S01E03, 16 shots, three arms**: text only, keyframe-first, Ingredients. It
+  is scored by a blind identity-consistency rubric plus a face-embedding metric. About
+  **$0.90 with a $1.25 cap**, and it needs one human step: accepting the gated adapter and
+  providing an HF token.
+
+## Premise check
+
+The task says "today every shot renders a new-looking person". The code agrees:
+
+- **No visual anchor on a shot's first part.** `RunPodWanStrategy.generate` starts every
+  shot with `start_image = None`, and LTX-2.5 inherits that. The only image input is chaining a
+  split shot's later parts from the previous part's last frame. [Direct: `strategies_video.py`
+  `generate`, `_upload_start_frame`] 0028 reached the same conclusion for style. [Direct: 0028
+  "Premise check"]
+- **Text identity is already as locked as text gets.** `CharacterIdentityMixin` prepends the
+  same verbatim description for up to 2 characters a shot, strips personal names, and keeps
+  design names (`keep_name`). [Direct: `strategies_video.py` `_prepend_identity`,
+  `_cap_to_most_prominent`, `_all_character_names`] So "one look" cannot come from more prompt
+  work: identical tokens still sample different faces.
+- **A reference path already exists, on a retired model.** `decode.py:generate_portraits` makes
+  one fal Flux Schnell portrait per character ("Professional portrait photograph of
+  {description}…"). Only `RunPodVaceStrategy` (VACE-1.3B) uses it, passing the first
+  character's portrait as `reference_image`. [Direct: `decode.py:72-126`, `:848-872`;
+  `strategies_video.py` `RunPodVaceStrategy.generate`] Experiment 0005 found it added only
+  marginal value over enriched text, helped in close-ups but not wide shots, and sometimes
+  skewed to anime. [Direct: exp 0005 "Interpretation"] That was a 1.3B model fed a single
+  portrait, so it says little about current 14B+ R2V models or LTX-2.5's adapter. [Inferred]
+- **Nothing in this note was already done on main.** I grepped for `ingredients`,
+  `IC-LoRA`, `sheet` and `keyframe` in `strategies_video.py`/`decode.py`/`encode.py` and found
+  only the chaining and VACE paths above. [Direct]
+
+## 1. Making the reference images
+
+### Generate, do not cut from the film
+
+| Source | Compression story | Contamination (0021) | Likeness / publication | Verdict |
+|---|---|---|---|---|
+| **Generated sheet from the encode's name-free description** | Text in, text out. The sheet is a decode-side derivative of the description. | Identity still comes from the description, and no name enters the sheet prompt. | An invented face. Nothing claims to be the actor. | **Use** |
+| Real-film still (face crop per character) | Ships the source's pixels, becoming an image codec of the actor's face. Breaks the "film in <1 MB of text" claim. | Worse than naming: injects the real look directly, not via memory. | Renders a real person's face onto new footage, a deepfake of the actor, for a public YouTube/Reddit release. | **Don't** |
+| Sheet prompted with the character's name | Text | Exactly 0021's failure: the model draws its memory of the actor or design. | Same concern as stills, indirectly | **Don't** |
+
+[Inferred from 0021's findings and 0005's codec framing.] There is a quality reason as well:
+0005 found single keyframe-crop references gave inconsistent, crop-dependent results.
+[Direct: exp 0005]
+
+**No sheets for design characters.** These are the `keep_name` entries: the Star Wars droids,
+Vader, Stormtroopers, Chewbacca, Jawas. Their name is their description (0023/0028), so any
+sheet would be the image model's memory of a famous, copyrighted design: contamination
+rendered as a picture. They stay text-only. 0025 already flagged Kandinsky's droids as
+"recall, not reconstruction". [Inferred] The sheet path covers human characters only, which is
+also where drift is visible.
+
+### What a sheet is
+
+- **Layout.** One character per sheet: front, 3/4 and profile head-and-shoulders, plus one full
+  body, in a 2x2 grid on a plain background. It uses neutral expression and lighting and the
+  description's stable traits only. Wardrobe stays out of the sheet, as 0023 decided for text:
+  costume belongs to the shot. [Inferred]
+- **Ingredients adapter.** It wants one composite image per generation ("characters, props, and
+  locations laid out on a black background"), resized to a 544 px short side. A per-shot
+  composite can be pasted locally from the per-character sheets of the characters in that shot,
+  with no generation. [Supported: docs.ltx.io IC-LoRA adapters page; floyo.ai workflow page]
+- **Lightricks' guidance on panels.** Small or cluttered panels cause identity drift, so keep
+  to 1-3 characters per composite. [Supported: LTX-2.3 Ingredients card, via web research]
+
+### Candidate sheet generators
+
+| Model | Max refs | Price | Weights / licence | Note |
+|---|---|---|---|---|
+| **FLUX.2 [klein] 4B** | 4 (secondary source) | Self-host: seconds per image | **Apache-2.0**, ungated (HF API, created 2026-01-14) | Small (~8-13 GB VRAM), can share the LTX pod. **First choice.** |
+| **Qwen-Image-Edit-2511** | Multi-image, two-person fusion | fal $0.03/MP; self-host | **Apache-2.0**, ungated (HF API, created 2025-12-17) | 20B, stronger edits, heavier |
+| Nano Banana Pro (Gemini 3 Pro Image) | 14, "5 people at high fidelity" | fal $0.15 | Closed | Best API option if klein's faces are weak |
+| Seedream 4.5 / 5.0 | 10 | $0.04 / $0.035-0.135 | Closed | |
+| FLUX.2 dev / Kontext dev | up to 10 | $0.012/MP (fal) | Non-commercial | Licence rules it out for publication |
+
+[Supported: fal.ai model pages, bfl.ai, HF; licence and creation dates [Direct] from the HF
+API for klein and Qwen.]
+
+**Sheet cost is negligible either way.** About 10 human characters × 1-4 images is ~$0.40-6 on
+an API, or a few GPU-seconds self-hosted. [Inferred]
+
+### Payload size per film
+
+Measured with `size_probe.py`: crops of real LTX-2.5 render frames, resized and encoded locally.
+Output is in `evidence/size_probe_out.txt` in the workspace, median of 8 (or 3):
+
+| Image | WebP q80 | WebP q60 | AVIF q60 | AVIF q40 |
+|---|---|---|---|---|
+| single ref 512x512 | 31.8 KB | 22.4 KB | 27.2 KB | 13.8 KB |
+| single ref 768x768 | 53.0 KB | 37.2 KB | 42.7 KB | 21.5 KB |
+| 4-view sheet 1024x1024 | 123.6 KB | 84.9 KB | 99.9 KB | **48.4 KB** |
+
+[Direct]
+
+| Film | Human characters with a sheet | Shipped, AVIF q40 4-view | Shipped, WebP q80 | Text payload today (0005) |
+|---|---|---|---|---|
+| Star Wars IV | ~10 (16 in registry, less ~6 `keep_name` designs; ADR 006) | **~0.48 MB** | ~1.2 MB | 3.9 MB raw / **366 KB brotli** |
+| Seinfeld S01E03 | ~4-6 | ~0.2-0.3 MB | ~0.5-0.75 MB | not measured (smaller) |
+
+[Direct sizes; character counts Supported by ADR 006 and 0028]
+
+**Images do not compress further.** Shipped sheets would more than double Star Wars IV's
+compressed payload (366 KB → ~850 KB). That is still under 1 MB, so the headline claim
+survives. [Inferred]
+
+**The better framing: sheets need not ship at all.** A sheet only has to be the same for every
+shot within one decode. It does not have to be bit-identical across decodes. So it can be
+regenerated at decode time from the description (already in the payload), a fixed seed and a
+pinned open model, for **0 added bytes**. A re-decode may draw a slightly different but equally
+consistent cast. Ship a sheet (about 48 KB per character) only when a human has curated a look
+and wants it locked. [Inferred]
+
+## 2. Feeding the references into video generation
+
+The film numbers below are Star Wars IV: 2,012 shots, 124.7 min = 7,482 s. Seinfeld S01E03 is
+315 shots, 1,382 s. Today's baseline is LTX-2.5 two-stage at ~$14.90 a film, ~$2.67 an
+episode, on a community A6000 [Direct: 0025]. "Change" means the change to
+`strategies_video.py`.
+
+### 2a. Hosted reference-to-video APIs
+
+| Model | Refs / multi-person | Start frame + refs? | Price | Star Wars IV | Seinfeld | Identity evidence |
+|---|---|---|---|---|---|---|
+| Kling O3 Std R2V (fal) | 7 inputs; multi | **Yes** | $0.084/s | ~$630 | ~$116+ (3 s minimum clip) | No published face metric |
+| Kling O1 R2V (fal) | 7; multi | Yes | $0.112/s | ~$840 | ~$155+ | none |
+| Vidu Q2 R2V (fal) | 7; multi | No | $0.30/clip at 720p | ~$630 | ~$100 | Q2 0.596 ref-consistency in SkyReels-V3's paper |
+| Veo 3.1 R2V (fal) | 3; weak multi ("a single person…") | **No** (mutually exclusive) | $0.20/s, fixed 8 s, 16:9 | ≥$3,200 | ≥$500 | none |
+| Seedance 2.0 R2V (fal) | 9 images; multi via @Image tags | No dedicated param | ~$0.30/s (third-party) | ~$2,250 | ~$415 | none |
+| Gemini Omni 1.2 Flash | 2 characters × 3 images | Not documented | ~$0.07/s (press; unverified) | ~$520 | ~$97 | none |
+| MiniMax S2V-01 | 1 face | No | $0.50/clip | ~$1,000 | ~$158 | Hailuo tops OpenS2V human domain (FaceSim 57.7) |
+| Runway Gen-4 refs | 3 refs, still images only | Image-then-I2V | ~$0.13/s (aggregator) | ~$990 | ~$180 | none |
+
+[Supported: fal.ai `llms.txt` pages for Kling/Vidu/Veo/Seedance/MiniMax; Vertex docs for Veo;
+press and segmind for Omni; OpenS2V-Eval leaderboard; arXiv 2601.17323. Film totals are
+arithmetic.]
+
+- **Everything is API-only.** Nothing in this table is self-hostable.
+- **Two shutdowns.** The Sora 2 API was shut down on 2026-09-24, and the Veo 3.1 Preview models
+  in the Gemini Developer API on 2026-10-22. [Supported, single secondary sources; not
+  re-verified]
+- **Change.** A new fal strategy, roughly `FalSeedanceStrategy`'s size: upload refs, map
+  characters to @tags. Small. Licence: commercial API terms. Kling O3's start-frame support
+  means it can also keep lossy's I2V chaining. [Inferred]
+- **Verdict.** Over budget for any whole run. As a 16-shot trial measuring stick it is about
+  $4 (Kling O3). [Inferred]
+
+### 2b. Open reference-to-video models (self-host)
+
+| Model | Multi-person | Licence | Identity evidence | Start frame + refs |
+|---|---|---|---|---|
+| Phantom-Wan 14B (2025-05) | ≤4 refs, built for multi-subject | Apache-2.0 (from a mirror README) | OpenS2V human: Total 64.2, FaceSim 55.0; Lynx paper: 0.664 | No |
+| Wan2.1 VACE-14B (2025-05) | multi | Apache-2.0 | OpenS2V open: FaceSim 55.1; Lynx paper: 0.594 | **Yes** (masked frames + refs) |
+| BindWeave (ByteDance, 2025-10) | multi | not verified | OpenS2V open: Total 57.6, FaceSim 53.7 | No |
+| MAGREF (2025-05) | any count, per-subject masks | MIT (HF card) | OpenS2V human FaceSim 32.9 | not confirmed |
+| Lynx (2025-09) | single face | Apache-2.0 | own paper: 0.779 (best) | No |
+| Stand-In (2025-08) | single face | not verified | user study 4.10/5 (own paper) | composes with VACE (claimed) |
+| SkyReels-V3 (2026-01) | 1-4 refs | not verified | own paper: 0.670 | No |
+| HunyuanCustom | released weights single-subject | Tencent community licence | FaceSim 0.627 (own card) | No |
+
+[Supported: OpenS2V-Eval 1.1 leaderboard (arXiv 2505.20292); papers 2509.15496, 2508.07901,
+2601.17323; HF cards. The researcher saw duplicated rows on the live leaderboard, so treat
+OpenS2V numbers as ±1-2.]
+
+- **Cost.** All of these sit on Wan2.1-14B. At 720p × 81 frames they take an estimated 15-30
+  min a clip at 50 steps on an H100, or 2-5 min with lightx2v/CausVid-style distillation, and
+  480p is ~3x faster. [Supported, unbenchmarked; no official timings found]
+  - Star Wars IV needs ~2,100 clips × ~3.5 min ≈ 120 H100-hours, about **$250-330**; at 480p
+    about **$80-110**. Seinfeld is about $15-50. [Inferred]
+- **Change.** Large. It is a new model family with no synced audio (the MMAudio path would have
+  to return) and is 2-6x slower than LTX-2.5. Resolution falls below the 0025 winner's 1280x704
+  unless we pay 720p prices. VACE-14B is the only one that also keeps chaining.
+- **Verdict.** It has the best evidence but is the wrong cost class for the film. A candidate
+  only if both LTX-2.5 arms fail the trial. [Inferred]
+
+### 2c. Keyframe-first on LTX-2.5 (recommended)
+
+**Mechanism.**
+
+1. Make the per-character sheets (§1).
+2. For each shot with ≥1 sheeted character, ask the image editor for that shot's first frame.
+   Inputs: the sheets of the characters present (≤2, the mixin's existing cap), plus the
+   style prefix and the shot description that `format_prompt` already builds.
+3. LTX-2.5 runs I2V from that frame through the `LTXVImgToVideo` /
+   `LTXVImgToVideoInplace` nodes it already uses for chaining.
+
+[Direct: hook exists in `RunPodLtx25Strategy._build_workflow` (`start_image` branch)]
+
+**Identity evidence.**
+
+- **Measured drift.** On plain Wan 2.2 A14B I2V, face similarity between the input image and
+  the video is 0.578 (ArcFace-based). Reward tuning raises it to 0.694. The paper notes that
+  the problem "becomes critical when the human face occupies only a small fraction of the
+  image". [Supported: arXiv 2510.14255, CVPR 2026]
+- **No duration curve.** No source measured drift over 5-10 s, and I found no LTX-2.5 figure.
+  [Supported: absence, searched]
+- **The project's own evidence.** I2V copies a frame's look reliably: chained parts never
+  drifted in style (0 of 69, 0028), and no seam appeared at a part boundary (0020). [Direct]
+- **The catch.** The identity is only as good as the composed keyframe. Image editors hold
+  identity much better than video models do (that is what multi-reference editing is for), but
+  this is an assumption to test, not a measured figure. [Inferred]
+
+**Multi-person shots.**
+
+- **Editors.** klein takes 4 refs, enough for 2 characters × 2 views. Qwen-Image-Edit-2511
+  advertises two-person fusion. Nano Banana Pro claims 5 people. [Supported]
+- **Video stage.** The I2V stage doesn't care how many people are in the frame.
+
+**Cost.** [Inferred; klein and Qwen speeds on an A6000 are estimates]
+
+- **Video:** the same LTX-2.5 cost as today. `LTXVImgToVideo` replaces the empty latent, so no
+  extra steps.
+- **Keyframes, FLUX.2 klein 4B:** ~5 s each on an A6000, about 2.8 GPU-h for 2,012 shots ≈
+  **+$1** (community) per film.
+- **Keyframes, Qwen-Image-Edit-2511:** ~30-60 s each, ≈ **+$6-11** per film.
+- **Episode:** pennies either way.
+- **Pod memory:** LTX-2.5's int8 weights (~40 GB) on a 48 GB A6000 leave little room. Run the
+  keyframes as **a separate pass before the video pass** on the same pod rather than swapping
+  models per shot. [Inferred]
+
+**Self-host and licence.**
+
+- Self-hosted on the existing RunPod/ComfyUI setup; FLUX.2 klein has native ComfyUI support.
+  [Supported]
+- klein 4B and Qwen-Image-Edit-2511 are Apache-2.0 and ungated [Direct: HF API]. LTX-2.5 is
+  unchanged.
+
+**Change: small to medium.** [Inferred]
+
+1. A sheet pre-pass. This replaces fal-based `generate_portraits` with an on-pod generator and
+   writes `characters/<name>_sheet.webp`.
+2. A keyframe pre-pass for character shots.
+3. A hook so part 0 of a shot can take a start image. Today `generate` hardcodes `None`, and
+   parts > 0 keep chaining as now.
+4. `PINNED_MODELS` entries for the editor.
+
+That is about 150-250 lines in a `RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy)`. No new
+ComfyUI custom nodes if klein's core-node support holds.
+
+**Risks.** [Inferred]
+
+1. The I2V start frame fixes composition. If the editor's composition fights the camera motion
+   in the description, the shot inherits it. The two-stage sampler refines at stage 2 only, so
+   a bad keyframe isn't repaired.
+2. Wide shots with tiny faces gain little (2510.14255; exp 0005 saw the same).
+3. The editor may add its own house style. That cuts both ways: it is the 0028 fix if
+   photoreal, a new drift source if not. Score style in the trial.
+
+### 2d. LTX-2.5 Ingredients IC-LoRA (recommended second arm)
+
+**What exists** [Direct: HF API, `evidence/ltx25_ingredients_hf_api.txt`]:
+
+- `Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients`, tagged `reference-sheet`,
+  `character-consistency`.
+- Single file `ltx-2.5-22b-ic-lora-ingredients-0.9.safetensors` (1.31 GB), plus 6 example
+  videos.
+- Created 2026-09-10, modified 2026-10-22. `gated: auto`, so an access click is needed.
+- Licence `ltx-2.x-community-license`, the same family as the LTX-2.5 base already in use.
+- The model card itself is gated, so I could not read it.
+
+**How it works** [Supported: docs.ltx.io IC-LoRA adapters page; floyo.ai workflow, undated]:
+
+- **Input.** One composite sheet, fed as a static video guide repeated on every frame and
+  cropped out after. The prompt has two parts: `Reference sheet: <panels> / Generated video:
+  <action>`.
+- **Settings.** LoRA strength 1, CFG 1, 8 steps on the **distilled** model, the one lossy runs.
+- **Nodes.** Core ComfyUI: `LTXICLoRALoaderModelOnly`, `LTXAddVideoICLoRAGuide`,
+  `LTXVCropGuides`.
+- **A workflow mismatch.** The official docs say the published 2.5 workflow JSON "currently
+  loads the LTX-2.3 Ingredients checkpoint" and warn not to substitute one for the other.
+- **Contradicting report.** A user thread (HF LTX-2.5 discussion #61, opened 19 Aug) says 2.5's
+  IC-LoRAs were only Canny/Depth/Pose. That predates the adapter's 10 Sep creation, so it is
+  stale. [Inferred]
+
+**Identity evidence.** None published: no metric and no multi-person result. There are 6
+vendor example videos, which I did not download. [Supported: absence]
+
+**Multi-person.** It is designed for one sheet holding several characters, props and locations.
+That is the most natural fit for 2-3 person shots of any self-hosted option. [Supported:
+vendor description]
+
+**Cost.** [Speculative] It is unknown and the main thing the trial measures.
+
+- The guide is a full extra video's worth of frames in the sequence. Attention is quadratic in
+  tokens, so expect roughly 1.5-3x LTX-2.5's per-shot time: **~$22-45** a film, ~$4-8 an
+  episode, on a community A6000.
+- The official workflow is single-stage at a 544 px short side. Whether it combines with
+  lossy's two-stage upscale, and with first-frame I2V for chaining, is **not confirmed**.
+
+**Change: medium.** [Inferred]
+
+1. Paste a per-shot composite locally with PIL (no generation).
+2. Upload it and add the 3 IC-LoRA nodes.
+3. Write the two-part prompt in `format_prompt`, describing panels by position, not by name, to
+   keep 0021's stance.
+4. Pin one more model, which needs an HF token on the pod. lossy pins the base LTX-2.5 from the
+   ungated `comfyicu` mirror for this reason (`RunPodLtx25Strategy` docstring), and no mirror
+   for the adapter is known.
+
+About 150 lines in a sibling strategy.
+
+### 2e. Other routes, briefly
+
+| Route | Why not first | Cost |
+|---|---|---|
+| Character LoRA on LTX-2 (fal trainer) | $9.60 a character at 2,000 steps: Star Wars IV's 10 humans ≈ $96, over budget. Self-host ≈ 30 min of H100 per character ≈ $1.5 each, but needs a 20-50 image dataset per character, which could come from the sheet generator. The highest ceiling, so a later step if the trial shows refs help but are not enough. | $15-100 a film |
+| Post face swap (FaceFusion, hyperswap_1a_256) | Weak on profile and small faces; human faces only. `inswapper_128` (ReActor/Roop) is non-commercial research only, and hyperswap's terms are disputed. About 5 min per minute of 1080p on a 4090. | ~$4-8 a film |
+| VACE-14B + SAM2 face mask, regenerating the face region | A full diffusion pass per clip. Copes with pose better than 128 px swappers, but costs as much as 2b. | ≈ 2b |
+| LTX community ID LoRAs (LTX-Best-Face-ID, ID-LoRA) | Built for LTX-2.3. The licence and training data of community face-ID weights are unknown. | — |
+
+[Supported: fal trainer page, InsightFace licensing page, clore.ai guide, HF cards; costs
+Inferred]
+
+## 3. Recommendation and trial
+
+**Do 2c (keyframe-first) and 2d (Ingredients) as two arms of one small trial on the current
+LTX-2.5 pod. Defer everything else.**
+
+- **Why both arms.**
+  - 2c is cheap and almost certain to work mechanically: the I2V path is proven in 0020 and
+    0028. Its weakness is identity decay after frame 0.
+  - 2d conditions every frame, which is exactly that weakness, but its cost and 2.5
+    compatibility are unknown.
+  - One pod session measures both against the same text-only control.
+- **Don't touch the Star Wars IV schedule.** Whichever arm wins becomes a decode strategy flag
+  in a follow-up job. If the trial has not run by 30 Nov, the run goes ahead as planned.
+
+### Data shape for the follow-up implementation
+
+The `characters.json` entry gains an optional `reference` object:
+
+```json
+"reference": {"sheet": "characters/george_sheet.webp", "seed": 1234,
+              "generator": "flux2-klein-4b@<hf-rev>", "views": ["front", "three_quarter", "profile", "full_body"]}
+```
+
+Invariants:
+
+1. `keep_name` characters never get one.
+2. The sheet prompt is built from `description` only, never a name.
+3. Every shot of a character in one decode uses the same sheet.
+4. A missing `sheet` file is regenerated from (`description`, `seed`, `generator`), so the
+   payload need not carry it.
+
+A per-shot keyframe is a decode cache, `keyframes/<NNNN>.png`, never part of the payload.
+
+### Trial: Seinfeld S01E03, 16 shots
+
+**Why Seinfeld, not `sw_r2_leia`.** `sw_r2_leia`'s recurring characters are mostly droids,
+which are `keep_name` designs with no sheet (0020: R2-D2 in shots 8/19/26), and experiment 0004
+showed the danger of a range with no recurring humans. Seinfeld has four human leads who recur
+in nearly every shot (identity blocks in 97% of first parts, 0028 data). It has a 1080p source,
+an existing encode, the `--ab-manifest` runner, and a free baseline. [Direct: 0028]
+
+**Shots.**
+
+- 3 single-character shots for each of Jerry, George, Elaine and Kramer, plus 4 two-character
+  shots: 16 shots.
+- All one-part, 1-3 s, chosen evenly through the episode, in medium or close framing so a face
+  is scoreable.
+- Exclude shots under 1 s.
+- Built by a `make_trial_manifest.py` modelled on `0028-style-drift/make_ab_manifest.py`, with
+  seed = shot index throughout.
+
+**Arms (48 clips).**
+
+| Arm | Prompt | Image input |
+|---|---|---|
+| T: text control | today's `format_prompt` with the photoreal style prefix (e54fa16) and photographic identity blocks | none (current production) |
+| K: keyframe-first | same text | klein-composed first frame from the characters' sheets → `LTXVImgToVideo` |
+| I: Ingredients | the same text inside the two-part sheet prompt | per-shot composite of the characters' sheets via IC-LoRA |
+| (optional) R: Kling O3 R2V | same text | same sheets as elements; a hosted ceiling, ~$4, only if Will wants a ceiling number |
+
+**Scoring.** A blind identity-consistency rubric, the 0025 method adapted to identity:
+
+1. **Per-character, per-arm grids.**
+   - For each character, take the middle frame of every shot it appears in (6-7 shots per
+     character). Crop to the character with a face detector, or use the whole frame if none is
+     found.
+   - Build one grid per arm. Shuffle arm identity, tile order and position with a seeded RNG,
+     using `blind_pack.py`'s approach.
+   - A fresh vision-model judge, Gemini or a Claude subagent with no key, scores each grid:
+     - **"same person in every tile?"** 1-5;
+     - **odd-one-out**: which tile is least like the rest, if any;
+     - **"matches this description?"** 1-5, given the identity block text.
+   - Two passes with different shuffles, as in 0025, to check position bias. Read differences
+     under ~0.3 as noise.
+2. **Cross-arm pairwise.** For each character, show one tile from each arm's grid side by side
+   and ask which set is most internally consistent.
+3. **Objective face metric.** Mean pairwise cosine of face embeddings across a character's
+   shots, per arm. Use InsightFace `buffalo_l` (non-commercial research licence, fine for an
+   internal measurement, not shipped) or facenet-pytorch. It runs locally on CPU, for free.
+   - For K, also measure frame 0 vs the middle frame vs the last frame against the sheet. That
+     gives the I2V decay curve no source publishes.
+4. **Regressions.** `0028-style-drift/classify_style.py` on the middle frame of each clip
+   (photoreal rate), plus 0025's adherence/artefacts/motion 1-5 on the same packs. Check that K
+   and I do not freeze motion or ignore the action.
+
+**Decision rule.**
+
+- **Pass.** Ship the arm as a strategy flag if all of these hold:
+  - its identity score beats T by ≥1.0 point, or its embedding cosine beats T by ≥0.10;
+  - its adherence and motion are no worse than T by more than 0.3;
+  - its photoreal rate is ≥ T's.
+- **Tie between K and I.** Pick the cheaper per film.
+- **Both fail.** Next is the character-LoRA route (2e), or Phantom/VACE-14B (2b) at 480p as its
+  own costed test.
+
+**Cost estimate** (A6000 secure at $0.59/h, 0026's fitted rate). [Inferred]
+
+| Item | Time |
+|---|---|
+| Pod boot + model download (LTX-2.5 already pinned; klein ~8-13 GB; adapter 1.3 GB) | ~25 min |
+| Sheets (4 characters × 1 sheet, plus 2 retries) and 16 keyframes, klein | ~3 min |
+| T and K arms, 16 clips each at ~1 min | ~32 min |
+| I arm, 16 clips at ~2 min (unknown multiplier) | ~32 min |
+| **Total** | **~90 min ≈ $0.90** |
+
+- Run it under `tools/capped_run.py --cap 1.25 --margin 0.05`, no `--keep-pod`.
+- The judge costs pennies. The face metric is free.
+- Arm R adds ~$4 of fal spend if wanted.
+
+**Needs from Will before it runs.** [Inferred]
+
+1. Go-ahead for ~$0.90 (cap $1.25).
+2. Accept the gated `Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients` repo on HF and put an HF read
+   token where the pod setup can read it.
+3. Optionally, approve arm R (~$4).
+
+**Code needed before the trial.** About a day, in one job:
+
+- the two strategy subclasses (or an `--ab-manifest` extension that carries an optional image
+  input per job);
+- the sheet and keyframe pre-passes;
+- the manifest builder;
+- the scoring scripts.
+
+All of it can be validated with `--dry-run` and no spend, as 0028's runner was.
+
+## What we don't know
+
+- **Whether identity survives LTX-2.5 I2V across a whole shot.** No published decay curve
+  exists for any model. The trial's frame-0/mid/last measurement is the first number.
+- **The Ingredients adapter's quality, speed and compatibility.** The card is gated and was not
+  read. No identity metric is published. The official 2.5 workflow reportedly loads the 2.3
+  checkpoint. Compatibility with two-stage upscale and with first-frame I2V chaining is
+  untested.
+- **klein's actual identity hold across 2-person compositions,** and its real reference cap. 4
+  comes from a secondary source; the official README was not read.
+- **Self-hosted speeds** for klein, Qwen-Image-Edit and Wan-14B R2V on an A6000 are estimates
+  from secondary sources, not benchmarks.
+- **Hosted R2V identity.** Kling O3, Seedance 2.0, Veo 3.1, Omni Flash and Wan 2.6/2.7 have no
+  published face metrics, only marketing.
+- **OpenS2V numbers.** The live leaderboard scrape showed duplicated rows, so its figures are
+  approximate.
+- **Single-source claims.** Gemini Omni 1.2 Flash pricing and the Sora 2 and Veo 3.1 preview
+  shutdowns each rest on one secondary source and were not verified here.
+- **Licences for BindWeave, Stand-In and SkyReels-V3** were not verified.
+- **Whether an invented, consistent face is what Will wants for Star Wars,** as opposed to a
+  face that reads as the famous cast. This note argues for invented faces on codec-honesty and
+  likeness grounds. The trial's contact sheet is where he decides.
+
+## Files
+
+- `research.md`: this note.
+- `size_probe.py`: the free local payload-size probe. Its output is in
+  `evidence/size_probe_out.txt` in the job workspace, reproduced in §1.
+- `decisions.tsv`: the decision trail.
+- Sources: OpenS2V-Eval leaderboard https://bestwishysh-opens2v-eval.hf.space/ and arXiv
+  2505.20292; Phantom arXiv 2502.11079; Wan2.1-VACE-14B
+  https://huggingface.co/Wan-AI/Wan2.1-VACE-14B; Lynx arXiv 2509.15496; Stand-In arXiv
+  2508.07901; SkyReels-V3 arXiv 2601.17323; BindWeave https://huggingface.co/ByteDance/BindWeave;
+  HunyuanCustom https://huggingface.co/tencent/HunyuanCustom; identity-preserving I2V arXiv
+  2510.14255; fal model pages (Kling O1/O3, Vidu Q2, Veo 3.1, Seedance 2.0, MiniMax S2V,
+  Qwen-Image-Edit-2511, Nano Banana Pro, Seedream, FLUX.2, LTX-2 trainer); Vertex AI Veo
+  reference images doc; LTX IC-LoRA adapters
+  https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters; Ingredients
+  workflow https://www.floyo.ai/workflows/ltx-2-5-iclora-ingredients-for-refer-9zmb6zyv2p3a;
+  HF API for `Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients`, `black-forest-labs/FLUX.2-klein-4B`
+  and `Qwen/Qwen-Image-Edit-2511` (read 2026-11-15); InsightFace commercial licensing
+  https://www.insightface.ai/services/models-commercial-licensing; FaceFusion guide
+  https://docs.clore.ai/guides/face-and-identity/facefusion.

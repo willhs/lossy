@@ -1,0 +1,16 @@
+ts	phase	decision	why	evidence	result
+2026-11-15T04:00:00Z	start	investigation playbook, research note 0029 (reserved via manager_reserve_doc_number)	deliverable is a recommendation; no paid spend allowed	task.md	open
+2026-11-15T04:05:00Z	premise	premise holds: part 0 of every shot is text-only; text identity already byte-locked	start_image=None for part 0 in RunPodWanStrategy.generate; mixin prepends verbatim blocks	strategies_video.py generate, _prepend_identity	confirmed
+2026-11-15T04:05:00Z	premise	existing portrait path (decode.generate_portraits + RunPodVaceStrategy) is the only reference path; VACE-1.3B tested marginal in exp 0005	avoid redoing 0011/0005	decode.py:72-126; exp 0005	reuse as starting point, not repeat
+2026-11-15T04:10:00Z	survey	two web-research subagents in parallel (R2V models/APIs; sheets+keyframe+faceswap), blocking	independent angles; keep page dumps out of main context	subagent reports (sources in research.md)	done
+2026-11-15T04:30:00Z	verify	checked LTX-2.5 Ingredients IC-LoRA exists via HF API rather than trusting the conflicting discussion thread	subagents disagreed (2.3-only vs 2.5 exists)	evidence/ltx25_ingredients_hf_api.txt	exists, created 2026-09-10, gated auto, ltx-2.x licence
+2026-11-15T04:32:00Z	verify	checked FLUX.2 klein 4B and Qwen-Image-Edit-2511 licences via HF API	licence decides publishability	HF API	both apache-2.0, ungated
+2026-11-15T04:40:00Z	measure	free local payload probe (size_probe.py) instead of guessing image bytes	task asks size per film	evidence/size_probe_out.txt	4-view sheet 48 KB AVIF q40; SW4 ~0.48 MB
+2026-11-15T04:45:00Z	decide	reject real-film stills as references	breaks text-only payload, injects actor likeness, contradicts 0021; overrides 0011	research.md section 1	rejected
+2026-11-15T04:45:00Z	decide	no sheets for keep_name design characters	a sheet would be the model's memory of a famous design; contamination as an image	0021, 0025 K6 droid note	text-only for designs
+2026-11-15T04:46:00Z	decide	sheets are a decode-side derivative (0 payload bytes) unless curated	consistency is needed only within one decode	reasoning	recommended framing
+2026-11-15T04:50:00Z	decide	rule out hosted R2V for the film	$520-3200 SW4 vs $50-60 ceiling	fal prices x 7482 s	hero shots / ceiling arm only
+2026-11-15T04:50:00Z	decide	rule out Wan-14B R2V as first move	leaves LTX-2.5 (0025 winner, synced audio); ~$80-330 a film	OpenS2V, timing estimates	fallback if LTX arms fail
+2026-11-15T04:52:00Z	decide	recommend keyframe-first (klein 4B -> LTXVImgToVideo) + Ingredients IC-LoRA as two arms	2c cheap and mechanically proven, decays after frame 0; 2d conditions every frame but cost unknown	research.md 2c/2d	recommended
+2026-11-15T04:55:00Z	decide	trial on Seinfeld S01E03 not sw_r2_leia	sw_r2_leia recurring characters are keep_name droids; Seinfeld has 4 human leads in 97% of shots and the ab-manifest runner	0020, 0028 data	16 shots, 3 arms, ~$0.90 cap $1.25
+2026-11-15T04:56:00Z	scope	no code, no spend, SW4 schedule untouched	task limits	task.md	held
