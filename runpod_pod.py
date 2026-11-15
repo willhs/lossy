@@ -77,6 +77,11 @@ POD_SETUP_ATTEMPTS = 4
 POD_SETUP_BACKOFF_S = 30
 # After /interrupt, how many 2 s polls of /queue before declaring the pod wedged.
 CANCEL_CONFIRM_POLLS = 5
+# A terminate call that errors is retried: it is the only thing standing between
+# a replaced (or wedged) pod and billing until the run ends. "Not found" is the
+# expected answer for a pod that is already gone and is not retried.
+TERMINATE_ATTEMPTS = 3
+TERMINATE_BACKOFF_S = 3
 
 
 
@@ -211,6 +216,10 @@ class RunPodSession:
         self._clean_exit = False
         self._cleanup_registered = False
         self._swept = False
+        # Set just before the first runpod.create_pod call. A create can time
+        # out client-side after the pod exists server-side, leaving no recorded
+        # id; the exit sweep (which identifies pods by name) must still run.
+        self._create_attempted = False
         self._http = None
         # Set when a job timed out and /interrupt could not free the worker:
         # the pod is alive and billing but will never run another job, so a
@@ -259,9 +268,16 @@ class RunPodSession:
                 # silently mean "billing all night".
                 self.write_state()
                 armed = self.arm_self_destruct(self.keep_pod_minutes)
-                note = (f"self-destructs in {self.keep_pod_minutes}min" if armed
-                        else "WARNING: self-destruct could NOT be armed -- terminate it yourself")
-                print(f"  Pod {self.pod_id} kept alive ({note}); state at {self.state_path}")
+                if armed:
+                    print(f"  Pod {self.pod_id} kept alive (self-destructs in "
+                          f"{self.keep_pod_minutes}min); state at {self.state_path}")
+                else:
+                    # A kept pod with no deadline bills until a human notices
+                    # (the 10.5 h / $3.40 failure). Fail closed: terminate it.
+                    print(f"  Pod {self.pod_id}: self-destruct could NOT be armed; "
+                          f"terminating instead of keeping it.")
+                    keeping = False
+                    self.terminate()
             else:
                 self.terminate()
 
@@ -333,6 +349,10 @@ class RunPodSession:
             print("Error: RUNPOD_API_KEY not set in .env or environment.")
             sys.exit(1)
 
+        # Even a failed request may have created a server-side pod whose id
+        # never reached us. Register before the request so exit sweeps by name.
+        self._register_cleanup()
+
         if self.pod_id is not None:
             # Overwriting the handle would orphan a pod that is still billing.
             print(f"  Replacing pod {self.pod_id}: terminating it first.")
@@ -347,6 +367,7 @@ class RunPodSession:
             label = gpu_type if cloud_type == CLOUD_TYPES[0] else f"{gpu_type} [{cloud_type}]"
             print(f"  Trying {label}...")
             try:
+                self._create_attempted = True
                 ssh_pubkey = ""
                 pubkey_path = os.path.expanduser("~/.ssh/id_ed25519.pub")
                 if not os.path.exists(pubkey_path):
@@ -394,7 +415,6 @@ class RunPodSession:
         self._owned_pod_ids.add(pod_id)
         self.gpu_hourly_rate = gpu_rate
         self.pod_start_time = time.time()
-        self._register_cleanup()
         print(f"  Pod created: {self.pod_id}")
 
         # Wait for runtime
@@ -575,8 +595,8 @@ class RunPodSession:
 
         Returns the ids of the stray pods found, for tests and callers.
         """
-        if not self._owned_pod_ids:
-            return []  # never provisioned anything, so nothing can have escaped
+        if not self._owned_pod_ids and not self._create_attempted:
+            return []  # never asked for a pod, so nothing can have escaped
         if not os.environ.get("RUNPOD_API_KEY"):
             return []
 
@@ -666,22 +686,40 @@ class RunPodSession:
         self.close_http()
         self.remove_state()
 
+    def _terminate_pod_id(self, pod_id: str) -> Exception | None:
+        """Ask RunPod to terminate `pod_id`, retrying transient errors.
+
+        Returns None on success, else the last error. A single API hiccup used
+        to be final: the pod kept billing next to its replacement until the
+        run ended. "Not found" means the pod is already gone and is not retried.
+        """
+        import runpod
+
+        runpod.api_key = os.environ.get("RUNPOD_API_KEY")
+        err: Exception | None = None
+        for attempt in range(1, TERMINATE_ATTEMPTS + 1):
+            try:
+                runpod.terminate_pod(pod_id)
+                return None
+            except Exception as e:
+                err = e
+                if "not found" in str(e).lower() or attempt == TERMINATE_ATTEMPTS:
+                    break
+                time.sleep(TERMINATE_BACKOFF_S * attempt)
+        return err
+
     def _terminate_quietly(self, pod_id: str) -> None:
-        try:
-            import runpod
-            runpod.api_key = os.environ.get("RUNPOD_API_KEY")
-            runpod.terminate_pod(pod_id)
+        err = self._terminate_pod_id(pod_id)
+        if err is None:
             print(f"  Terminated abandoned pod {pod_id}.")
-        except Exception as e:
-            print(f"  Abandoned pod {pod_id} not terminated ({e}); presumed gone, "
-                  f"the exit sweep will confirm.")
+        else:
+            print(f"  Abandoned pod {pod_id} not confirmed terminated ({err}); "
+                  f"it may still be billing. The exit sweep will retry.")
 
     def terminate(self):
         """Terminate the pod and remove state file."""
         if self.pod_id is None:
             return
-
-        import runpod
 
         pod_id = self.pod_id
         self.pod_id = None  # Prevent double-terminate
@@ -690,12 +728,11 @@ class RunPodSession:
         elapsed_h = (time.time() - self.pod_start_time) / 3600 if self.pod_start_time else 0
         estimated_cost = elapsed_h * self.gpu_hourly_rate
 
-        try:
-            runpod.api_key = os.environ.get("RUNPOD_API_KEY")
-            runpod.terminate_pod(pod_id)
+        err = self._terminate_pod_id(pod_id)
+        if err is None:
             print(f"  Pod {pod_id} terminated. Session cost: ~${estimated_cost:.2f} ({elapsed_h:.1f}hrs)")
-        except Exception as e:
-            print(f"  Warning: Failed to terminate pod {pod_id}: {e}")
+        else:
+            print(f"  Warning: Failed to terminate pod {pod_id}: {err}")
             print("  Manually terminate at https://www.runpod.io/console/pods")
 
         self.remove_state()

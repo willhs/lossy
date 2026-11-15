@@ -88,7 +88,7 @@ class TestMeasuredTruePeak:
         src = tmp_path / "hot.wav"
         subprocess.run(
             ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-             "anoisesrc=d=6:c=pink:a=0.7:r=44100", "-ac", "2", str(src)],
+             "anoisesrc=d=6:c=pink:a=0.7:r=44100:seed=12345", "-ac", "2", str(src)],
             check=True,
         )
         wav, aac = tmp_path / "mix.wav", tmp_path / "mix.m4a"
@@ -108,3 +108,95 @@ class TestMeasuredTruePeak:
         ).stderr
         peak = float(re.findall(r"Peak:\s+(-?[\d.]+) dBFS", out)[-1])
         assert peak <= -1.0
+
+
+# -- Review of dfe0a70 (research 0026 note, 2026-11-15) ------------------------
+# The test above feeds pink noise at 0.7 and gains it +6 dB: that peaks at about
+# -1.1 dBFS in an earlier sample. These use full-scale input, and state what the
+# limiter does to loudness.
+
+def _render(tmp_path, graph, src_expr, gain_db=6, *, limited=True):
+    """src -> final-mix filter (single or multi path) -> float wav. Returns the path."""
+    src = tmp_path / "src.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", src_expr, "-ac", "2",
+         "-ar", "44100", str(src)], check=True)
+    wav = tmp_path / f"{graph}_{'lim' if limited else 'nolim'}.wav"
+    if graph == "single":
+        af = stitch._single_track_filter(gain_db) if limited else f"volume={gain_db}dB"
+        cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-af", af]
+    else:
+        fc = stitch._mix_filter_complex([gain_db, gain_db])
+        if not limited:
+            fc = fc.replace("," + stitch._true_peak_limiter(), "")
+        cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-i", str(src),
+               "-filter_complex", fc, "-map", "[out]"]
+    subprocess.run(cmd + ["-c:a", "pcm_f32le", str(wav)], check=True)
+    return wav
+
+
+def _ebur(path):
+    out = subprocess.run(
+        ["ffmpeg", "-nostats", "-i", str(path), "-af", "ebur128=peak=true", "-f", "null", "-"],
+        capture_output=True, text=True, check=True).stderr
+    lufs = float(re.findall(r"I:\s+(-?[\d.]+) LUFS", out)[-1])
+    peak = float(re.findall(r"Peak:\s+(-?[\d.]+) dBFS", out)[-1])
+    return lufs, peak
+
+
+# Full-scale noise: +6 dB gain takes it to about +2 dBFS before the limiter.
+FULL_SCALE_NOISE = "anoisesrc=d=6:c=pink:a=1.0:r=44100:seed=12345"
+# Worst case for AAC: a hard-edged full-scale square (see the xfail below).
+FULL_SCALE_SQUARE = (
+    "aevalsrc='0.999*sgn(sin(2*PI*220*t))|0.999*sgn(sin(2*PI*220*t))':d=6:s=44100")
+# Dialogue-like bursts peaking at 0.25 (-12 dBFS); +6 dB leaves them at -6 dBFS,
+# under the 0.8 ceiling, so the limiter should have nothing to do.
+QUIET_BURSTS = "aevalsrc='0.2*sin(2*PI*200*t)*pow(abs(sin(2*PI*2.3*t)),3)':d=10:s=44100"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+class TestFullScaleInputAndLoudness:
+    @pytest.mark.parametrize("graph", ["single", "multi"])
+    def test_full_scale_square_is_limited_before_aac(self, tmp_path, graph):
+        _, peak = _ebur(_render(tmp_path, graph, FULL_SCALE_SQUARE))
+        assert peak <= -1.0
+
+    def _after_aac_peak(self, tmp_path, graph, src):
+        _lufs, raw_peak = _ebur(_render(tmp_path, graph, src, limited=False))
+        assert raw_peak > 0                     # without the limiter this really clips
+        aac = tmp_path / "mix.m4a"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(_render(tmp_path, graph, src)),
+                        "-c:a", "aac", "-b:a", "192k", str(aac)], check=True)
+        return _ebur(aac)[1]
+
+    @pytest.mark.parametrize("graph", ["single", pytest.param("multi", marks=pytest.mark.xfail(
+        strict=True, reason="KNOWN GAP: deterministic hot-noise multi-track AAC peaks at -0.6 dBTP"))])
+    def test_full_scale_input_is_held_below_minus_1_dbtp_after_aac(self, tmp_path, graph):
+        assert self._after_aac_peak(tmp_path, graph, FULL_SCALE_NOISE) <= -1.0
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "KNOWN GAP (research 0026 note): ffmpeg's AAC encoder overshoots the "
+        "limiter ceiling on a hard-edged full-scale square. "
+        "Whether the 0.8 ceiling needs to drop depends on real programme audio."))
+    @pytest.mark.parametrize("graph", ["single", "multi"])
+    def test_hard_square_after_aac_stays_below_minus_1_dbtp(self, tmp_path, graph):
+        assert self._after_aac_peak(tmp_path, graph, FULL_SCALE_SQUARE) <= -1.0
+
+    @pytest.mark.parametrize("graph", ["single", "multi"])
+    def test_programme_below_the_ceiling_keeps_its_loudness(self, tmp_path, graph):
+        """The stated bound: material that never reaches the 0.8 ceiling comes
+        out within 0.2 LU of where it went in (measured: 0.0 LU)."""
+        before, _ = _ebur(_render(tmp_path, graph, QUIET_BURSTS, limited=False))
+        after, _ = _ebur(_render(tmp_path, graph, QUIET_BURSTS))
+        print(f"{graph} quiet programme: {before:.1f} -> {after:.1f} LUFS")
+        assert abs(after - before) <= 0.2
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "KNOWN GAP: sustained hot input loses more than 1 LU; a peak limiter "
+        "alone cannot guarantee programme loudness. See research 0026 follow-ups."))
+    @pytest.mark.parametrize("graph", ["single", "multi"])
+    def test_hot_programme_loudness_stays_within_one_lu(self, tmp_path, graph):
+        before, _ = _ebur(_render(tmp_path, graph, FULL_SCALE_SQUARE, limited=False))
+        after, _ = _ebur(_render(tmp_path, graph, FULL_SCALE_SQUARE))
+        print(f"{graph} hot programme: {before:.1f} -> {after:.1f} LUFS")
+        assert abs(after - before) <= 1.0

@@ -164,3 +164,142 @@ The "peaks at 0 dB" finding is a code defect in `stitch.py`, now fixed (research
 - Both paths now end in one chain (`_true_peak_limiter`): resample to 4x, `alimiter=limit=0.8:level=disabled`, resample back. The same synthetic mix measures about -1.6 dBFS after AAC (ebur128 peak=true), and `tests/test_stitch_limiter.py` asserts <= -1 dBTP on both paths.
 
 **Not run:** the re-stitch of Seinfeld. `output/seinfeld_s01e03` is gitignored and lives on Will's Mac; it does not exist on the machine this fix was made on, so there is no measured true peak or loudness delta for the real file. To check it, re-stitch from the existing clips to a new filename and run `ffmpeg -i <new.mp4> -af ebur128=peak=true -f null -`: expect true peak <= -1 dBTP and integrated loudness within about 1 LU of the old file (the limiter only acts on the loudest peaks, but the speech boost may now be clipped slightly harder than before).
+
+## Sceptical review, 15 Nov 2026: a pod can still leak
+
+**Verdict: NO-GO for an unattended full-film paid run.** The premises are partly
+right: `08a72e8` and `dfe0a70` are ancestors of this checkout, and cancel/replace
+and limiting exist. They do not establish crash-safe cleanup or a universal
+small loudness change. This review used mocks and local ffmpeg only: no keys,
+API calls, pods, or spend. The preceding addendum is dated 16 Nov; this review
+does not treat that date or its proposed real-file check as completed evidence.
+
+Confidence labels below: **observed/mock** means exercised with a fake account;
+**observed/local** means local ffmpeg or installed SDK inspection; **source** is
+a code-reading conclusion; **unproved/live** needs a real host/account.
+
+The data shape is `RunPodSession`: optional active `pod_id: str`, append-only
+`_owned_pod_ids: set[str]`, unique session name, and `wedged: bool`.
+States are unprovisioned, provisioning (possibly an unknown server-side id),
+active, wedged, abandoned, and terminated. Abandoning a handle must retain
+cleanup ownership; an API request is not confirmation that billing has stopped.
+`runpod_pod.json` is connection state for one pod, not an ownership journal.
+
+### Creation and terminate-path inventory
+
+There is one production `runpod.create_pod` call, in `RunPodSession.create_pod`.
+`ensure_pod` reaches it after a failed reconnect; `with_setup_retry` can repeat
+it. WAN, VACE, LTX-2, LTX-2.5, MMAudio and MusicGen all use this session rather
+than allocating independently (`strategies_video.py`, `strategies_audio.py`).
+Tests below are in `tests/test_runpod_pod.py` unless otherwise specified.
+
+| Creation/use path | Matching terminate path and named evidence | Confidence / limit |
+|---|---|---|
+| Initial create; each GPU/cloud fallback request | `_cleanup -> terminate`, then `sweep_stray_pods`; `TestNoAbandonedPodStaysLive.test_normal_exit_leaves_nothing_live` | observed/mock |
+| Create succeeds server-side but response times out (no id) | Register handlers before requesting; `_create_attempted` enables name sweep; `TestPodLeakReview.test_unknown_id_create_failure_registers_exit_cleanup` and `test_a_create_that_timed_out_client_side_is_still_swept` | observed/mock; eventual visibility remains unproved/live |
+| Runtime readiness timeout | `create_pod -> terminate`; `test_provision_timeout_terminates_the_pod` | observed/mock |
+| Setup/model/ComfyUI failure, followed by fresh create | `with_setup_retry -> terminate`; `test_setup_retry_after_timeout_ends_with_one_live_pod_then_none`, `test_every_setup_attempt_failing_leaves_nothing_live` | observed/mock; same shared lifecycle for all backends |
+| Re-create over a held handle | `create_pod -> terminate` before allocation; `test_create_pod_over_a_held_pod_terminates_the_old_one` | observed/mock |
+| Missing ports, dead host or wedged worker replacement | `_reprovision_if_pod_gone -> forget_pod -> _terminate_quietly`; `test_reprovision_terminates_the_pod_it_replaces`, `TestHungComfyUIJob.test_the_wedged_pod_is_terminated_before_its_replacement_is_created` | observed/mock; successful terminate precedes replacement |
+| Workflow timeout or polling exception | `submit_workflow -> cancel_job`, delete queue item, interrupt, confirm absence; if still held mark wedged and replace; `TestHungComfyUIJob` covers cancellation, replacement and two-wedge abandonment | observed/mock; cancellation alone keeps a usable pod alive intentionally |
+| Exhausted wedged-clip retries | `clip_wedges_pods -> forget_pod`; `test_everything_hanging_on_every_pod_still_ends_with_zero_live_pods` | observed/mock; two wedges bounded per clip call, not per entire run |
+| Ordinary unhandled exception | registered `atexit -> _cleanup`; `test_crash_mid_job_leaves_nothing_live` exercises cleanup body | source for interpreter exit dispatch; observed/mock for body |
+| KeyboardInterrupt/SIGINT or SIGTERM | registered handler calls `_cleanup` before previous handler/exit; `TestPodLeakReview.test_sigint_terminates_the_pod_then_raises_keyboardinterrupt`, `test_sigterm_terminates_the_pod_then_exits` | observed/mock |
+| Clean `--keep-pod` exit | armed remote self-destruct, state file; fail closed to terminate if arming fails; `test_a_kept_pod_with_an_armed_reaper_survives_the_exit`, `test_a_kept_pod_whose_reaper_could_not_be_armed_is_terminated` | observed/mock; actual reaper deletion unproved/live |
+| Cap/projection firing; failed child; interrupted supervisor | process-group TERM, bounded grace, KILL, account sweep; `tests/test_capped_run.py::TestInterruptedSupervisor` and `TestFinalSweep` | observed/mock; includes actual local sleeping children, no remote processes |
+| SIGKILL, host power loss, prolonged API outage, late server-side creation | no guaranteed terminate; no durable all-pod journal or startup orphan reconciliation | source; follow-ups below cover these missing guarantees |
+
+**Fixed here, observed/mock:** single transient terminate errors now retry three
+times before abandoning; unknown-id create failures now register and enable
+exit cleanup; keep-pod fails closed when its deadline cannot be armed;
+supervisor SIGTERM/SIGHUP/Ctrl-C stops its detached child and sweeps; final
+listing errors retry; unsuccessful cleanup is not reported as exit 0; unexpected
+exceptions also sweep in `finally`. Regression tests fail against `08a72e8`.
+The fleet assertions measure pods still live, not just calls to terminate.
+
+**Replacement and persistence, source:** terminate is attempted before a new pod
+is created, never after waiting for the replacement. Exhausting terminate retries
+still permits replacement, so overlap can last until exit or longer. Owned ids
+remain in memory, but `forget_pod` and `terminate` delete connection state even
+on failure; newly created pods are not automatically journaled to disk. A new
+session gets a different name and does not automatically adopt old orphans.
+The installed RunPod SDK uses `requests.post(timeout=30)`; this is a socket
+timeout, not a hard end-to-end deadline. Three attempts plus backoff can exceed
+the supervisor's 20-second child grace; the account sweep is the backstop.
+The standalone session sweep still makes one listing/termination pass and marks
+it swept even on failure. Keep-pod skips that sweep, including abandoned siblings.
+
+**Spend, observed/mock + source:** `capped_run` uses original account balance
+minus current balance, not the active pod's elapsed time. Replacement time and
+overlap therefore count when charges reach the balance. The new cap test places
+both old and replacement pods in the account and checks both disappear at the
+stop line. The per-session printed estimate resets with each create and is not
+the cap. Balance lag, polling/grace time, account credits/concurrent users, and
+indefinitely failing balance reads mean this is not a strict dollar ceiling.
+Both the supervisor's account-wide sweep and `--attach-pid` can delete another
+run's pods; the session sweep itself preserves concurrent session names.
+
+**Retry/resume, observed/mock + source:** exhaustion returns no clip, and decode
+writes the shot index to `failed`, never `completed`; existing partial clip
+files can remain. `test_exhausted_shot_is_recorded_failed_and_retried_on_resume`
+in `tests/test_decode.py` drives failure, saved progress and successful resume:
+the shot is retried and its failure clears. Decode also retries the whole shot
+once, so the two-wedge limit can be paid twice per shot. `run_decode` can return
+normally with failed shots, so supervisor exit 0 is not proof of a complete film.
+A/B manifest jobs use their own failed/completed lists and exit nonzero on failure.
+
+**Limiter, observed/local:** both single-track and multi-track graphs are now
+tested with full-scale square input before AAC and deterministic hot noise after
+AAC. Material below the limiter ceiling stays within **0.2 LU** of the unlimited
+graph. A blanket **1 LU** programme bound is false for hot input; strict expected
+failure tests retain this counterexample (stereo square at +6 dB: single-track
+8.5 -> -1.5 LUFS, multi-track 10.0 -> -1.5 LUFS on this ffmpeg build).
+Full-scale square input is held below
+-1 dBTP before AAC but exceeds that ceiling after AAC; strict expected failures
+retain both paths' codec counterexamples. Seeded hot noise also measured
+-0.6 dBTP after multi-track AAC. The older random-noise test also produced an
+intermittent -0.8 dBTP failure; it now uses a fixed seed for reproducibility.
+Evidence: workspace `evidence/final-tests-green.txt`
+and `evidence/limiter-review.txt`; tests: `TestFullScaleInputAndLoudness`.
+No new limiter policy is chosen here. Real episode loudness/true peak and audible
+quality remain unproved; synthetic tests do not establish them.
+
+### Follow-ups to file
+
+Dispatcher: file under goal `b33ea4e0`; do not dispatch automatically.
+
+- **Persist pod ownership and reconcile crash leftovers (M).** Journal every
+  allocation/adoption and unresolved terminate, use a stable run identity, and
+  reconcile before creating on restart. Include unknown-id requests, late API
+  success, SIGKILL/power loss and kept-pod sibling leaks. Needs an ownership and
+  reconciliation policy; no Will interaction or spend for implementation.
+- **Bound replacement overlap and confirm deletion before declaring clean (M).**
+  Decide whether to stop allocating after failed terminate; retry/confirm the
+  standalone exit sweep and cover interrupted cleanup/state-write failure.
+  Mock persistent API outage and delayed listing visibility. No Will or spend
+  for design/implementation; actual deletion timing belongs to the trial below.
+- **Make cap enforcement fail closed on stale balance and scope account sweeps (M).**
+  Current polling can fail forever; balance lag is unbounded, a watcher exception
+  can leave the child unsupervised, and sweeping all new pods assumes exclusive
+  account use. Define maximum stale interval, ownership, launch/stop coordination
+  and a conservative spend reserve. No spend; Will must confirm account exclusivity
+  and acceptable cap semantics before relying on this unattended.
+- **Make incomplete decode visible to supervisors (S).** Return nonzero when
+  shots remain failed and document the whole-shot versus clip retry budget;
+  inspect partial-file adoption and duplicated failure entries on resume.
+  No Will or real-pod spend required.
+- **Set final audio loudness and AAC true-peak policy (M).** The 1 LU bound and
+  universal -1 dBTP AAC bound are disproved. Decide gain/normalization/headroom
+  policy, then retain full-scale and representative programme tests for both
+  paths. Needs Will's listening/target decision; no API or pod spend.
+- **Re-stitch and measure Seinfeld programme audio (S).** Existing source clips
+  are absent here. On the machine holding them, compare integrated LUFS and
+  post-AAC true peak with the old file, and listen. Needs Will/source-file access;
+  estimated pod/API spend **$0** (local ffmpeg only).
+- **Observe cancel, replacement, billing and remote self-destruct on a real pod (M).**
+  After the safety follow-ups, force one timeout, verify the old id disappears
+  before replacement, check account billing and final empty inventory, then
+  prove a kept pod's remote reaper removes it after the client exits. Needs Will's
+  paid-run authorization and credentials in a separate job. Estimate **$0.50-$1.25**
+  including boot/deadline time; use the planned **$1.25** keyframe cap. Do not
+  infer these guarantees from mocks or proceed directly to the full film.

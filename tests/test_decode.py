@@ -3,6 +3,7 @@
 import json
 import os
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,6 +26,41 @@ from decode import (
     format_prompt,
     vary_prompt_for_part,
 )
+
+
+def test_exhausted_shot_is_recorded_failed_and_retried_on_resume(tmp_path, monkeypatch):
+    import decode
+    from strategies_video import GenerationStrategy
+
+    entry = {"index": 7, "duration_s": 2.0, "description": {"action": "A door opens."}}
+    monkeypatch.setattr(decode.manifest, "load_shots", lambda _: ([entry], {}))
+    monkeypatch.setattr(decode.manifest, "check_encode_fingerprint", lambda *a: True)
+    monkeypatch.setattr(decode.time, "sleep", lambda _: None)
+
+    class Strategy(GenerationStrategy):
+        name = "mock-review"
+        attempts = 0
+        succeeds = False
+
+        def generate(self, *a, **kw):
+            self.attempts += 1
+            return ([ClipResult(path=str(tmp_path / "shot_0007.mp4"),
+                                actual_duration_s=2.0, cost=0.0)] if self.succeeds else [])
+
+    args = SimpleNamespace(output_dir=str(tmp_path), start_index=0, limit=None)
+    strategy = Strategy()
+    decode.run_decode(args, strategy)
+    path = decode.manifest.decode_progress_path(str(tmp_path), strategy.name)
+    with open(path) as f:
+        assert json.load(f)["failed"] == [7]
+    assert strategy.attempts == 2  # decode's second whole-shot attempt also exhausted
+    strategy.succeeds = True
+    decode.run_decode(args, strategy)
+    with open(path) as f:
+        progress = json.load(f)
+    assert strategy.attempts == 3
+    assert progress["completed"] == [7]
+    assert progress["failed"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -11,12 +11,18 @@ dies, so an unattended run needs a supervisor. This one:
   * re-runs the command after a non-zero exit (decode resumes from its progress
     file), up to --retries times;
   * always ends by terminating every pod on the account that was not there at
-    start, and prints the final balance and pod list.
+    start, and prints the final balance and pod list. That sweep retries
+    transient API errors, runs even when capped_run itself is interrupted
+    (Ctrl-C, SIGTERM, SIGHUP: the child is stopped first, since it runs in its
+    own session and would otherwise carry on with nobody enforcing the cap),
+    and is not reported clean unless the account shows no extra pod.
 
     uv run python tools/capped_run.py --cap 8 --progress output/ep/decode_progress_runpod-ltx25.json \
         --total-shots 315 -- uv run python decode.py output/ep --strategy runpod-ltx25
 
-Exit codes: 0 command succeeded, 3 stopped by the cap/projection, 4 retries exhausted.
+Exit codes: 0 command succeeded, 3 stopped by the cap/projection, 4 retries exhausted,
+5 the command succeeded but a pod could not be confirmed terminated (check the
+RunPod console), 130 interrupted.
 """
 
 import argparse
@@ -56,6 +62,54 @@ def terminate(pod_ids: list[str]) -> None:
             print(f"[capped_run] terminated pod {pid}", flush=True)
         except Exception as e:  # keep going: the next poll or the final sweep retries
             print(f"[capped_run] terminate {pid} failed: {e}", flush=True)
+
+
+SWEEP_ATTEMPTS = 5
+SWEEP_DELAY_S = 5
+CHILD_GRACE_S = 20
+
+
+def sweep(pods0: list[str], attempts: int = SWEEP_ATTEMPTS, delay: float = SWEEP_DELAY_S) -> list[str]:
+    """Terminate every pod that was not there at start. Returns the pods not confirmed gone.
+
+    One unguarded API call used to end the run: a transient 5xx from RunPod
+    while listing pods raised out of main() with the pod still billing. List,
+    terminate, and list again until the account is clean or attempts run out.
+    """
+    extra: list[str] = []
+    for i in range(attempts):
+        try:
+            _, pods = balance_and_pods()
+            extra = [x for x in pods if x not in pods0]
+            if not extra:
+                return []
+            terminate(extra)
+        except Exception as e:
+            print(f"[capped_run] pod sweep attempt {i + 1}/{attempts} failed: {e}", flush=True)
+            extra = extra or ["<pod list unavailable>"]
+        time.sleep(delay)
+    print(f"[capped_run] WARNING: could not confirm these pods are gone: {extra} -- "
+          f"check https://www.runpod.io/console/pods", flush=True)
+    return extra
+
+
+def stop_child(p, grace: float = CHILD_GRACE_S) -> None:
+    """SIGTERM the child's process group (its handlers terminate its pod), then SIGKILL."""
+    if p is None or p.poll() is not None:
+        return
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+        deadline = time.time() + grace
+        while p.poll() is None and time.time() < deadline:
+            time.sleep(1)
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _raise_interrupt(signum, frame):
+    raise KeyboardInterrupt
 
 
 class _Attached:
@@ -167,50 +221,62 @@ def main() -> int:
                 stop["reason"] = f"projected ${projected:.2f} would cross the ${a.cap:.2f} cap"
             if stop["reason"]:
                 print(f"[capped_run] STOP: {stop['reason']}", flush=True)
-                p = child["p"]
-                if p and p.poll() is None:
-                    os.killpg(p.pid, signal.SIGTERM)
-                    time.sleep(20)
-                    if p.poll() is None:
-                        os.killpg(p.pid, signal.SIGKILL)
-                _, pods = balance_and_pods()
-                terminate([x for x in pods if x not in pods0])
+                stop_child(child["p"])
+                sweep(pods0)
+
+    # The child runs in its own session, so a signal to us never reaches it.
+    # Turn SIGTERM/SIGHUP into the same path as Ctrl-C: stop the child, sweep.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _raise_interrupt)
 
     threading.Thread(target=watch, daemon=True).start()
 
     rc = 4
-    for attempt in range(1, a.retries + 2):
-        if stop["reason"]:
-            rc = 3
-            break
-        if attempt == 1 and a.attach_pid:
-            print(f"[capped_run] attaching to running pid {a.attach_pid}", flush=True)
-            child["p"] = _Attached(a.attach_pid)
-            code = child["p"].wait()
-            if code != 0 and a.total_shots and done_shots(a.progress) >= a.total_shots:
-                code = 0
-        else:
-            print(f"[capped_run] attempt {attempt}: {' '.join(cmd)}", flush=True)
-            child["p"] = subprocess.Popen(cmd, start_new_session=True)
-            code = child["p"].wait()
-        if stop["reason"]:
-            rc = 3
-            break
-        if code == 0:
-            rc = 0
-            break
-        print(f"[capped_run] command exited {code}; resuming", flush=True)
-        _, pods = balance_and_pods()
-        terminate([x for x in pods if x not in pods0])  # a failed run may leave its pod up
-        time.sleep(30)
-    stop["reason"] = stop["reason"] or "finished"
-
-    time.sleep(2)
-    bal, pods = balance_and_pods()
-    terminate([x for x in pods if x not in pods0])
-    time.sleep(5)
-    bal, pods = balance_and_pods()
-    print(f"[capped_run] FINAL rc={rc} spent ${baseline - bal:.4f}, balance ${bal:.4f}, pods {pods}", flush=True)
+    try:
+        for attempt in range(1, a.retries + 2):
+            if stop["reason"]:
+                rc = 3
+                break
+            if attempt == 1 and a.attach_pid:
+                print(f"[capped_run] attaching to running pid {a.attach_pid}", flush=True)
+                child["p"] = _Attached(a.attach_pid)
+                code = child["p"].wait()
+                if code != 0 and a.total_shots and done_shots(a.progress) >= a.total_shots:
+                    code = 0
+            else:
+                print(f"[capped_run] attempt {attempt}: {' '.join(cmd)}", flush=True)
+                child["p"] = subprocess.Popen(cmd, start_new_session=True)
+                code = child["p"].wait()
+            if stop["reason"]:
+                rc = 3
+                break
+            if code == 0:
+                rc = 0
+                break
+            print(f"[capped_run] command exited {code}; resuming", flush=True)
+            sweep(pods0)  # a failed run may leave its pod up
+            time.sleep(30)
+    except KeyboardInterrupt:
+        rc = 130
+        stop["reason"] = stop["reason"] or "interrupted"
+        print("[capped_run] interrupted: stopping the command and sweeping pods", flush=True)
+    finally:
+        # Cleanup must not itself be interruptible: a second Ctrl-C mid-sweep
+        # would abort the one step that stops the billing.
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, signal.SIG_IGN)
+        stop["reason"] = stop["reason"] or "finished"
+        stop_child(child["p"])
+        time.sleep(2)
+        leftover = sweep(pods0)
+        if leftover and rc == 0:
+            rc = 5
+    try:
+        bal, pods = balance_and_pods()
+        print(f"[capped_run] FINAL rc={rc} spent ${baseline - bal:.4f}, balance ${bal:.4f}, pods {pods}", flush=True)
+    except Exception as e:
+        print(f"[capped_run] FINAL rc={rc}; final balance unavailable ({e}); "
+              f"check https://www.runpod.io/console/pods", flush=True)
     return rc
 
 

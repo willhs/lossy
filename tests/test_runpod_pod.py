@@ -65,7 +65,9 @@ class TestRunPodSessionState:
 class TestRunPodSessionCleanup:
     """Test cleanup logic (keep-pod vs terminate)."""
 
-    def test_keep_pod_clean_exit_writes_state(self, tmp_path):
+    def test_keep_pod_clean_exit_writes_state(self, tmp_path, monkeypatch):
+        # The reaper must arm for a pod to be kept (an unarmed one is terminated).
+        monkeypatch.setattr(RunPodSession, "arm_self_destruct", lambda self, m: True)
         session = RunPodSession(str(tmp_path), keep_pod=True)
         session.pod_id = "pod-keep"
         session.base_url = "https://pod-keep-8188.proxy.runpod.net"
@@ -277,7 +279,8 @@ class TestCloudFallback:
         assert runpod_pod.rate_for("SECURE", "NVIDIA RTX A6000", 0.33, {"costPerHr": 0.64}) == 0.64
 
     def test_create_pod_records_secure_rate(self, tmp_path, monkeypatch):
-        import sys, types
+        import sys
+        import types
         import runpod_pod
         fake = types.SimpleNamespace(api_key=None)
         def create_pod(**kw):
@@ -285,18 +288,15 @@ class TestCloudFallback:
                 raise RuntimeError("no capacity")
             return {"id": "p1"}
         fake.create_pod = create_pod
+        fake.get_pod = lambda _: {"runtime": {"ports": [{"privatePort": 8188}]}}
         monkeypatch.setitem(sys.modules, "runpod", fake)
         monkeypatch.setenv("RUNPOD_API_KEY", "k")
         monkeypatch.setattr(runpod_pod, "CLOUD_TYPES", ["COMMUNITY", "SECURE"])
         s = RunPodSession(str(tmp_path), gpu_types=[("NVIDIA RTX A6000", 0.33)])
-        # stop right after the rate is recorded
-        class Stop(Exception):
-            pass
-        def stop():
-            raise Stop
-        monkeypatch.setattr(s, "_register_cleanup", stop)
-        with pytest.raises(Stop):
-            s.create_pod()
+        # Exercise creation through readiness; registration timing is not part
+        # of the billing-rate contract.
+        monkeypatch.setattr(s, "_register_cleanup", lambda: None)
+        s.create_pod()
         assert s.gpu_hourly_rate == 0.59
 
     def test_old_constant_still_resolves(self):
@@ -666,6 +666,8 @@ class _FleetRunpod:
         self.live: dict[str, dict] = {}
         self.created = 0
         self.fail_terminate: set[str] = set()   # ids whose terminate call raises
+        self.flaky_terminate: dict[str, int] = {}  # id -> how many calls fail before one works
+        self.ghost_creates = False              # pod IS created, but the call times out
         self.ports_ready = True                 # whether new pods expose ports
         self.name_of_created: list[str] = []
         self.events: list[tuple[str, str]] = []  # ("create"|"terminate", pod_id), in order
@@ -677,6 +679,8 @@ class _FleetRunpod:
         self.live[pod_id] = {"id": pod_id, "name": name, "desiredStatus": "RUNNING",
                              "ports_ready": self.ports_ready}
         self.name_of_created.append(name)
+        if self.ghost_creates:
+            raise TimeoutError("create_pod timed out (server-side the pod exists)")
         return {"id": pod_id, "costPerHr": 0.5}
 
     def get_pod(self, pod_id):
@@ -695,6 +699,9 @@ class _FleetRunpod:
     def terminate_pod(self, pod_id):
         if pod_id in self.fail_terminate:
             raise RuntimeError("API unavailable")
+        if self.flaky_terminate.get(pod_id, 0) > 0:
+            self.flaky_terminate[pod_id] -= 1
+            raise RuntimeError("API hiccup")
         if pod_id not in self.live:
             raise RuntimeError("pod not found to terminate")
         del self.live[pod_id]
@@ -867,6 +874,167 @@ class TestNoAbandonedPodStaysLive:
         s.create_pod()
         s._cleanup()
         assert list(fleet.live) == ["pod-theirs"]
+
+
+class TestPodLeakReview:
+    """Sceptical review of 08a72e8 (research 0026 note, 2026-11-15): every way a
+    pod can still be left billing, each as an account-level assertion."""
+
+    @pytest.fixture
+    def fleet(self, monkeypatch):
+        import sys
+        import runpod_pod
+
+        fleet = _FleetRunpod()
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+        monkeypatch.setitem(sys.modules, "runpod", fleet)
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda _s: None)
+        return fleet
+
+    @pytest.fixture
+    def stubbed_cleanup(self, monkeypatch):
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", lambda self: None)
+
+    # -- terminate itself failing -------------------------------------------
+
+    def test_a_transient_api_error_while_replacing_a_pod_is_retried(
+            self, tmp_path, fleet, stubbed_cleanup):
+        """The replacement path used to try once and shrug: a single API hiccup
+        left the wedged pod billing alongside its replacement until the run
+        ended (days, on the full film)."""
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.flaky_terminate["pod-1"] = 1         # first call fails, the next works
+
+        s.forget_pod()
+        assert "pod-1" not in fleet.live           # gone NOW, not at exit
+
+    def test_a_transient_api_error_in_terminate_is_retried(
+            self, tmp_path, fleet, stubbed_cleanup):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.flaky_terminate["pod-1"] = 2
+
+        s.terminate()
+        assert fleet.live == {}
+
+    def test_terminate_that_never_works_still_ends_in_the_exit_sweep(
+            self, tmp_path, fleet, stubbed_cleanup):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.forget_pod()                             # retries exhaust, no raise
+        assert "pod-1" in fleet.live
+        fleet.fail_terminate.clear()
+        s._cleanup()
+        assert fleet.live == {}
+
+    # -- create that succeeds server-side but looks failed client-side ------
+
+    def test_a_create_that_timed_out_client_side_is_still_swept(
+            self, tmp_path, fleet, stubbed_cleanup):
+        """runpod.create_pod can time out after the pod exists. No id was ever
+        recorded, and the sweep was gated on a recorded id -- so the ghost pod
+        survived the exit sweep that exists to catch exactly this."""
+        from runpod_pod import PodSetupError
+
+        fleet.ghost_creates = True
+        s = RunPodSession(str(tmp_path))
+        with pytest.raises(PodSetupError):
+            s.create_pod()
+        assert fleet.live                          # the ghost is billing
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_unknown_id_create_failure_registers_exit_cleanup(
+            self, tmp_path, fleet, monkeypatch):
+        import atexit
+        from runpod_pod import PodSetupError
+
+        callbacks = []
+        monkeypatch.setattr(atexit, "register", lambda fn: callbacks.append(fn))
+        monkeypatch.setattr("runpod_pod.signal.signal", lambda *a: None)
+        fleet.ghost_creates = True
+        s = RunPodSession(str(tmp_path))
+        with pytest.raises(PodSetupError):
+            s.create_pod()
+        assert fleet.live
+        assert callbacks
+        for callback in callbacks:
+            callback()
+        assert fleet.live == {}
+
+    # -- keep-pod ------------------------------------------------------------
+
+    def test_a_kept_pod_whose_reaper_could_not_be_armed_is_terminated(
+            self, tmp_path, fleet, stubbed_cleanup, monkeypatch):
+        """--keep-pod promises a self-destruct deadline. If it cannot be armed
+        the pod would bill with no deadline at all (the 10.5 h / $3.40 failure
+        the deadline exists to prevent), so fail closed."""
+        s = RunPodSession(str(tmp_path), keep_pod=True)
+        s.create_pod()
+        s.mark_clean_exit()
+        monkeypatch.setattr(RunPodSession, "arm_self_destruct", lambda self, m: False)
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_a_kept_pod_with_an_armed_reaper_survives_the_exit(
+            self, tmp_path, fleet, stubbed_cleanup, monkeypatch):
+        s = RunPodSession(str(tmp_path), keep_pod=True)
+        s.create_pod()
+        s.mark_clean_exit()
+        monkeypatch.setattr(RunPodSession, "arm_self_destruct", lambda self, m: True)
+        s._cleanup()
+        assert list(fleet.live) == ["pod-1"]
+
+    # -- the real signal handlers (every other test stubs them out) ----------
+
+    def _install_real_handlers(self, monkeypatch):
+        import atexit
+        import signal
+
+        handlers = {}
+        monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: fn)
+        monkeypatch.setattr(signal, "signal", lambda sig, h: handlers.__setitem__(sig, h))
+        return handlers
+
+    def test_sigterm_terminates_the_pod_then_exits(self, tmp_path, fleet, monkeypatch):
+        import signal
+
+        handlers = self._install_real_handlers(monkeypatch)
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()                             # registers the real handlers
+        assert fleet.live
+
+        with pytest.raises(SystemExit):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+        assert fleet.live == {}
+
+    def test_sigint_terminates_the_pod_then_raises_keyboardinterrupt(
+            self, tmp_path, fleet, monkeypatch):
+        import signal
+
+        handlers = self._install_real_handlers(monkeypatch)
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+
+        with pytest.raises(KeyboardInterrupt):
+            handlers[signal.SIGINT](signal.SIGINT, None)
+        assert fleet.live == {}
+
+    def test_a_signal_landing_after_a_clean_finish_is_harmless(
+            self, tmp_path, fleet, monkeypatch):
+        """atexit and the handler both run _cleanup; the second must be a no-op."""
+        import signal
+
+        handlers = self._install_real_handlers(monkeypatch)
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        s._cleanup()
+        with pytest.raises(SystemExit):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+        assert fleet.live == {}
 
 
 # ---------------------------------------------------------------------------
