@@ -829,11 +829,21 @@ class RunPodWanStrategy(GenerationStrategy):
         dir for I2V chaining. Returns the remote filename (for LoadImage) or None."""
         if not self._session.ssh_host:
             return None
-        from runpod_pod import COMFYUI_DIR
         name = f"chain_{shot_index:04d}_{part_idx:02d}.png"
         local = os.path.join(tempfile.gettempdir(), name)
         if not self._extract_last_frame(clip_path, local):
             return None
+        return self._upload_image(local)
+
+    def _upload_image(self, local: str) -> str | None:
+        """Copy a local image into the pod's ComfyUI input dir for LoadImage.
+
+        Returns the remote filename (the local basename) or None on failure.
+        """
+        if not self._session.ssh_host:
+            return None
+        from runpod_pod import COMFYUI_DIR
+        name = os.path.basename(local)
         # Chaining is an enhancement, never a reason to lose a run. A stalled
         # scp used to raise TimeoutExpired straight through the generate loop
         # and abort the whole render 84 clips in; degrade to an unchained part

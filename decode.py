@@ -315,6 +315,14 @@ def load_ab_jobs(path: str) -> list[dict]:
         if key in seen:
             raise ValueError(f"{path}: job {i} repeats {key}")
         seen.add(key)
+        if job.get("start_image"):
+            # Optional I2V first frame (research 0029's keyframe arm), relative
+            # to the manifest. Checked here so a missing keyframe fails before
+            # a pod is paid for, not at that job's turn.
+            img = os.path.join(os.path.dirname(os.path.abspath(path)), job["start_image"])
+            if not os.path.isfile(img):
+                raise ValueError(f"{path}: job {i} start_image not found: {img}")
+            job["start_image"] = img
     return jobs
 
 
@@ -330,9 +338,10 @@ def dry_run_ab(strategy_cls, jobs: list[dict]) -> None:
     """
     probe = object.__new__(strategy_cls)  # skip __init__: it creates a RunPod session
     for job in jobs:
-        probe._build_workflow(job["prompt"], job["seed"], length=job["frames"])
+        start = os.path.basename(job["start_image"]) if job.get("start_image") else None
+        probe._build_workflow(job["prompt"], job["seed"], length=job["frames"], start_image=start)
         print(f"  {ab_job_key(job):<28} seed {job['seed']:<5} {job['frames']:>3} frames  "
-              f"{job['prompt'][:60]}...")
+              f"{'I2V ' if start else ''}{job['prompt'][:60]}...")
     print(f"Dry run OK: {len(jobs)} jobs build valid workflows. Nothing was submitted.")
 
 
@@ -373,8 +382,16 @@ def run_ab_manifest(args, strategy: GenerationStrategy, jobs: list[dict]):
         os.makedirs(clips_dir, exist_ok=True)
         print(f"  {key} (seed {job['seed']}, {job['frames']} frames)...")
         strategy._ensure_pod()
-        result = strategy._generate_one_clip(
-            job["prompt"], clips_dir, clip_name, job["frames"], job["seed"])
+        start_image = strategy._upload_image(job["start_image"]) if job.get("start_image") else None
+        if job.get("start_image") and start_image is None:
+            # An arm defined by its first frame must not quietly render text-only
+            # when the upload fails: that would score as the arm but be the control.
+            print(f"  {key}: start image upload failed; marking failed")
+            result = None
+        else:
+            result = strategy._generate_one_clip(
+                job["prompt"], clips_dir, clip_name, job["frames"], job["seed"],
+                start_image=start_image)
         if result is None:
             if key not in progress["failed"]:
                 progress["failed"].append(key)

@@ -244,3 +244,66 @@ class TestUnderCappedRun:
             "decode.py", str(tmp_path), "--strategy", "runpod-ltx25",
             "--ab-manifest", AB_MANIFEST, "--dry-run"])
         decode.main()
+
+
+class _FakeI2VStrategy(_FakeStrategy):
+    def __init__(self, upload_ok=True):
+        super().__init__()
+        self.upload_ok, self.uploads, self.starts = upload_ok, [], []
+
+    def _upload_image(self, local):
+        self.uploads.append(local)
+        return os.path.basename(local) if self.upload_ok else None
+
+    def _generate_one_clip(self, prompt, clips_dir, clip_name, frames, seed, start_image=None):
+        self.starts.append(start_image)
+        return super()._generate_one_clip(prompt, clips_dir, clip_name, frames, seed)
+
+
+class TestAbStartImage:
+    """Research 0029's keyframe arm: a job may carry its own I2V first frame."""
+
+    def _manifest(self, tmp_path, with_image=True):
+        (tmp_path / "kf").mkdir()
+        (tmp_path / "kf" / "0010.png").write_bytes(b"png")
+        jobs = [{"shot": 10, "arm": "T", "seed": 10, "frames": 25, "prompt": "p"},
+                {"shot": 10, "arm": "K", "seed": 10, "frames": 25, "prompt": "p",
+                 "start_image": "kf/0010.png" if with_image else "kf/missing.png"}]
+        p = tmp_path / "m.json"
+        p.write_text(json.dumps({"jobs": jobs}))
+        return str(p)
+
+    def test_start_image_resolves_against_the_manifest_and_must_exist(self, tmp_path):
+        jobs = decode.load_ab_jobs(self._manifest(tmp_path))
+        assert jobs[1]["start_image"] == str(tmp_path / "kf" / "0010.png")
+        assert "start_image" not in jobs[0]
+
+    def test_missing_start_image_fails_at_load(self, tmp_path):
+        with pytest.raises(ValueError, match="start_image not found"):
+            decode.load_ab_jobs(self._manifest(tmp_path, with_image=False))
+
+    def test_dry_run_builds_the_i2v_graph(self, tmp_path, monkeypatch):
+        built = []
+        real = RunPodLtx25Strategy._build_workflow
+        monkeypatch.setattr(RunPodLtx25Strategy, "_build_workflow",
+                            lambda self, *a, **k: built.append(real(self, *a, **k)) or built[-1])
+        decode.dry_run_ab(RunPodLtx25Strategy, decode.load_ab_jobs(self._manifest(tmp_path)))
+        assert "41" not in built[0]                                   # T: text only
+        assert built[1]["40"]["inputs"]["image"] == "0010.png"         # K: LoadImage
+        assert built[1]["41"]["class_type"] == "LTXVImgToVideo"
+
+    def test_run_uploads_and_conditions_only_the_image_job(self, tmp_path):
+        s = _FakeI2VStrategy()
+        decode.run_ab_manifest(MagicMock(output_dir=str(tmp_path)), s,
+                               decode.load_ab_jobs(self._manifest(tmp_path)))
+        assert s.starts == [None, "0010.png"]
+        assert s.uploads == [str(tmp_path / "kf" / "0010.png")]
+
+    def test_failed_upload_fails_the_job_instead_of_rendering_text_only(self, tmp_path):
+        s = _FakeI2VStrategy(upload_ok=False)
+        with pytest.raises(SystemExit):
+            decode.run_ab_manifest(MagicMock(output_dir=str(tmp_path)), s,
+                                   decode.load_ab_jobs(self._manifest(tmp_path)))
+        assert s.starts == [None]   # the K job never reached the generator
+        progress = json.load(open(manifest.ab_progress_path(str(tmp_path), "runpod-ltx25")))
+        assert progress["failed"] == ["K/10"]
