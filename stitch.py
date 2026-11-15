@@ -785,6 +785,43 @@ def _audio_matches_encode(output_dir: str, strategy: str) -> bool:
     return True
 
 
+# Final-mix peak control. Applied on EVERY audio path right before the AAC mux
+# (research 0023 defect 12, 0026: the mux peaked at full scale).
+#   * level=disabled: alimiter's default auto-level re-normalises the output
+#     back up after limiting, which silently undoes the ceiling.
+#   * 4x oversampling (44.1k -> 176.4k): the ceiling then holds on the
+#     inter-sample (true) peak, not just the sample peak.
+#   * 0.8 linear (-1.9 dBFS): leaves room for AAC encode overshoot, so the
+#     muxed file stays at or below -1 dBTP.
+TRACK_SAMPLE_RATE = 44100
+LIMITER_OVERSAMPLE_RATE = TRACK_SAMPLE_RATE * 4
+LIMITER_CEILING = 0.8
+
+
+def _true_peak_limiter() -> str:
+    return (
+        f"aresample={LIMITER_OVERSAMPLE_RATE},"
+        f"alimiter=limit={LIMITER_CEILING}:level=disabled,"
+        f"aresample={TRACK_SAMPLE_RATE}"
+    )
+
+
+def _single_track_filter(vol_db: float) -> str:
+    """-af chain for the one-track path: gain, then the true-peak limiter."""
+    return f"volume={vol_db}dB,{_true_peak_limiter()}"
+
+
+def _mix_filter_complex(vols_db: list[float]) -> str:
+    """-filter_complex for the multi-track path: per-track gain, amix, limiter."""
+    filters = [f"[{i}]volume={vol}dB[v{i}]" for i, vol in enumerate(vols_db)]
+    mix_inputs = "".join(f"[v{i}]" for i in range(len(vols_db)))
+    filters.append(
+        f"{mix_inputs}amix=inputs={len(vols_db)}:duration=longest:normalize=0,"
+        f"{_true_peak_limiter()}[out]"
+    )
+    return ";".join(filters)
+
+
 def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
                prompts_full: list[dict], audio_strategy: str | None,
                speech_voice: str | None, music_strategy: str | None = None):
@@ -880,18 +917,11 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
         combined_label = audio_strategy or "all"
         combined_path = os.path.join(output_dir, f"combined_audio_{combined_label}.wav")
         inputs = []
-        filters = []
-        for i, (t, vol) in enumerate(sfx_tracks):
+        for t, _vol in sfx_tracks:
             inputs.extend(["-i", t])
-            filters.append(f"[{i}]volume={vol}dB[v{i}]")
-        mix_inputs = "".join(f"[v{i}]" for i in range(len(sfx_tracks)))
-        filters.append(
-            f"{mix_inputs}amix=inputs={len(sfx_tracks)}:duration=longest:normalize=0,"
-            f"alimiter=limit=0.95[out]"
-        )
         _run_ffmpeg(
             ["ffmpeg", "-y"] + inputs +
-            ["-filter_complex", ";".join(filters),
+            ["-filter_complex", _mix_filter_complex([v for _t, v in sfx_tracks]),
              "-map", "[out]",
              combined_path],
             "combined audio mix",
@@ -901,7 +931,7 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
         track, vol = sfx_tracks[0]
         filtered_path = os.path.join(output_dir, "single_audio_filtered.wav")
         _run_ffmpeg(
-            ["ffmpeg", "-y", "-i", track, "-af", f"volume={vol}dB", filtered_path],
+            ["ffmpeg", "-y", "-i", track, "-af", _single_track_filter(vol), filtered_path],
             "single audio track volume filter",
         )
         audio_to_mux = filtered_path
