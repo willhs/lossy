@@ -113,7 +113,7 @@ Capacity pressure also moves cost: the successful chained re-render landed on L4
 
 11. **Two ambience shots failed** (841, 848) out of 88 -- 2.3%. Not retried; a retry costs a whole pod spin-up for two clips.
 
-12. **Final mux peaks at 98.8% FS** despite `alimiter=limit=0.95` in the chain. Worth a look before mastering a full film.
+12. **Final mux peaks at 98.8% FS** despite `alimiter=limit=0.95` in the chain. Worth a look before mastering a full film. **Fixed 16 Nov 2026** (cause: alimiter auto-level undoes the ceiling; single-track path had no limiter) - see the 0026 addendum.
 
 ### What worked
 

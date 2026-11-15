@@ -154,3 +154,13 @@ against one cap).
   closed afterwards with mock tests only, not observed on a live pod.
 
 The partial first cut is kept as `partial_shots0-298_no_ambience.mp4` next to the finished file.
+
+## Addendum (16 Nov 2026): final-mix peak fix; re-stitch not run
+
+The "peaks at 0 dB" finding is a code defect in `stitch.py`, now fixed (research 0023 defect 12):
+
+- The single-track path (the one Seinfeld took) applied `volume={vol}dB` (speech is +6 dB) with **no limiter at all**.
+- The multi-track path's `alimiter=limit=0.95` did not hold either: `alimiter` defaults to `level=1` (auto-level), which re-normalises the output back up after limiting. On a synthetic hot pink-noise mix the old chain measured +0.6 dBFS before AAC and +0.2 dBFS after, with the limit at 0.95.
+- Both paths now end in one chain (`_true_peak_limiter`): resample to 4x, `alimiter=limit=0.8:level=disabled`, resample back. The same synthetic mix measures about -1.6 dBFS after AAC (ebur128 peak=true), and `tests/test_stitch_limiter.py` asserts <= -1 dBTP on both paths.
+
+**Not run:** the re-stitch of Seinfeld. `output/seinfeld_s01e03` is gitignored and lives on Will's Mac; it does not exist on the machine this fix was made on, so there is no measured true peak or loudness delta for the real file. To check it, re-stitch from the existing clips to a new filename and run `ffmpeg -i <new.mp4> -af ebur128=peak=true -f null -`: expect true peak <= -1 dBTP and integrated loudness within about 1 LU of the old file (the limiter only acts on the loudest peaks, but the speech boost may now be clipped slightly harder than before).
