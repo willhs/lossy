@@ -13,6 +13,7 @@ from strategies_video import (
     GenerationStrategy,
     ReplicateWanStrategy,
     RunPodLtx2Strategy,
+    RunPodLtx25IngredientsStrategy,
     RunPodLtx25Strategy,
     RunPodVaceStrategy,
     RunPodWan22Strategy,
@@ -109,6 +110,7 @@ class StrategySpec:
     name: str
     cls: type[GenerationStrategy]
     supports_concurrent_audio: bool
+    ab_manifest_only: bool = False   # needs per-clip inputs only an --ab-manifest carries
 
 
 VIDEO_STRATEGIES: dict[str, StrategySpec] = {
@@ -123,6 +125,8 @@ VIDEO_STRATEGIES: dict[str, StrategySpec] = {
         StrategySpec("runpod-vace", RunPodVaceStrategy, supports_concurrent_audio=True),
         StrategySpec("runpod-ltx2", RunPodLtx2Strategy, supports_concurrent_audio=False),
         StrategySpec("runpod-ltx25", RunPodLtx25Strategy, supports_concurrent_audio=False),
+        StrategySpec("runpod-ltx25-ingredients", RunPodLtx25IngredientsStrategy,
+                     supports_concurrent_audio=False, ab_manifest_only=True),
     )
 }
 

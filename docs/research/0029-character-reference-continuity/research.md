@@ -36,6 +36,8 @@ given, and many come from fal.ai pages or resellers, so recheck before spending.
   motion fell 0.19, inside the rule's 0.3, and photoreal held at 100%. Total spend was ≤$1.04.
   Adopt K for SW4 via a follow-up strategy flag with two fixes: sheet wardrobe leak and
   look-alike sheets. See "Trial results".
+- **Arm I (Ingredients) is wired and dry-run checked, not run.** One command once Will accepts
+  the HF gate and sets `HF_TOKEN`: see "Arm I is wired; what Will must do to run it".
 - **Most of the drift is not solvable by text.** Today a shot's first frame comes from text
   alone. The identity block is byte-identical across shots (0020), but the same 260 characters
   of description can be drawn as many different faces. [Direct: `strategies_video.py`
@@ -336,11 +338,22 @@ ComfyUI custom nodes if klein's core-node support holds.
 **How it works** [Supported: docs.ltx.io IC-LoRA adapters page; floyo.ai workflow, undated]:
 
 - **Input.** One composite sheet, fed as a static video guide repeated on every frame and
-  cropped out after. The prompt has two parts: `Reference sheet: <panels> / Generated video:
-  <action>`.
+  cropped out after.
+- **Prompt (corrected by the arm I job).** The docs page says `Reference sheet: <panels> /
+  Generated video: <action>`, but the model card's six example prompts, which the HF API serves
+  as widget data even though the card is gated, all use another form: `### Reference Sheet
+  Description **Top Row Left (Character):** <what that panel shows> **Top Row Right (Prop):**
+  <...> ### Target Description <the clip>`. Panels are named by their position on the sheet
+  (`Top Row`, `Middle Row Left`, ...) and typed Character, Prop, Setting or Logo. The target
+  repeats the characters' looks, then adds action, camera and speech. Arm I uses the card's form.
+  [Direct: `evidence/ltx25_ingredients_hf_api.json`, widget examples]
 - **Settings.** LoRA strength 1, CFG 1, 8 steps on the **distilled** model, the one lossy runs.
-- **Nodes.** Core ComfyUI: `LTXICLoRALoaderModelOnly`, `LTXAddVideoICLoRAGuide`,
-  `LTXVCropGuides`.
+- **Nodes (corrected).** `LTXAddVideoICLoRAGuide` is a custom node from Lightricks'
+  ComfyUI-LTXVideo, not core. The pinned core ComfyUI v0.39.2 has the same mechanism:
+  `LoraLoaderModelOnly` -> `GetICLoRAParameters` (reads `reference_downscale_factor` from the
+  LoRA's metadata) -> `LTXVAddGuide` (`iclora_parameters`) -> `LTXVCropGuides`, plus
+  `RepeatImageBatch` to make the static video. Arm I uses these, so the pod still needs no
+  custom nodes. [Direct: ComfyUI v0.39.2 `comfy_extras/nodes_lt.py`]
 - **A workflow mismatch.** The official docs say the published 2.5 workflow JSON "currently
   loads the LTX-2.3 Ingredients checkpoint" and warn not to substitute one for the other.
 - **Contradicting report.** A user thread (HF LTX-2.5 discussion #61, opened 19 Aug) says 2.5's
@@ -514,6 +527,8 @@ All of it can be validated with `--dry-run` and no spend, as 0028's runner was.
 
 ## Trial results (run 15-16 Nov 2026)
 
+(Arm I was wired afterwards; see "Arm I is wired" below. It has not run.)
+
 Steady task `274d2328`. Will approved the run at 19:10 NZ on 15 Nov with a $1.25 cap. Arms T and
 K ran; arm I (Ingredients) and arm R (Kling) were skipped as instructed.
 
@@ -633,22 +648,84 @@ partly because of the next point. [Direct]
 - **No sheets for design characters.** `keep_name` characters (droids, Vader, stormtroopers)
   still get none (§1). K only touches human-character shots.
 
-### What Will must do to run arm I later [HUMAN]
+### Arm I is wired; what Will must do to run it [HUMAN]
+
+Arm I is built and dry-run checked (job `1a4bcabe`, no pod, no spend). Only the gate click and
+a token are missing.
+
+**Steps for Will**
 
 1. Signed in at huggingface.co, open
    https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients and click **"Agree and
-   access repository"** (the LTX-2.x community licence).
-2. At https://huggingface.co/settings/tokens, create a **Read** token. A fine-grained token
-   also works if it has "Read access to contents of all public gated repos you can access".
-3. Add `HF_TOKEN=hf_…` to `/Users/will/projects/lossy/.env`. It is not there today.
-4. Code is also needed: `runpod_pod.py` has no HF-token support for pinned downloads, so the
-   adapter download must send the token without printing it. The I arm itself (composite sheet,
-   3 IC-LoRA nodes, two-part prompt) is about 150 lines (§2d).
+   access repository"** (the LTX-2.x community licence; the button also consents to Lightricks
+   marketing emails).
+2. At https://huggingface.co/settings/tokens, create a **Read** token **on that same account**.
+   A fine-grained token also works if it has "Read access to contents of all public gated repos
+   you can access".
+3. Add `HF_TOKEN=hf_...` to `/Users/will/projects/lossy/.env`. It is not there today. The token
+   stays on this machine and is sent to the pod over ssh stdin, not on any command line.
+4. Optional free check, before spending anything. It builds the arm and tests the gate:
+   ```
+   uv run python docs/research/0029-character-reference-continuity/trial/make_ingredients_arm.py RUN_DIR
+   ```
+   It ends with `HF gate OK` or an error that names the missing step.
+
+**The one command** (from anywhere; RUN_DIR is the trial's run directory):
+
+```
+docs/research/0029-character-reference-continuity/trial/run_arm_i.sh RUN_DIR 1.00
+```
+
+- **What it does.** It composes the per-shot sheets, checks the gate (it stops there at no cost
+  if the gate is closed), then runs `tools/capped_run.py --cap 1.00 --margin 0.05 --no-project`
+  around `decode.py RUN_DIR --strategy runpod-ltx25-ingredients --ab-manifest
+  RUN_DIR/trial_manifest_I.json`.
+- **What RUN_DIR needs.** `trial_plan.json` and `trial_manifest.json` (both committed under
+  `trial/`) and `sheets/<name>.png`, the four klein sheets. Reuse the run directory of the T/K run:
+  arm I then sees the same sheets as K, which is the fair comparison. If the sheets are gone,
+  `make_refs.py RUN_DIR --sheets-only` remakes them for about $0.02 on fal, and the script says so.
+- **Cost.** About $0.5-0.9 [Speculative]: ~25 min of boot and downloads (+1.3 GB for the adapter),
+  then 16 clips at an unknown 1.5-3x the ~1 min of a T clip. The cap is a hard stop. Clips land in
+  `RUN_DIR/clips/runpod-ltx25-ingredients-ab/I/`.
+- **Then score.** Arms T and K ran earlier, so score I against T:
+  `uv run python docs/research/0029-character-reference-continuity/trial/score.py RUN_DIR MODELS_DIR --arms T,I`
+  (`--arms T,K` still reproduces the first result). Apply the §3 decision rule to I's row.
+
+**What was built and checked here (no pod)**
+
+- `ingredients.py`: the sheet panel model, the card's two-part prompt and the composite drawing.
+- `RunPodLtx25IngredientsStrategy` (`--strategy runpod-ltx25-ingredients`): the LTX-2.5 two-stage
+  graph plus the guide, with the adapter pinned by revision and sha256 (`ff873a5b...`, from the
+  HF API). It only runs with `--ab-manifest`: the sheet is per shot, and the normal decode path
+  has no sheet source. No production default or schedule changed.
+- **The gate fails cleanly.** HF answers 401 for a missing or bad token and 403 for a valid token
+  whose account has not accepted the gate. Both, and a missing `HF_TOKEN`, stop the run before a
+  pod exists with: "Accept the gate at <url> ... then set HF_TOKEN=hf_...". The same error, with
+  the pod terminated and no re-provision retry, covers a refusal that only shows at download time
+  (wget exit 6). Checked live against huggingface.co with no token (clear message) and a bogus
+  token (401, the same message). The 403 case, a valid token without the click, is covered by a
+  mock only, because the job has no token. [Direct: `evidence/arm_i_dry_run.txt`]
+- The graph is checked structurally in `tests/test_ingredients.py`: every link resolves, the guide
+  is cut out before the upsample, stage 2 uses the plain model, and the 16 trial jobs build.
+  Node names and inputs were read against ComfyUI v0.39.2's source. It has never run on a pod.
+
+**Risks the run will answer** [Inferred]
+
+- **Two-stage compatibility.** The vendor's 2.5 workflow is single-stage. Arm I applies the guide
+  at stage 1 only and refines with the plain model at stage 2, the LTX-2 pipeline's way. If clips
+  show the sheet's layout or lose identity at stage 2, the next try is single-stage at full size.
+- **Guide resolution.** The sheet is encoded at stage-1 size (640x352), so each face is about
+  150 px on the guide. Two-character sheets are worse than one. Head-and-shoulders panels would help.
+- **Wardrobe.** The sheets show a plain grey t-shirt and the panel text says so, so the model may
+  keep it, as K did. Compare the shot's wardrobe against the clips.
+- **Prompt cost.** Sheet text plus the repeated looks makes the prompt about 2x as long as T's.
 
 ### Trial files
 
 - `trial/make_trial_manifest.py`, `trial/make_refs.py`, `trial/score.py`: the builder, the
-  reference maker and the scorer.
+  reference maker and the scorer (`--arms T,I` for arm I).
+- `trial/make_ingredients_arm.py`, `trial/run_arm_i.sh`: arm I's sheet composer, gate check and
+  manifest, and the one command that runs it.
 - `trial/trial_manifest.json`, `trial/trial_plan.json`, `trial/refs_cost.jsonl`,
   `trial/results.json`, `trial/grid_key.json`: inputs and results.
 - `trial/identity_grids_T_vs_K.jpg`: the sheets and per-arm face grids. `trial/k_keyframes.jpg`:
@@ -660,10 +737,10 @@ partly because of the next point. [Direct]
 
 - **Whether identity survives LTX-2.5 I2V across a whole shot.** No published decay curve
   exists for any model. The trial's frame-0/mid/last measurement is the first number.
-- **The Ingredients adapter's quality, speed and compatibility.** The card is gated and was not
-  read. No identity metric is published. The official 2.5 workflow reportedly loads the 2.3
-  checkpoint. Compatibility with two-stage upscale and with first-frame I2V chaining is
-  untested.
+- **The Ingredients adapter's quality, speed and compatibility.** The card text is gated and was
+  not read (only its example prompts, via the widget data). No identity metric is published. The
+  official 2.5 workflow reportedly loads the 2.3 checkpoint. Compatibility with two-stage upscale
+  is what arm I tests; first-frame I2V chaining with a sheet is untested and not wired.
 - **klein's actual identity hold across 2-person compositions,** and its real reference cap. 4
   comes from a secondary source; the official README was not read.
 - **Self-hosted speeds** for klein, Qwen-Image-Edit and Wan-14B R2V on an A6000 are estimates

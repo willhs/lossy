@@ -153,6 +153,7 @@ Environment variables (in `.env`):
 - `REPLICATE_API_TOKEN` -- Replicate API token (replicate-wan strategy)
 - `FAL_KEY` -- fal.ai API key (fal-seedance strategies)
 - `RUNPOD_API_KEY` -- RunPod API key (runpod-wan strategy)
+- `HF_TOKEN` -- Hugging Face Read token (only `runpod-ltx25-ingredients`, whose adapter is gated; see research 0029)
 
 ## Tests
 

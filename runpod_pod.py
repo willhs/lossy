@@ -103,16 +103,67 @@ class PodSetupError(RuntimeError):
     """A pod could not be provisioned or brought up. Retryable on a new pod."""
 
 
+class GatedModelError(RuntimeError):
+    """A gated Hugging Face file cannot be fetched: no token, or the gate is not accepted.
+
+    Deliberately not a PodSetupError: a new pod would fail the same way, so
+    `with_setup_retry` must not re-provision (and bill) for it.
+    """
+
+
 class PinnedModel(NamedTuple):
     """A weights file fetched from a fixed URL and checked against a sha256.
 
     For files that come from a mirror rather than the vendor's own repo, the
     hash is the only thing tying the bytes to what was evaluated.
+
+    `gate_url` is set for a file behind a Hugging Face access click: the page
+    where it is accepted. Such a file is fetched with the HF_TOKEN bearer token.
     """
 
     dest: str      # path under ComfyUI's models/ dir, e.g. "vae/foo.safetensors"
     url: str
     sha256: str
+    gate_url: str | None = None
+
+
+def gated_help(model: PinnedModel) -> str:
+    """The one message every gate failure ends with: where to click, and what to set."""
+    return (f"Accept the gate at {model.gate_url} (signed in to Hugging Face, click "
+            f"'Agree and access repository'), then set HF_TOKEN=hf_... in .env "
+            f"(a Read token from https://huggingface.co/settings/tokens made by the same account).")
+
+
+def check_gated_access(models: list[PinnedModel], token: str | None, head=None) -> None:
+    """Fail before any pod is paid for if a gated model cannot be fetched.
+
+    One HEAD request per gated file, from this machine. Hugging Face answers
+    401 with no (or a bad) token and 403 with a valid token whose account has
+    not accepted the gate; a 2xx/3xx means the pod's download will be allowed.
+    Raises GatedModelError with the fix; a network error raises it too, since
+    "could not check" must not read as "fine" before a billed boot.
+    `head` is httpx.head by default; tests pass a stand-in.
+    """
+    import httpx
+    head = head or httpx.head
+    for m in (m for m in models if m.gate_url):
+        name = os.path.basename(m.dest)
+        if not token:
+            raise GatedModelError(f"{name} is gated and HF_TOKEN is not set. {gated_help(m)}")
+        try:
+            status = head(m.url, headers={"Authorization": f"Bearer {token}"},
+                          follow_redirects=False, timeout=30).status_code
+        except httpx.HTTPError as e:
+            raise GatedModelError(
+                f"{name}: could not reach Hugging Face to check access ({type(e).__name__}); "
+                f"no pod was started. Try again.") from e
+        if status == 401:
+            raise GatedModelError(f"{name}: Hugging Face rejected HF_TOKEN (401). {gated_help(m)}")
+        if status == 403:
+            raise GatedModelError(f"{name}: the gate is not accepted for the account behind "
+                                  f"HF_TOKEN (403). {gated_help(m)}")
+        if status >= 400:
+            raise GatedModelError(f"{name}: Hugging Face answered {status} for {m.url}")
 
 
 def parse_comfyui_version(text: str) -> tuple[int, ...] | None:
@@ -659,14 +710,16 @@ class RunPodSession:
             "-o", "LogLevel=ERROR",
         ]
 
-    def ssh_cmd(self, cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
-        """Run a command on the pod via SSH."""
+    def ssh_cmd(self, cmd: str, timeout: int = 60, input: str | None = None) -> subprocess.CompletedProcess:
+        """Run a command on the pod via SSH. `input` goes to the command's stdin
+        (how a secret reaches the pod without appearing in any argv)."""
         return subprocess.run(
             ["ssh", *self._ssh_opts(), "-o", "ServerAliveInterval=30",
              "-p", str(self.ssh_port), f"root@{self.ssh_host}", cmd],
             capture_output=True,
             text=True,
             timeout=timeout,
+            input=input,
         )
 
     def ssh_bg(self, cmd: str):
@@ -866,14 +919,32 @@ class RunPodSession:
                 print(f"    {name}: already exists")
                 continue
             print(f"    {name}: downloading...")
+            token = None
+            if m.gate_url:
+                token = os.environ.get("HF_TOKEN")
+                if not token:
+                    self.terminate()  # not a PodSetupError: with_setup_retry would leave this pod billing
+                    raise GatedModelError(f"{name} is gated and HF_TOKEN is not set. {gated_help(m)}")
+                # The token rides ssh's stdin and is read into a shell variable on the
+                # pod, so it is in no argv, no log line and no error message here.
+                fetch = ('IFS= read -r HF_TOKEN && wget -q --header="Authorization: Bearer $HF_TOKEN"'
+                         f" -O {full}.part '{m.url}'")
+            else:
+                fetch = f"wget -q -O {full}.part '{m.url}'"
             r = self.ssh_cmd(
-                f"mkdir -p {os.path.dirname(full)} && wget -q -O {full}.part '{m.url}' "
+                f"mkdir -p {os.path.dirname(full)} && {fetch} "
                 f"&& echo '{m.sha256}  {full}.part' | sha256sum -c --status "
                 f"&& mv {full}.part {full} && echo VERIFIED",
                 timeout=timeout,
+                **({"input": f"{token}\n"} if token else {}),
             )
             if r.returncode != 0 or "VERIFIED" not in (r.stdout or ""):
                 self.ssh_cmd(f"rm -f {full}.part", timeout=30)
+                # wget exits 6 on a 401/403: the token was refused at download time.
+                if m.gate_url and r.returncode == 6:
+                    self.terminate()
+                    raise GatedModelError(f"{name}: Hugging Face refused the download on the pod "
+                                          f"(401/403). {gated_help(m)}")
                 raise PodSetupError(
                     f"{name}: download or sha256 check failed (exit {r.returncode}) "
                     f"{(r.stderr or '')[:200]}")

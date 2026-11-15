@@ -1,8 +1,12 @@
 # ruff: noqa: E501  -- judge rubrics are prose sent verbatim
-"""Score research 0029's trial: arm T (text) vs arm K (keyframe-first). Free except ~cents of Gemini.
+"""Score research 0029's trial: arm T (text) vs arm K (keyframe-first), or T vs I (Ingredients).
+Free except ~cents of Gemini.
 
 Usage (from the repo root, after the render):
-    uv run python docs/research/0029-character-reference-continuity/trial/score.py RUN_DIR MODELS_DIR [--no-judge]
+    uv run python docs/research/0029-character-reference-continuity/trial/score.py RUN_DIR MODELS_DIR [--no-judge] [--arms T,I]
+
+--arms picks the two arms to compare (default T,K). Arm I's clips are read from
+clips/runpod-ltx25-ingredients-ab/I/, written by trial/make_ingredients_arm.py's manifest.
 
 MODELS_DIR holds OpenCV-zoo yunet.onnx (face detector) and sface.onnx (face embedder,
 Apache-2.0); both run on CPU. Writes everything to RUN_DIR/score/ and prints a summary;
@@ -43,7 +47,9 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, os.getcwd())
 import config  # noqa: E402
 
-ARMS = ("T", "K")
+ARMS = ("T", "K")   # the two arms compared; `--arms T,I` swaps in arm I (Ingredients)
+# Arm I runs under its own strategy, so its clips sit in a different directory.
+ARM_STRATEGY = {"I": "runpod-ltx25-ingredients"}
 POS = ("first", "mid", "last")
 # 0025 judged with gemini-2.5-flash; when AI Studio is rate-limited, run with
 # LOSSY_GEMINI_BACKEND=vertex LOSSY_JUDGE_MODEL=gemini-3.1-flash-lite (what Vertex serves here).
@@ -61,7 +67,8 @@ _spec.loader.exec_module(classify_style)  # type: ignore[union-attr]
 # ---------------------------------------------------------------- frames
 
 def clip_path(run: str, arm: str, shot: int) -> str:
-    return os.path.join(run, "clips", "runpod-ltx25-ab", arm, f"{shot:04d}.mp4")
+    strategy = ARM_STRATEGY.get(arm, "runpod-ltx25")
+    return os.path.join(run, "clips", f"{strategy}-ab", arm, f"{shot:04d}.mp4")
 
 
 def n_frames(path: str) -> int:
@@ -285,7 +292,8 @@ def main(run: str, models: str, judge: bool) -> None:
                 for pos in POS:
                     v = [cos(f["emb"], sheet_emb[c]) for s in mine if (f := face_of(arm, s, c, pos))]
                     curve[pos] = round(float(np.mean(v)), 4) if v else None
-                metrics["k_decay_vs_sheet" if arm == "K" else "t_vs_sheet"][c] = curve
+                mk = "k_decay_vs_sheet" if arm == "K" else f"{arm.lower()}_vs_sheet"
+                metrics.setdefault(mk, {})[c] = curve
         cents = {c: centroid(arm, c, "mid") for c in chars}
         cc = [cos(cents[a], cents[b]) for a, b in itertools.combinations(chars, 2)
               if cents[a] is not None and cents[b] is not None]
@@ -337,9 +345,9 @@ def main(run: str, models: str, judge: bool) -> None:
                                     GRID_PROMPT.format(n=n, desc=plan["identity"][c])], GRID_SCHEMA)
             gscores.append({"pass": p, "character": c, "arm": arm, "grid": name, **r})
         results["grid_scores"] = gscores
-        # 5b. cross-arm pairwise (pass 1: T as A; pass 2: K as A)
+        # 5b. cross-arm pairwise (pass 1: first arm as A; pass 2: second arm as A)
         pw = []
-        for p, (a_arm, b_arm) in ((1, ("T", "K")), (2, ("K", "T"))):
+        for p, (a_arm, b_arm) in ((1, ARMS), (2, ARMS[::-1])):
             for c in chars:
                 ga, gb = grids[(p, c, a_arm)][0], grids[(p, c, b_arm)][0]
                 r = ask(client, types, [types.Part.from_bytes(data=jpeg(ga), mime_type="image/jpeg"),
@@ -426,9 +434,14 @@ def summarise(r: dict) -> dict:
             "motion": mean([x.get("motion") for x in c]),
             "photoreal_rate": round(sum(x.get("style") == "photoreal" for x in st) / len(st), 3) if st else None,
         }
-    out["pairwise_wins"] = {w: sum(x["winner"] == w for x in r["pairwise"]) for w in ("T", "K", "tie")}
+    out["pairwise_wins"] = {w: sum(x["winner"] == w for x in r["pairwise"]) for w in (*ARMS, "tie")}
     return out
 
 
 if __name__ == "__main__":
+    if "--arms" in sys.argv:   # e.g. --arms T,I ; exactly two, since pairwise and clip judging compare two
+        i = sys.argv.index("--arms")
+        ARMS = tuple(sys.argv[i + 1].split(","))
+        del sys.argv[i:i + 2]
+        assert len(ARMS) == 2, f"--arms takes exactly two arms, got {ARMS}"
     main(sys.argv[1], sys.argv[2], "--no-judge" not in sys.argv)

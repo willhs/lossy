@@ -13,7 +13,7 @@ import time
 
 import manifest
 from clip_types import AudioClipResult, ClipResult
-from runpod_pod import PinnedModel
+from runpod_pod import PinnedModel, check_gated_access
 from prompt_format import (_format_prompt_wan, _format_prompt_seedance, format_prompt,
                            strip_character_names, vary_prompt_for_part)
 
@@ -1721,6 +1721,84 @@ class RunPodLtx25Strategy(RunPodLtx2Strategy):
                             "inputs": {"vae": ["3", 0], "image": ["40", 0], "latent": ["21", 0],
                                        "strength": 1.0, "bypass": False}}
                 wf["22"]["inputs"]["video_latent"] = ["42", 0]
+        return wf
+
+
+class RunPodLtx25IngredientsStrategy(RunPodLtx25Strategy):
+    """LTX-2.5 conditioned on a per-shot reference sheet (research 0029, arm I).
+
+    Lightricks' Ingredients IC-LoRA keeps characters on-model by conditioning every
+    frame on one composite image of them (see ingredients.py). Same two-stage graph
+    as RunPodLtx25Strategy, with the guide added at stage 1 and cut out again
+    before the upsample, so the refine pass is the plain one that is already
+    measured. Built from core ComfyUI nodes only (LoraLoaderModelOnly ->
+    GetICLoRAParameters -> LTXVAddGuide -> LTXVCropGuides, present in the pinned
+    v0.39.2), not the ComfyUI-LTXVideo custom node the vendor workflow uses.
+
+    Only runs through ``decode.py --ab-manifest``: the sheet is per shot and the
+    manifest job carries it as ``start_image`` (the same field the keyframe arm
+    uses for its first frame, and the one RunPodVaceStrategy already reuses for a
+    reference image). The prompt is the manifest's, already in the two-part form.
+
+    The adapter is gated on Hugging Face. ``__init__`` checks access with
+    HF_TOKEN before any pod exists, so a missing click costs nothing.
+    """
+
+    name = "runpod-ltx25-ingredients"
+
+    IC_LORA_REPO = "Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients"
+    IC_LORA_GATE_URL = f"https://huggingface.co/{IC_LORA_REPO}"
+    IC_LORA_REV = "5f83f6f7e5e6cd6eadfade02a57f03b9212d6434"   # repo head read 2026-11-15
+    IC_LORA = "ltx-2.5-22b-ic-lora-ingredients-0.9.safetensors"
+
+    PINNED_MODELS = RunPodLtx25Strategy.PINNED_MODELS + [
+        PinnedModel(f"loras/{IC_LORA}",
+                    f"https://huggingface.co/{IC_LORA_REPO}/resolve/{IC_LORA_REV}/{IC_LORA}",
+                    "ff873a5beada3c579a8137c7c53343916f78bcc9a529ba910143073fe8715e95",
+                    gate_url=IC_LORA_GATE_URL),
+    ]
+
+    LORA_STRENGTH = 1.0   # the card's setting (research 0029 2d); CFG 1 and 8 steps are already the base graph's
+
+    def __init__(self, *args, **kwargs):
+        check_gated_access(self.PINNED_MODELS, os.environ.get("HF_TOKEN"))
+        super().__init__(*args, **kwargs)
+
+    def generate(self, *args, **kwargs):
+        raise SystemExit(f"{self.name} has no sheet source in the normal decode path yet; "
+                         "run it with --ab-manifest (research 0029, arm I).")
+
+    def _build_workflow(self, prompt: str, seed: int, length: int = 97, start_image: str | None = None) -> dict:
+        """The base two-stage graph plus the reference-sheet guide.
+
+        ``start_image`` is the sheet's filename in the pod's input dir (not an I2V
+        first frame here). The sheet is repeated to ``length`` frames, a static
+        video guide, as the adapter expects.
+        """
+        if not start_image:
+            raise ValueError(f"{self.name} needs a reference sheet (start_image) for every clip")
+        wf = super()._build_workflow(prompt, seed, length=length, start_image=None)
+        wf["50"] = {"class_type": "LoraLoaderModelOnly",
+                    "inputs": {"model": ["1", 0], "lora_name": self.IC_LORA,
+                               "strength_model": self.LORA_STRENGTH}}
+        wf["51"] = {"class_type": "GetICLoRAParameters", "inputs": {"iclora_model": ["50", 0]}}
+        wf["52"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
+        wf["53"] = {"class_type": "RepeatImageBatch", "inputs": {"image": ["52", 0], "amount": length}}
+        wf["54"] = {"class_type": "LTXVAddGuide",
+                    "inputs": {"positive": ["7", 0], "negative": ["7", 1], "vae": ["3", 0],
+                               "latent": ["8", 0], "image": ["53", 0], "frame_idx": 0,
+                               "strength": 1.0, "iclora_parameters": ["51", 0]}}
+        wf["10"]["inputs"]["video_latent"] = ["54", 2]
+        # Stage 1 samples with the LoRA'd model and the guided conditioning ...
+        wf["11"]["inputs"].update({"model": ["50", 0], "positive": ["54", 0], "negative": ["54", 1]})
+        # ... then the guide frames are cut out, and stage 2 refines with the plain model.
+        wf["55"] = {"class_type": "LTXVCropGuides",
+                    "inputs": {"positive": ["54", 0], "negative": ["54", 1], "latent": ["16", 0]}}
+        wf["21"]["inputs"]["samples"] = ["55", 2]
+        wf["56"] = {"class_type": "LTXVDualCFGGuider",
+                    "inputs": {"model": ["1", 0], "positive": ["55", 0], "negative": ["55", 1],
+                               "video_cfg": 1.0, "audio_cfg": 1.0}}
+        wf["25"]["inputs"]["guider"] = ["56", 0]
         return wf
 
 

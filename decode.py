@@ -14,9 +14,12 @@ import os
 import sys
 import time
 
+from runpod_pod import GatedModelError, check_gated_access  # noqa: E402
+
 from config import (  # noqa: E402 -- re-export for backwards compat
     DECODE_AUDIO_STRATEGIES,
     MUSIC_STRATEGIES,
+    VIDEO_STRATEGIES,
     VIDEO_STRATEGY_NAMES,
     load_env,
 )
@@ -48,6 +51,7 @@ from strategies_video import (  # noqa: E402 -- re-export for backwards compat
     RunPodVaceStrategy,
     RunPodLtx2Strategy,
     RunPodLtx25Strategy,
+    RunPodLtx25IngredientsStrategy,
 )
 
 
@@ -341,8 +345,16 @@ def dry_run_ab(strategy_cls, jobs: list[dict]) -> None:
         start = os.path.basename(job["start_image"]) if job.get("start_image") else None
         probe._build_workflow(job["prompt"], job["seed"], length=job["frames"], start_image=start)
         print(f"  {ab_job_key(job):<28} seed {job['seed']:<5} {job['frames']:>3} frames  "
-              f"{'I2V ' if start else ''}{job['prompt'][:60]}...")
+              f"{'img ' if start else ''}{job['prompt'][:60]}...")
     print(f"Dry run OK: {len(jobs)} jobs build valid workflows. Nothing was submitted.")
+    # Informational: a real run stops on this before any pod is started. One free HEAD request.
+    gated = [m for m in getattr(strategy_cls, "PINNED_MODELS", []) if m.gate_url]
+    if gated:
+        try:
+            check_gated_access(gated, os.environ.get("HF_TOKEN"))
+            print(f"Gate check OK: HF_TOKEN may download {', '.join(os.path.basename(m.dest) for m in gated)}.")
+        except GatedModelError as e:
+            print(f"Gate check FAILED (a real run stops here, before any pod): {e}")
 
 
 def run_ab_manifest(args, strategy: GenerationStrategy, jobs: list[dict]):
@@ -765,24 +777,31 @@ def main():
             "runpod-vace": lambda: _create_vace_strategy(args),
             "runpod-ltx2": lambda: _create_ltx2_strategy(args),
             "runpod-ltx25": lambda: _create_ltx2_strategy(args, RunPodLtx25Strategy),
+            "runpod-ltx25-ingredients": lambda: _create_ltx2_strategy(args, RunPodLtx25IngredientsStrategy),
         }
         if args.ab_manifest:
             _run_ab(args, strategies)
             return
+        if VIDEO_STRATEGIES[args.strategy].ab_manifest_only:
+            sys.exit(f"{args.strategy} only runs with --ab-manifest (its inputs are per clip).")
         strategy = strategies[args.strategy]()
         run_decode(args, strategy)
 
 
 def _run_ab(args, strategies: dict):
     """Dispatch --ab-manifest: validate, then dry-run or render."""
-    if args.strategy not in ("runpod-ltx2", "runpod-ltx25"):
-        sys.exit("--ab-manifest supports the LTX strategies only (runpod-ltx2, runpod-ltx25)")
+    strategy_cls = VIDEO_STRATEGIES[args.strategy].cls
+    if not issubclass(strategy_cls, RunPodLtx2Strategy):
+        sys.exit("--ab-manifest supports the LTX strategies only "
+                 "(runpod-ltx2, runpod-ltx25, runpod-ltx25-ingredients)")
     jobs = load_ab_jobs(args.ab_manifest)
     if args.dry_run:
-        strategy_cls = RunPodLtx25Strategy if args.strategy == "runpod-ltx25" else RunPodLtx2Strategy
         dry_run_ab(strategy_cls, jobs)
         return
-    run_ab_manifest(args, strategies[args.strategy](), jobs)
+    try:   # a gate failure is raised before any pod exists (strategy init) or ends the pod it hit
+        run_ab_manifest(args, strategies[args.strategy](), jobs)
+    except GatedModelError as e:
+        sys.exit(f"Error: {e}")
 
 
 def _create_wan_enriched_strategy(args):
