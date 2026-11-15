@@ -2752,3 +2752,85 @@ class TestRunAudioSpeechOnlyShots:
         assert progress["completed"] == [0]
         assert sorted(progress["skipped"]) == [1, 2]
         assert progress["failed"] == []
+
+
+# ---------------------------------------------------------------------------
+# run_decode: incomplete-decode signalling and resume bookkeeping
+# ---------------------------------------------------------------------------
+
+def _decode_harness(tmp_path, monkeypatch, entries, succeed_for):
+    import decode
+    from strategies_video import GenerationStrategy
+
+    monkeypatch.setattr(decode.manifest, "load_shots", lambda _: (entries, {}))
+    monkeypatch.setattr(decode.manifest, "check_encode_fingerprint", lambda *a: True)
+    monkeypatch.setattr(decode.time, "sleep", lambda _: None)
+
+    class Strategy(GenerationStrategy):
+        name = "mock-incomplete"
+
+        def generate(self, prompt, clips_dir, idx, *a, **kw):
+            if idx not in succeed_for:
+                return []
+            return [ClipResult(path=os.path.join(clips_dir, f"{idx:04d}.mp4"),
+                               actual_duration_s=1.0, cost=0.0)]
+
+    args = SimpleNamespace(output_dir=str(tmp_path), start_index=0, limit=None)
+    return decode, Strategy(), args
+
+
+def _entries(*idxs):
+    return [{"index": i, "duration_s": 1.0, "description": {"action": "x"}} for i in idxs]
+
+
+def test_run_decode_returns_failed_shots(tmp_path, monkeypatch):
+    decode, strategy, args = _decode_harness(tmp_path, monkeypatch, _entries(1, 2, 3), {1, 3})
+    assert decode.run_decode(args, strategy) == [2]
+
+
+def test_run_decode_returns_empty_when_complete(tmp_path, monkeypatch):
+    decode, strategy, args = _decode_harness(tmp_path, monkeypatch, _entries(1, 2), {1, 2})
+    assert decode.run_decode(args, strategy) == []
+
+
+def test_run_decode_counts_shots_skipped_by_error_cap_as_incomplete(tmp_path, monkeypatch):
+    idxs = list(range(1, 30))
+    decode, strategy, args = _decode_harness(tmp_path, monkeypatch, _entries(*idxs), set())
+    incomplete = decode.run_decode(args, strategy)
+    assert incomplete == idxs  # failed shots and the ones never reached
+
+
+def test_run_decode_does_not_duplicate_failure_on_resume(tmp_path, monkeypatch):
+    decode, strategy, args = _decode_harness(tmp_path, monkeypatch, _entries(5), set())
+    decode.run_decode(args, strategy)
+    decode.run_decode(args, strategy)
+    path = decode.manifest.decode_progress_path(str(tmp_path), strategy.name)
+    with open(path) as f:
+        assert json.load(f)["failed"] == [5]
+
+
+def test_resume_adopting_clip_on_disk_clears_stale_failure(tmp_path, monkeypatch):
+    decode, strategy, args = _decode_harness(tmp_path, monkeypatch, _entries(5), set())
+    assert decode.run_decode(args, strategy) == [5]
+    clips = decode.manifest.clips_dir(str(tmp_path), strategy.name)
+    (open(os.path.join(clips, "0005.mp4"), "wb")).close()
+    monkeypatch.setattr(decode.manifest, "probe_duration", lambda p: 1.0)
+    assert decode.run_decode(args, strategy) == []
+    path = decode.manifest.decode_progress_path(str(tmp_path), strategy.name)
+    with open(path) as f:
+        progress = json.load(f)
+    assert progress["failed"] == [] and progress["completed"] == [5]
+
+
+@pytest.mark.parametrize("incomplete,code", [([2], 1), ([], None)])
+def test_main_exit_status_follows_run_decode(monkeypatch, tmp_path, incomplete, code):
+    import decode
+    monkeypatch.setattr(decode, "run_decode", lambda a, s: incomplete)
+    monkeypatch.setattr(decode, "RunPodWanStrategy", lambda **kw: MagicMock())
+    monkeypatch.setattr("sys.argv", ["decode.py", str(tmp_path), "--strategy", "runpod-wan"])
+    if code is None:
+        decode.main()
+    else:
+        with pytest.raises(SystemExit) as e:
+            decode.main()
+        assert e.value.code == code

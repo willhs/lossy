@@ -162,8 +162,26 @@ def _record_success(progress: dict, completed_set: set, idx: int, results: list)
 # ---------------------------------------------------------------------------
 
 
-def run_decode(args, strategy: GenerationStrategy):
-    """Main decode loop: read prompts, generate clips, track progress."""
+def run_decode(args, strategy: GenerationStrategy) -> list[int]:
+    """Main decode loop: read prompts, generate clips, track progress.
+
+    Returns the indices (within the --start-index/--limit scope) of shots that
+    are still not completed: failed, or never reached because the loop stopped
+    on too many errors. ``main`` exits nonzero when this is non-empty, so a
+    supervisor (``tools/capped_run.py``) can tell an incomplete decode from a
+    finished one.
+
+    Retry budget: ``strategy.generate`` retries each *clip* internally (RunPod
+    strategies tolerate two wedges per clip), and this loop then retries the
+    whole *shot* once more after 10s. A shot that keeps wedging can therefore
+    cost up to 2 x the per-clip budget before it is recorded failed. Every
+    nonzero exit re-runs failed shots again under ``capped_run`` (up to
+    ``--retries`` times), each paying that budget again.
+
+    Resume: only shots with every part on disk are adopted; a partial split
+    shot is regenerated, overwriting its stray parts. Adopting a shot clears it
+    from ``failed``, and a shot appears in ``failed`` at most once.
+    """
     output_dir = args.output_dir
 
     try:
@@ -230,6 +248,7 @@ def run_decode(args, strategy: GenerationStrategy):
                 {"path": os.path.basename(p), "duration_s": manifest.probe_duration(p)}
                 for p in existing
             ]
+            progress["failed"] = [f for f in progress["failed"] if f != idx]
             continue
 
         prompt_text = strategy.format_prompt(entry)
@@ -242,7 +261,8 @@ def run_decode(args, strategy: GenerationStrategy):
             _record_success(progress, completed_set, idx, results)
         else:
             errors += 1
-            progress["failed"].append(idx)
+            if idx not in progress["failed"]:  # a resume re-fails a shot already listed
+                progress["failed"].append(idx)
             # Retry once after a short wait
             print(f"  Retrying shot {idx} in 10s...")
             time.sleep(10)
@@ -294,6 +314,12 @@ def run_decode(args, strategy: GenerationStrategy):
     print(f"\nDone. Generated {generated} clips.")
     print(f"  Total: {len(progress['completed'])} completed, {len(progress['failed'])} failed")
     print(f"  Estimated cost: ${progress['total_cost_estimate']:.2f}")
+
+    incomplete = [p["index"] for p in prompts if p["index"] not in completed_set]
+    if incomplete:
+        print(f"  INCOMPLETE: {len(incomplete)} shots not decoded: {incomplete[:20]}"
+              f"{' ...' if len(incomplete) > 20 else ''}")
+    return incomplete
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +543,8 @@ def run_audio(args, strategy: AudioStrategy):
             _record_success(progress, completed_set, idx, results)
         else:
             errors += 1
-            progress["failed"].append(idx)
+            if idx not in progress["failed"]:  # a resume re-fails a shot already listed
+                progress["failed"].append(idx)
             print(f"  Retrying shot {idx} in 10s...")
             time.sleep(10)
             results = strategy.generate(sound, audio_dir, idx, entry["duration_s"], seed=idx)
@@ -785,7 +812,8 @@ def main():
         if VIDEO_STRATEGIES[args.strategy].ab_manifest_only:
             sys.exit(f"{args.strategy} only runs with --ab-manifest (its inputs are per clip).")
         strategy = strategies[args.strategy]()
-        run_decode(args, strategy)
+        if run_decode(args, strategy):
+            sys.exit(1)  # shots remain failed/undecoded: not a finished film
 
 
 def _run_ab(args, strategies: dict):
