@@ -328,7 +328,59 @@ class MMAudioStrategy(AudioStrategy):
         return results
 
 
-class RunPodMMAudioStrategy(AudioStrategy):
+class WedgedPodReplacementMixin:
+    """Replace a wedged RunPod pod between submits, as the video loop does.
+
+    A timed-out job that /interrupt cannot stop leaves the pod `wedged`
+    (RunPodSession.cancel_job): every later job queues behind it and waits out
+    its timeout, so each shot paid for pod time and produced nothing (research
+    0026). Same policy as RunPodWanStrategy._generate_one_clip: the first wedge
+    ends the pod (forget_pod terminates it first), provisions one fresh pod and
+    retries the clip there; a second wedge on the same clip means the clip is
+    the problem, so the pod is dropped and the clip abandoned -- the next
+    shot's _ensure_pod provisions a clean one.
+
+    Needs `_session`, `_setup_done` and `_ensure_pod` from the strategy.
+    """
+
+    # Same bound as RunPodWanStrategy.CLIP_WEDGE_STRIKES.
+    CLIP_WEDGE_STRIKES = 2
+
+    def _pod_is_wedged(self) -> bool:
+        return getattr(self._session, "wedged", False) is True
+
+    def _submit_replacing_wedged_pod(self, workflow: dict, timeout: int, label: str):
+        """submit_workflow, moving to a fresh pod when this one wedges.
+
+        Returns the job history, or None if the job failed or the clip was
+        abandoned. An exception propagates unless the pod is wedged (a poll
+        error is cancelled the same way a timeout is); then it counts as a
+        failed attempt.
+        """
+        wedge_strikes = 0
+        while True:
+            try:
+                history = self._session.submit_workflow(workflow, timeout=timeout)
+            except Exception as e:
+                if not self._pod_is_wedged():
+                    raise
+                print(f"  {label}: {e}")
+                history = None
+            if history or not self._pod_is_wedged():
+                return history
+            wedge_strikes += 1
+            if wedge_strikes >= self.CLIP_WEDGE_STRIKES:
+                print(f"  {label}: wedged {wedge_strikes} pods; giving up on this clip.")
+                self._session.forget_pod()
+                self._setup_done = False
+                return None
+            print(f"  Pod is wedged -- provisioning a replacement and retrying {label}...")
+            self._session.forget_pod()
+            self._setup_done = False
+            self._ensure_pod()
+
+
+class RunPodMMAudioStrategy(WedgedPodReplacementMixin, AudioStrategy):
     """MMAudio V2 text-to-audio via self-hosted ComfyUI on RunPod -- ~$0/marginal."""
 
     name = "runpod-mmaudio"
@@ -526,7 +578,8 @@ class RunPodMMAudioStrategy(AudioStrategy):
 
             try:
                 workflow = self._build_workflow(sound_description, duration, effective_seed)
-                history = self._session.submit_workflow(workflow, timeout=self.GENERATION_TIMEOUT)
+                history = self._submit_replacing_wedged_pod(
+                    workflow, self.GENERATION_TIMEOUT, clip_name)
                 if not history:
                     print(f"  Failed to generate audio for shot {shot_index}")
                     return []
@@ -624,7 +677,7 @@ class ReplicateMusicGenStrategy(AudioStrategy):
             return []
 
 
-class RunPodMusicGenStrategy(AudioStrategy):
+class RunPodMusicGenStrategy(WedgedPodReplacementMixin, AudioStrategy):
     """MusicGen via self-hosted ComfyUI on RunPod — ~$0/marginal.
 
     Installs ComfyUI-MusicGen custom nodes on first run.
@@ -777,7 +830,8 @@ class RunPodMusicGenStrategy(AudioStrategy):
 
             try:
                 workflow = self._build_workflow(sound_description, duration, effective_seed)
-                history = self._session.submit_workflow(workflow, timeout=self.GENERATION_TIMEOUT)
+                history = self._submit_replacing_wedged_pod(
+                    workflow, self.GENERATION_TIMEOUT, clip_name)
                 if not history:
                     print(f"  Failed to generate music for shot {shot_index}")
                     return []

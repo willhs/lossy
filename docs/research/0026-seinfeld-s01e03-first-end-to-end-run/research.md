@@ -102,10 +102,15 @@ re-stitch came out clean (largest drift 0.045 s). [measured]
   - every pod wedges: clip abandoned in **<= 11 min** after 2 pods, both terminated, zero live pods
     (the next shot provisions a fresh one).
 
-Left over, not fixed: the audio strategies (`strategies_audio.py`) get the cancel but do not
-act on `wedged`, so a wedged pod there is only caught by `run_audio`'s "Too many errors"
-stop and the exit sweep. The mock cannot show a real ComfyUI's `/interrupt` and `/queue`
-payload handling (written from the ComfyUI API as documented; not run against a pod).
+The audio strategies (`RunPodMMAudioStrategy`, `RunPodMusicGenStrategy`) now act on `wedged`
+too (16 Nov 2026): `WedgedPodReplacementMixin` in `strategies_audio.py` applies the video
+policy to each audio clip: the first wedge ends the pod and provisions one replacement, the clip
+is retried there, and a second wedge on the same clip (`CLIP_WEDGE_STRIKES = 2`) abandons it with
+the pod dropped. Before this, a wedged audio pod was only caught by `run_audio`'s "Too many
+errors" stop and the exit sweep. Mock tests: `TestWedgedPodInAudioStrategies`
+(`tests/test_runpod_pod.py`, both strategies). Ownership, overlap and a failed terminate are
+unchanged (tasks 243f1be5 and 9f7ea2a6). The mock cannot show a real ComfyUI's `/interrupt` and
+`/queue` payload handling (written from the ComfyUI API as documented; not run against a pod).
 
 ## Cost, and why there is no ambience
 

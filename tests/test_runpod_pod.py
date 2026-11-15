@@ -1288,3 +1288,166 @@ class TestHungComfyUIJob:
             rig.strat._session.submit_workflow({"1": {}}, timeout=300)
         assert comfy.queue == []
         assert rig.strat._session.wedged is False
+
+
+class _FakeAudioComfy(_FakeComfy):
+    """_FakeComfy whose finished jobs carry an audio output, as MMAudio/MusicGen do."""
+
+    def _run(self):
+        while self.queue and not self.queue[0]["hangs"]:
+            job = self.queue.pop(0)
+            self.history[job["id"]] = {
+                "status": {"status_str": "success"},
+                "outputs": {"9": {"audio": [{"filename": "out.flac"}]}}}
+
+
+class TestWedgedPodInAudioStrategies:
+    """The audio strategies replace a wedged pod the way the video loop does
+    (research 0026): the old pod is ended, one fresh pod is started, the clip
+    is retried on it, and a clip that wedges two pods is given up on.
+
+    Everything is mocked: RunPod account (_FleetRunpod), ComfyUI
+    (_FakeAudioComfy), the clock (_Clock). Nothing starts a pod or touches a network.
+    """
+
+    @pytest.fixture(params=["mmaudio", "musicgen"])
+    def rig(self, request, tmp_path, monkeypatch):
+        import sys
+        import types
+        import runpod_pod
+        import strategies_audio
+
+        fleet = _FleetRunpod()
+        clock = _Clock()
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+        monkeypatch.setitem(sys.modules, "runpod", fleet)
+        fake_time = types.SimpleNamespace(time=clock.time, sleep=clock.sleep)
+        monkeypatch.setattr(runpod_pod, "time", fake_time)
+        monkeypatch.setattr(strategies_audio, "time", fake_time)
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", lambda self: None)
+        monkeypatch.setattr(RunPodSession, "ssh_cmd", lambda self, *a, **k: None)
+        monkeypatch.setattr(RunPodSession, "ssh_bg", lambda self, *a, **k: None)
+
+        cls = {"mmaudio": strategies_audio.RunPodMMAudioStrategy,
+               "musicgen": strategies_audio.RunPodMusicGenStrategy}[request.param]
+        strat = cls(output_dir=str(tmp_path))
+        comfies: dict[str, _FakeAudioComfy] = {}
+        make_comfy = lambda: _FakeAudioComfy()      # noqa: E731 -- replaced per test
+
+        def setup_pod():                       # the real ensure_pod, minus model installs
+            strat._session.ensure_pod()
+            pod_id = strat._session.pod_id
+            strat._session._http = comfies.setdefault(pod_id, make_comfy())
+            strat._setup_done = True
+        monkeypatch.setattr(strat, "_setup_pod_once", setup_pod)
+        monkeypatch.setattr(cls, "_build_workflow", lambda self, *a, **k: {"1": {}})
+
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir()
+        rig = types.SimpleNamespace(fleet=fleet, clock=clock, strat=strat,
+                                    comfies=comfies, audio_dir=str(audio_dir))
+
+        def use(factory):
+            nonlocal make_comfy
+            make_comfy = factory
+        rig.use = use
+        rig.generate = lambda shot: strat.generate(
+            "wind and distant machinery", rig.audio_dir, shot, 5.0)
+        return rig
+
+    @staticmethod
+    def _first_pod_wedged(wedged_pods=1):
+        """ComfyUI factory: the first `wedged_pods` pods hang and ignore /interrupt."""
+        made = {"n": 0}
+
+        def factory():
+            made["n"] += 1
+            if made["n"] <= wedged_pods:
+                return _FakeAudioComfy(hang=lambda n: True, ignores_interrupt=True)
+            return _FakeAudioComfy(hang=lambda n: False)
+        return factory
+
+    def test_a_wedge_triggers_exactly_one_replacement_and_the_clip_succeeds_on_it(self, rig):
+        rig.use(self._first_pod_wedged())
+
+        results = rig.generate(1)
+
+        assert len(results) == 1 and os.path.exists(results[0].path)
+        assert rig.fleet.created == 2                      # one replacement, not a chain
+        assert list(rig.fleet.live) == ["pod-2"]
+        assert rig.strat._session.wedged is False
+
+    def test_the_wedged_pod_is_ended_before_its_replacement_is_created(self, rig):
+        rig.use(self._first_pod_wedged())
+        rig.generate(1)
+
+        assert rig.fleet.events == [
+            ("create", "pod-1"), ("terminate", "pod-1"), ("create", "pod-2")]
+
+    def test_the_next_shot_runs_on_the_new_pod_without_another_replacement(self, rig):
+        rig.use(self._first_pod_wedged())
+        rig.generate(1)
+        started = rig.clock.now
+
+        results = rig.generate(2)
+
+        assert len(results) == 1
+        assert rig.fleet.created == 2
+        assert rig.clock.now == started                    # no timeout waited out
+        assert list(rig.fleet.live) == ["pod-2"]
+
+    def test_a_clip_that_wedges_two_pods_is_given_up_on_with_nothing_left_billing(self, rig):
+        rig.use(self._first_pod_wedged(wedged_pods=99))
+
+        results = rig.generate(1)
+
+        assert results == []
+        assert rig.fleet.created == 2                      # CLIP_WEDGE_STRIKES pods, no more
+        assert rig.fleet.live == {}
+        assert rig.strat._setup_done is False              # next shot provisions a clean pod
+
+    def test_the_shot_after_a_given_up_clip_provisions_a_fresh_pod_and_succeeds(self, rig):
+        rig.use(self._first_pod_wedged(wedged_pods=2))
+        assert rig.generate(1) == []
+
+        results = rig.generate(2)
+
+        assert len(results) == 1
+        assert rig.fleet.created == 3
+        assert list(rig.fleet.live) == ["pod-3"]
+
+    def test_a_poll_error_that_leaves_the_pod_wedged_is_replaced_too(self, rig):
+        import httpx
+        made = {"n": 0}
+
+        def factory():
+            made["n"] += 1
+            if made["n"] > 1:
+                return _FakeAudioComfy(hang=lambda n: False)
+            comfy = _FakeAudioComfy(hang=lambda n: True, ignores_interrupt=True)
+            real_get = comfy.get
+
+            def flaky_get(url, *a, **k):
+                if "/history/" in url:
+                    raise httpx.ReadTimeout("proxy stalled")
+                return real_get(url, *a, **k)
+            comfy.get = flaky_get
+            return comfy
+        rig.use(factory)
+
+        results = rig.generate(1)
+
+        assert len(results) == 1
+        assert rig.fleet.created == 2
+        assert list(rig.fleet.live) == ["pod-2"]
+
+    def test_an_error_on_a_healthy_pod_does_not_replace_it(self, rig):
+        """Only a wedge replaces the pod; an ordinary failed job keeps returning []."""
+        rig.use(lambda: _FakeAudioComfy(hang=lambda n: True))   # /interrupt works
+
+        results = rig.generate(1)
+
+        assert results == []
+        assert rig.fleet.created == 1
+        assert list(rig.fleet.live) == ["pod-1"]
