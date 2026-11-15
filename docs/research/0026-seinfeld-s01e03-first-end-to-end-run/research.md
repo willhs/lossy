@@ -81,8 +81,31 @@ recorded, and the first stitch mis-assigned their parts (shots 296 and 298 came 
 10.6 s long). The four shots were added to the progress file from the clips on disk and the
 re-stitch came out clean (largest drift 0.045 s). [measured]
 
-**Open bug:** a hung ComfyUI poll has no timeout, and re-provisioning does not terminate the
-pod it replaces.
+**Bug, closed 15 Nov 2026** (both halves of the original line):
+
+- *Re-provisioning did not terminate the pod it replaces.* Fixed earlier by 05059f3:
+  `forget_pod`, setup retry and re-create all terminate first. A mock fleet test
+  (`test_the_wedged_pod_is_terminated_before_its_replacement_is_created`) records the
+  order `create pod-1, terminate pod-1, create pod-2`.
+- *A hung poll has no timeout / the hung job is never stopped.* The 300 s timeout already
+  existed, but on timeout nothing cancelled the ComfyUI job. ComfyUI runs one job at a time,
+  so every retry queued behind the dead job and could only time out too. Measured with
+  `TestHungComfyUIJob` (mocked RunPod API, ComfyUI and clock; no pod, no spend):
+  before the fix a never-finishing job was abandoned after **16.0 min** (3 x 300 s + 20 s + 40 s
+  backoff), on the same pod, with the stuck job still in the queue.
+  Now: `submit_workflow` drops the job from the queue and sends `/interrupt` on timeout (or on
+  a poll error) and checks `/queue`. If the job will not stop, the pod is marked `wedged`, and
+  the clip loop replaces it (old pod terminated first). Bounds, all asserted in tests:
+  - interrupt works but the clip hangs every time: abandoned in **<= 17 min** (3 attempts), 1 pod;
+  - interrupt does not free the worker: pod replaced after **one** 5 min timeout, the clip then
+    succeeds on the new pod;
+  - every pod wedges: clip abandoned in **<= 11 min** after 2 pods, both terminated, zero live pods
+    (the next shot provisions a fresh one).
+
+Left over, not fixed: the audio strategies (`strategies_audio.py`) get the cancel but do not
+act on `wedged`, so a wedged pod there is only caught by `run_audio`'s "Too many errors"
+stop and the exit sweep. The mock cannot show a real ComfyUI's `/interrupt` and `/queue`
+payload handling (written from the ComfyUI API as documented; not run against a pod).
 
 ## Cost, and why there is no ambience
 
@@ -127,7 +150,7 @@ against one cap).
   the first thing to try before a second episode. [8 stills only, not a survey]
 - **Ambience level.** Mean loudness of the finished mix is -18.5 dB with peaks at 0 dB; nobody has
   listened to it yet.
-- **Not run:** a hung ComfyUI poll was not seen this time (no stall), so the open bug above is
-  untouched.
+- **Not run:** a hung ComfyUI poll was not seen this time (no stall); the bug above was
+  closed afterwards with mock tests only, not observed on a live pod.
 
 The partial first cut is kept as `partial_shots0-298_no_ambience.mp4` next to the finished file.

@@ -668,10 +668,12 @@ class _FleetRunpod:
         self.fail_terminate: set[str] = set()   # ids whose terminate call raises
         self.ports_ready = True                 # whether new pods expose ports
         self.name_of_created: list[str] = []
+        self.events: list[tuple[str, str]] = []  # ("create"|"terminate", pod_id), in order
 
     def create_pod(self, name, **kwargs):
         self.created += 1
         pod_id = f"pod-{self.created}"
+        self.events.append(("create", pod_id))
         self.live[pod_id] = {"id": pod_id, "name": name, "desiredStatus": "RUNNING",
                              "ports_ready": self.ports_ready}
         self.name_of_created.append(name)
@@ -696,6 +698,7 @@ class _FleetRunpod:
         if pod_id not in self.live:
             raise RuntimeError("pod not found to terminate")
         del self.live[pod_id]
+        self.events.append(("terminate", pod_id))
 
 
 class TestNoAbandonedPodStaysLive:
@@ -864,3 +867,254 @@ class TestNoAbandonedPodStaysLive:
         s.create_pod()
         s._cleanup()
         assert list(fleet.live) == ["pod-theirs"]
+
+
+# ---------------------------------------------------------------------------
+# A ComfyUI job that never finishes (research 0026, "Open bug")
+# ---------------------------------------------------------------------------
+
+class _Clock:
+    """Virtual time: sleep() advances it, so a 20-minute stall runs instantly."""
+
+    def __init__(self):
+        self.now = 1_000_000.0
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def minutes_since(self, start):
+        return (self.now - start) / 60
+
+
+class _Resp:
+    def __init__(self, payload=None, status=200, content=b""):
+        self._payload, self.status_code, self.content = payload, status, content
+        self.text = "" if payload is None else str(payload)
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeComfy:
+    """The ComfyUI HTTP API on one pod: a single-worker FIFO queue.
+
+    A job that "hangs" occupies the worker until it is interrupted, so anything
+    queued behind it never runs -- which is the real reason retrying on the same
+    pod after a timeout is useless unless the stuck job is cancelled first.
+    `ignores_interrupt` models a wedged GPU that /interrupt cannot free.
+    """
+
+    def __init__(self, hang=lambda n: True, ignores_interrupt=False):
+        self.hang, self.ignores_interrupt = hang, ignores_interrupt
+        self.queue: list[dict] = []
+        self.history: dict[str, dict] = {}
+        self.submitted = 0
+        self.calls: list[str] = []
+
+    def _run(self):
+        while self.queue and not self.queue[0]["hangs"]:
+            job = self.queue.pop(0)
+            self.history[job["id"]] = {
+                "status": {"status_str": "success"},
+                "outputs": {"9": {"images": [{"filename": "out.mp4"}]}}}
+
+    def post(self, url, json=None, timeout=None, **kw):
+        path = url.split("/", 3)[-1]
+        self.calls.append(f"POST /{path}")
+        if path == "prompt":
+            self.submitted += 1
+            self.queue.append({"id": f"job-{self.submitted}",
+                               "hangs": self.hang(self.submitted)})
+            self._run()
+            return _Resp({"prompt_id": f"job-{self.submitted}"})
+        if path == "interrupt" and self.queue and not self.ignores_interrupt:
+            job = self.queue.pop(0)
+            self.history[job["id"]] = {"status": {"status_str": "error"}}
+            self._run()
+        elif path == "queue":
+            doomed = set((json or {}).get("delete", []))
+            running = self.queue[:1]
+            self.queue = running + [j for j in self.queue[1:] if j["id"] not in doomed]
+            if (json or {}).get("clear"):
+                self.queue = running
+        return _Resp({})
+
+    def get(self, url, params=None, timeout=None, **kw):
+        path = url.split("/", 3)[-1]
+        self.calls.append(f"GET /{path}")
+        if path.startswith("history/"):
+            return _Resp({k: v for k, v in self.history.items()
+                          if k == path.split("/")[1]})
+        if path == "queue":
+            items = [[i, j["id"], {}, {}, []] for i, j in enumerate(self.queue)]
+            return _Resp({"queue_running": items[:1], "queue_pending": items[1:]})
+        if path == "view":
+            return _Resp(content=b"fake-video")
+        return _Resp({})
+
+    def close(self):
+        pass
+
+
+class TestHungComfyUIJob:
+    """A job that never finishes must be abandoned in bounded time, with the
+    stuck job cancelled and no pod left billing (research 0026).
+
+    Everything is mocked: RunPod account (_FleetRunpod), ComfyUI (_FakeComfy),
+    the clock (_Clock). Nothing starts a pod or touches a network.
+    """
+
+    HUNG_ATTEMPT_MIN = 5          # submit_workflow(timeout=300) from strategies_video
+    # CLIP_ATTEMPTS x 300 s + 20 s + 40 s of backoff, plus cancel overhead.
+    WORST_CASE_ABANDON_MIN = 17
+    WEDGED_REPLACE_MIN = 6        # one timeout, then the pod is replaced
+    ALL_WEDGED_ABANDON_MIN = 11   # two wedged pods = two timeouts, then give up
+
+    @pytest.fixture
+    def rig(self, tmp_path, monkeypatch):
+        import sys
+        import types
+        import runpod_pod
+        import strategies_video
+
+        fleet = _FleetRunpod()
+        clock = _Clock()
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+        monkeypatch.setitem(sys.modules, "runpod", fleet)
+        fake_time = types.SimpleNamespace(time=clock.time, sleep=clock.sleep)
+        monkeypatch.setattr(runpod_pod, "time", fake_time)
+        monkeypatch.setattr(strategies_video, "time", fake_time)
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", lambda self: None)
+        # The pod's ssh/scp side is out of scope: no command ever reaches a host.
+        monkeypatch.setattr(RunPodSession, "ssh_cmd", lambda self, *a, **k: None)
+        monkeypatch.setattr(RunPodSession, "ssh_bg", lambda self, *a, **k: None)
+
+        strat = strategies_video.RunPodWanStrategy(output_dir=str(tmp_path))
+
+        def setup_pod():                       # the real ensure_pod, minus model downloads
+            strat._session.ensure_pod()
+            strat._session._http = comfy_for(strat._session.pod_id)
+            strat._setup_done = True
+        comfies: dict[str, _FakeComfy] = {}
+
+        def comfy_for(pod_id):
+            return comfies.setdefault(pod_id, make_comfy())
+        make_comfy = lambda: _FakeComfy()      # noqa: E731 -- replaced per test
+        monkeypatch.setattr(strat, "_setup_pod_once", setup_pod)
+        monkeypatch.setattr(strategies_video.RunPodWanStrategy, "_build_clip_workflow",
+                            lambda self, *a, **k: {"1": {}})
+        monkeypatch.setattr(strategies_video.subprocess, "run",
+                            lambda *a, **k: types.SimpleNamespace(returncode=1))
+        monkeypatch.setattr(strategies_video.manifest, "probe_duration", lambda p: 2.0)
+
+        rig = types.SimpleNamespace(
+            fleet=fleet, clock=clock, strat=strat, comfies=comfies,
+            start=clock.now, clips_dir=str(tmp_path))
+        # Let tests choose the ComfyUI behaviour before the first pod appears.
+        def use(factory):
+            nonlocal make_comfy
+            make_comfy = factory
+        rig.use = use
+        return rig
+
+    def _run_one_clip(self, rig):
+        rig.strat._ensure_pod()
+        return rig.strat._generate_one_clip(
+            "a prompt", rig.clips_dir, "shot_0001.mp4", 49, 1)
+
+    def test_a_job_that_never_finishes_is_abandoned_within_the_bound(self, rig):
+        """Today's behaviour, measured: how long, and what is left billing."""
+        rig.use(lambda: _FakeComfy(hang=lambda n: True))
+        result = self._run_one_clip(rig)
+        elapsed = rig.clock.minutes_since(rig.start)
+        print(f"hung job abandoned after {elapsed:.1f} min "
+              f"({rig.fleet.created} pod(s) created)")
+
+        assert result is None
+        assert elapsed <= self.WORST_CASE_ABANDON_MIN
+        assert elapsed >= self.HUNG_ATTEMPT_MIN        # it really did wait out a timeout
+
+        rig.strat._session._cleanup()
+        assert rig.fleet.live == {}                    # zero live pods afterwards
+
+    def test_the_stuck_job_is_interrupted_not_left_running(self, rig):
+        """Without /interrupt every retry queues behind the dead job and can
+        never run, so each retry just burns another timeout on a live pod."""
+        rig.use(lambda: _FakeComfy(hang=lambda n: n == 1))   # only the first hangs
+        result = self._run_one_clip(rig)
+
+        assert result is not None                       # the retry actually ran
+        comfy = next(iter(rig.comfies.values()))
+        assert "POST /interrupt" in comfy.calls
+        elapsed = rig.clock.minutes_since(rig.start)
+        assert elapsed < 2 * self.HUNG_ATTEMPT_MIN      # one timeout, not two
+
+    def test_a_pod_that_ignores_interrupt_is_replaced_after_one_timeout(self, rig):
+        # Only the first pod is wedged; the replacement is healthy.
+        pods = {}
+
+        def factory():
+            pods["n"] = pods.get("n", 0) + 1
+            return (_FakeComfy(hang=lambda n: True, ignores_interrupt=True)
+                    if pods["n"] == 1 else _FakeComfy(hang=lambda n: False))
+        rig.use(factory)
+
+        result = self._run_one_clip(rig)
+        elapsed = rig.clock.minutes_since(rig.start)
+
+        assert result is not None
+        assert rig.fleet.created == 2
+        assert elapsed <= self.WEDGED_REPLACE_MIN + 1   # not 3 timeouts on the dead pod
+        assert list(rig.fleet.live) == ["pod-2"]        # only the replacement is live
+
+    def test_the_wedged_pod_is_terminated_before_its_replacement_is_created(self, rig):
+        pods = {}
+
+        def factory():
+            pods["n"] = pods.get("n", 0) + 1
+            return (_FakeComfy(hang=lambda n: True, ignores_interrupt=True)
+                    if pods["n"] == 1 else _FakeComfy(hang=lambda n: False))
+        rig.use(factory)
+        self._run_one_clip(rig)
+
+        assert rig.fleet.events == [
+            ("create", "pod-1"), ("terminate", "pod-1"), ("create", "pod-2")]
+
+    def test_everything_hanging_on_every_pod_still_ends_with_zero_live_pods(self, rig):
+        """Worst case: every pod wedges. Bounded replacements, nothing leaked."""
+        rig.use(lambda: _FakeComfy(hang=lambda n: True, ignores_interrupt=True))
+        result = self._run_one_clip(rig)
+        elapsed = rig.clock.minutes_since(rig.start)
+
+        assert result is None
+        assert elapsed <= self.ALL_WEDGED_ABANDON_MIN
+        assert rig.fleet.created == 2                   # one replacement, not a chain of them
+        assert rig.fleet.live == {}                     # the clip failing already dropped the pod
+        assert rig.strat._setup_done is False           # next shot provisions a clean pod
+        rig.strat._session._cleanup()
+        assert rig.fleet.live == {}
+
+    def test_a_poll_that_errors_out_still_cancels_the_job(self, rig):
+        """Abandoning a poll by exception must not leave the job in the queue."""
+        import httpx
+        comfy = _FakeComfy(hang=lambda n: True)
+        real_get = comfy.get
+
+        def flaky_get(url, *a, **k):
+            if "/history/" in url:
+                raise httpx.ReadTimeout("proxy stalled")
+            return real_get(url, *a, **k)
+        comfy.get = flaky_get
+        rig.use(lambda: comfy)
+        rig.strat._ensure_pod()
+        with pytest.raises(httpx.ReadTimeout):
+            rig.strat._session.submit_workflow({"1": {}}, timeout=300)
+        assert comfy.queue == []
+        assert rig.strat._session.wedged is False

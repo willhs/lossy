@@ -425,6 +425,11 @@ class RunPodWanStrategy(GenerationStrategy):
     # gives that kind of transient room to clear.
     CLIP_ATTEMPTS = 3
     CLIP_RETRY_DELAY_S = 20
+    # A job that times out and survives /interrupt wedges its pod (see
+    # RunPodSession.cancel_job). The first wedge replaces the pod; a second on
+    # the same clip abandons the clip, so one bad prompt cannot walk through
+    # an unbounded number of pods at ~$0.6/h each.
+    CLIP_WEDGE_STRIKES = 2
 
     def format_prompt(self, entry: dict) -> str:
         return _format_prompt_wan(entry)
@@ -864,11 +869,29 @@ class RunPodWanStrategy(GenerationStrategy):
         same clip generated again, not a different one, so a run that resumes
         after a failure lands on the same footage it would have had.
         """
+        wedge_strikes = 0
+
+        def clip_wedges_pods() -> bool:
+            """Count a wedge; True once a fresh pod has wedged on this clip too."""
+            nonlocal wedge_strikes
+            wedge_strikes += self._pod_is_wedged()
+            if wedge_strikes < self.CLIP_WEDGE_STRIKES:
+                return False
+            # A replacement hanging on the same clip means the clip is the
+            # problem, not the host. Drop the pod now (nothing left billing);
+            # the next shot's _ensure_pod provisions a clean one.
+            print(f"  {clip_name}: wedged {wedge_strikes} pods; giving up on this clip.")
+            self._session.forget_pod()
+            self._setup_done = False
+            return True
+
         for attempt in range(1, self.CLIP_ATTEMPTS + 1):
             result = self._attempt_one_clip(
                 prompt, clips_dir, clip_name, frames, seed, start_image=start_image)
             if result is not None:
                 return result
+            if clip_wedges_pods():
+                return None
             # A pod that has gone away answers every request identically, so
             # retrying the clip is pointless -- the run needs a new pod, not a
             # fourth attempt at the same dead host.
@@ -877,6 +900,8 @@ class RunPodWanStrategy(GenerationStrategy):
                     prompt, clips_dir, clip_name, frames, seed, start_image=start_image)
                 if result is not None:
                     return result
+                if clip_wedges_pods():
+                    return None
             if attempt < self.CLIP_ATTEMPTS:
                 delay = self.CLIP_RETRY_DELAY_S * attempt
                 print(f"  {clip_name}: attempt {attempt} failed, "
@@ -884,6 +909,10 @@ class RunPodWanStrategy(GenerationStrategy):
                       f"[attempt {attempt + 1}/{self.CLIP_ATTEMPTS}]...")
                 time.sleep(delay)
         return None
+
+    def _pod_is_wedged(self) -> bool:
+        session = getattr(self, "_session", None)
+        return getattr(session, "wedged", False) is True
 
     def _reprovision_if_pod_gone(self) -> bool:
         """Get a fresh pod if ours has vanished. Returns True if re-provisioned.
@@ -905,10 +934,15 @@ class RunPodWanStrategy(GenerationStrategy):
         # only the latter warrants tearing setup down and starting again.
         if session is None or getattr(session, "pod_id", None) is None:
             return False
-        if session.pod_alive():
+        # A wedged pod is alive and billing but its worker is stuck on a job
+        # /interrupt could not stop (see RunPodSession.cancel_job); retrying on
+        # it would only queue behind that job.
+        wedged = self._pod_is_wedged()
+        if session.pod_alive() and not wedged:
             return False
 
-        print("  Pod is gone -- provisioning a replacement and retrying...")
+        print(f"  Pod is {'wedged' if wedged else 'gone'} -- "
+              f"provisioning a replacement and retrying...")
         session.forget_pod()
         self._setup_done = False
         self._ensure_pod()    # with_setup_retry, so a bad host is survivable

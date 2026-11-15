@@ -75,6 +75,8 @@ REAPER_PID_FILE = "/workspace/.lossy_reaper.pid"
 # -- each stalled the run until a human reissued the command.
 POD_SETUP_ATTEMPTS = 4
 POD_SETUP_BACKOFF_S = 30
+# After /interrupt, how many 2 s polls of /queue before declaring the pod wedged.
+CANCEL_CONFIRM_POLLS = 5
 
 
 
@@ -159,6 +161,11 @@ class RunPodSession:
         self._cleanup_registered = False
         self._swept = False
         self._http = None
+        # Set when a job timed out and /interrupt could not free the worker:
+        # the pod is alive and billing but will never run another job, so a
+        # caller should replace it rather than queue more work behind the dead
+        # one. Cleared whenever the pod handle is dropped.
+        self.wedged = False
         # Pod ids this session provisioned or adopted. Belt-and-braces
         # alongside the name check: either one identifying a pod as ours is
         # enough to terminate it. Append-only: the exit sweep is gated on it
@@ -604,6 +611,7 @@ class RunPodSession:
         self.base_url = None
         self.ssh_host = None
         self.ssh_port = None
+        self.wedged = False
         self.close_http()
         self.remove_state()
 
@@ -626,6 +634,7 @@ class RunPodSession:
 
         pod_id = self.pod_id
         self.pod_id = None  # Prevent double-terminate
+        self.wedged = False
 
         elapsed_h = (time.time() - self.pod_start_time) / 3600 if self.pod_start_time else 0
         estimated_cost = elapsed_h * self.gpu_hourly_rate
@@ -888,22 +897,54 @@ class RunPodSession:
         prompt_id = resp.json()["prompt_id"]
 
         start = time.time()
-        while time.time() - start < timeout:
-            resp = self.http.get(
-                f"{self.base_url}/history/{prompt_id}",
-                timeout=10,
-            )
-            history = resp.json()
-            if prompt_id in history:
-                status = history[prompt_id].get("status", {})
-                if status.get("status_str") != "success":
-                    print(f"  ComfyUI error: {status}")
-                    return None
-                return history[prompt_id]
-            time.sleep(2)
+        try:
+            while time.time() - start < timeout:
+                resp = self.http.get(
+                    f"{self.base_url}/history/{prompt_id}",
+                    timeout=10,
+                )
+                history = resp.json()
+                if prompt_id in history:
+                    status = history[prompt_id].get("status", {})
+                    if status.get("status_str") != "success":
+                        print(f"  ComfyUI error: {status}")
+                        return None
+                    return history[prompt_id]
+                time.sleep(2)
+        except Exception:
+            # A poll that errors out abandons the job just as a timeout does.
+            self.cancel_job(prompt_id)
+            raise
 
         print(f"  Timeout waiting for workflow ({timeout}s)")
+        self.cancel_job(prompt_id)
         return None
+
+    def cancel_job(self, prompt_id: str) -> bool:
+        """Stop a ComfyUI job we have given up on. Returns True once it is gone.
+
+        Abandoning a poll does not stop the job: ComfyUI runs one job at a
+        time, so a hung one sits at the head of the queue and every retry
+        queued behind it waits forever (research 0026). Drop it from the queue,
+        interrupt it if running, then confirm. If the worker is still held
+        afterwards -- or the pod cannot be asked -- mark the session wedged so
+        the caller replaces the pod instead of retrying on it.
+        """
+        try:
+            self.http.post(f"{self.base_url}/queue", json={"delete": [prompt_id]}, timeout=10)
+            self.http.post(f"{self.base_url}/interrupt", json={"prompt_id": prompt_id}, timeout=10)
+            for _ in range(CANCEL_CONFIRM_POLLS):
+                q = self.http.get(f"{self.base_url}/queue", timeout=10).json()
+                held = [item[1] for item in
+                        q.get("queue_running", []) + q.get("queue_pending", [])]
+                if prompt_id not in held:
+                    return True
+                time.sleep(2)
+        except Exception as e:
+            print(f"  Could not cancel job {prompt_id}: {e}")
+        print(f"  Job {prompt_id} would not stop; marking pod {self.pod_id} wedged.")
+        self.wedged = True
+        return False
 
     def download_output(self, output_file: dict) -> bytes | None:
         """Download an output file from ComfyUI's /view endpoint."""
