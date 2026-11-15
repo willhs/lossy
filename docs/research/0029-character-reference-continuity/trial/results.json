@@ -1,0 +1,1518 @@
+{
+ "shots": [
+  19,
+  21,
+  27,
+  65,
+  69,
+  75,
+  82,
+  95,
+  109,
+  117,
+  151,
+  171,
+  179,
+  183,
+  188,
+  189
+ ],
+ "metrics": {
+  "identity_cosine": {
+   "T": {
+    "jerry_seinfeld": 0.3292,
+    "george_costanza": 0.3394,
+    "cosmo_kramer": 0.1617,
+    "elaine_benes": 0.1069,
+    "mean": 0.2343
+   },
+   "K": {
+    "jerry_seinfeld": 0.5352,
+    "george_costanza": 0.6233,
+    "cosmo_kramer": 0.635,
+    "elaine_benes": 0.396,
+    "mean": 0.5474
+   }
+  },
+  "identity_cosine_singles": {
+   "T": {
+    "jerry_seinfeld": 0.3856,
+    "george_costanza": 0.3394,
+    "cosmo_kramer": 0.1617,
+    "elaine_benes": 0.3312,
+    "mean": 0.3045
+   },
+   "K": {
+    "jerry_seinfeld": 0.5649,
+    "george_costanza": 0.6233,
+    "cosmo_kramer": 0.635,
+    "elaine_benes": 0.2731,
+    "mean": 0.5241
+   }
+  },
+  "within_shot_first_last": {
+   "T": {
+    "jerry_seinfeld": 0.7339,
+    "george_costanza": 0.4666,
+    "cosmo_kramer": 0.6406,
+    "elaine_benes": 0.5163,
+    "mean": 0.5894
+   },
+   "K": {
+    "jerry_seinfeld": 0.7635,
+    "george_costanza": 0.5737,
+    "cosmo_kramer": 0.5633,
+    "elaine_benes": 0.7962,
+    "mean": 0.6742
+   }
+  },
+  "cross_character": {
+   "T": 0.263,
+   "K": 0.4458
+  },
+  "k_decay_vs_sheet": {
+   "jerry_seinfeld": {
+    "keyframe": 0.6522,
+    "first": 0.6375,
+    "mid": 0.5962,
+    "last": 0.5749
+   },
+   "george_costanza": {
+    "keyframe": 0.6931,
+    "first": 0.6907,
+    "mid": 0.6808,
+    "last": 0.6077
+   },
+   "cosmo_kramer": {
+    "keyframe": 0.727,
+    "first": 0.5096,
+    "mid": 0.6493,
+    "last": 0.6672
+   },
+   "elaine_benes": {
+    "keyframe": 0.685,
+    "first": 0.6846,
+    "mid": 0.5496,
+    "last": 0.6393
+   }
+  },
+  "t_vs_sheet": {
+   "jerry_seinfeld": {
+    "first": 0.3566,
+    "mid": 0.3718,
+    "last": 0.3839
+   },
+   "george_costanza": {
+    "first": 0.245,
+    "mid": 0.2772,
+    "last": 0.3094
+   },
+   "cosmo_kramer": {
+    "first": 0.2683,
+    "mid": 0.2033,
+    "last": 0.324
+   },
+   "elaine_benes": {
+    "first": 0.1978,
+    "mid": 0.1499,
+    "last": 0.1882
+   }
+  },
+  "face_found": {
+   "T": {
+    "jerry_seinfeld": "7/7",
+    "george_costanza": "3/3",
+    "cosmo_kramer": "3/3",
+    "elaine_benes": "7/7"
+   },
+   "K": {
+    "jerry_seinfeld": "7/7",
+    "george_costanza": "3/3",
+    "cosmo_kramer": "3/3",
+    "elaine_benes": "7/7"
+   }
+  },
+  "source_identity_cosine_singles": {
+   "jerry_seinfeld": 0.6233,
+   "george_costanza": 0.688,
+   "cosmo_kramer": 0.2739,
+   "elaine_benes": 0.2014,
+   "mean": 0.4466
+  },
+  "motion": {
+   "T": {
+    "mean_abs_diff": 2.614,
+    "frozen_share": 0.103
+   },
+   "K": {
+    "mean_abs_diff": 3.258,
+    "frozen_share": 0.046
+   }
+  },
+  "motion_per_clip": {
+   "T/19": {
+    "mean_abs_diff": 3.183,
+    "frozen_share": 0.0,
+    "n_frames": 49
+   },
+   "K/19": {
+    "mean_abs_diff": 2.594,
+    "frozen_share": 0.0,
+    "n_frames": 49
+   },
+   "T/21": {
+    "mean_abs_diff": 3.494,
+    "frozen_share": 0.0,
+    "n_frames": 57
+   },
+   "K/21": {
+    "mean_abs_diff": 3.218,
+    "frozen_share": 0.0,
+    "n_frames": 57
+   },
+   "T/27": {
+    "mean_abs_diff": 5.064,
+    "frozen_share": 0.0,
+    "n_frames": 57
+   },
+   "K/27": {
+    "mean_abs_diff": 5.157,
+    "frozen_share": 0.0,
+    "n_frames": 57
+   },
+   "T/65": {
+    "mean_abs_diff": 2.59,
+    "frozen_share": 0.016,
+    "n_frames": 65
+   },
+   "K/65": {
+    "mean_abs_diff": 5.682,
+    "frozen_share": 0.0,
+    "n_frames": 65
+   },
+   "T/69": {
+    "mean_abs_diff": 2.833,
+    "frozen_share": 0.014,
+    "n_frames": 73
+   },
+   "K/69": {
+    "mean_abs_diff": 2.846,
+    "frozen_share": 0.0,
+    "n_frames": 73
+   },
+   "T/75": {
+    "mean_abs_diff": 1.982,
+    "frozen_share": 0.042,
+    "n_frames": 49
+   },
+   "K/75": {
+    "mean_abs_diff": 1.944,
+    "frozen_share": 0.021,
+    "n_frames": 49
+   },
+   "T/82": {
+    "mean_abs_diff": 0.799,
+    "frozen_share": 0.167,
+    "n_frames": 49
+   },
+   "K/82": {
+    "mean_abs_diff": 1.208,
+    "frozen_share": 0.042,
+    "n_frames": 49
+   },
+   "T/95": {
+    "mean_abs_diff": 5.14,
+    "frozen_share": 0.0,
+    "n_frames": 73
+   },
+   "K/95": {
+    "mean_abs_diff": 5.676,
+    "frozen_share": 0.0,
+    "n_frames": 73
+   },
+   "T/109": {
+    "mean_abs_diff": 0.829,
+    "frozen_share": 0.156,
+    "n_frames": 65
+   },
+   "K/109": {
+    "mean_abs_diff": 4.193,
+    "frozen_share": 0.031,
+    "n_frames": 65
+   },
+   "T/117": {
+    "mean_abs_diff": 5.932,
+    "frozen_share": 0.0,
+    "n_frames": 65
+   },
+   "K/117": {
+    "mean_abs_diff": 6.94,
+    "frozen_share": 0.016,
+    "n_frames": 65
+   },
+   "T/151": {
+    "mean_abs_diff": 1.167,
+    "frozen_share": 0.018,
+    "n_frames": 57
+   },
+   "K/151": {
+    "mean_abs_diff": 1.439,
+    "frozen_share": 0.054,
+    "n_frames": 57
+   },
+   "T/171": {
+    "mean_abs_diff": 1.383,
+    "frozen_share": 0.0,
+    "n_frames": 73
+   },
+   "K/171": {
+    "mean_abs_diff": 1.176,
+    "frozen_share": 0.125,
+    "n_frames": 73
+   },
+   "T/179": {
+    "mean_abs_diff": 3.804,
+    "frozen_share": 0.0,
+    "n_frames": 89
+   },
+   "K/179": {
+    "mean_abs_diff": 1.851,
+    "frozen_share": 0.034,
+    "n_frames": 89
+   },
+   "T/183": {
+    "mean_abs_diff": 2.31,
+    "frozen_share": 0.025,
+    "n_frames": 41
+   },
+   "K/183": {
+    "mean_abs_diff": 3.55,
+    "frozen_share": 0.0,
+    "n_frames": 41
+   },
+   "T/188": {
+    "mean_abs_diff": 0.985,
+    "frozen_share": 0.26,
+    "n_frames": 97
+   },
+   "K/188": {
+    "mean_abs_diff": 1.058,
+    "frozen_share": 0.396,
+    "n_frames": 97
+   },
+   "T/189": {
+    "mean_abs_diff": 0.323,
+    "frozen_share": 0.95,
+    "n_frames": 41
+   },
+   "K/189": {
+    "mean_abs_diff": 3.589,
+    "frozen_share": 0.025,
+    "n_frames": 41
+   }
+  }
+ },
+ "grid_scores": [
+  {
+   "pass": 1,
+   "character": "jerry_seinfeld",
+   "arm": "T",
+   "grid": "p1_jerry_seinfeld_X.jpg",
+   "same_person": 3,
+   "odd_one_out": 7,
+   "matches_description": 4,
+   "note": "Tiles 1, 2, 4, 5, and 6 appear to be the same actor (likely Patrick Fabian). Tile 3 is a side profile that is difficult to confirm but likely the same. Tile 7 shows a different actor with more angular, sharper facial features."
+  },
+  {
+   "pass": 1,
+   "character": "jerry_seinfeld",
+   "arm": "K",
+   "grid": "p1_jerry_seinfeld_Y.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All tiles show the same individual, who consistently matches the provided description."
+  },
+  {
+   "pass": 1,
+   "character": "george_costanza",
+   "arm": "T",
+   "grid": "p1_george_costanza_Y.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All three images depict the same individual, actor Richard Kind, consistently matching the provided description."
+  },
+  {
+   "pass": 1,
+   "character": "george_costanza",
+   "arm": "K",
+   "grid": "p1_george_costanza_X.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All three images depict the same middle-aged man with consistent facial features, thinning hair, and glasses."
+  },
+  {
+   "pass": 1,
+   "character": "cosmo_kramer",
+   "arm": "T",
+   "grid": "p1_cosmo_kramer_Y.jpg",
+   "same_person": 1,
+   "odd_one_out": 2,
+   "matches_description": 3,
+   "note": "Tile 2 does not show a face. Tile 1 and 3 appear to be different individuals; the person in tile 1 is significantly older than the person in tile 3."
+  },
+  {
+   "pass": 1,
+   "character": "cosmo_kramer",
+   "arm": "K",
+   "grid": "p1_cosmo_kramer_X.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "The person in all three tiles is clearly the same individual, exhibiting consistent facial features, hair style, and age-appropriate appearance that align perfectly with the provided description."
+  },
+  {
+   "pass": 1,
+   "character": "elaine_benes",
+   "arm": "T",
+   "grid": "p1_elaine_benes_X.jpg",
+   "same_person": 5,
+   "odd_one_out": 3,
+   "matches_description": 5,
+   "note": "All visible tiles (1, 2, 4, 5, 6, 7) show the same woman, identified as the character Janice Litman-Goralnik from the show Friends. Tile 3 shows the back of a man's head and does not contain a face."
+  },
+  {
+   "pass": 1,
+   "character": "elaine_benes",
+   "arm": "K",
+   "grid": "p1_elaine_benes_Y.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All tiles depict the same woman with consistent facial features and hair."
+  },
+  {
+   "pass": 2,
+   "character": "jerry_seinfeld",
+   "arm": "T",
+   "grid": "p2_jerry_seinfeld_X.jpg",
+   "same_person": 3,
+   "odd_one_out": 3,
+   "matches_description": 4,
+   "note": "The person in tile 3 appears to be a different actor than the person in the other tiles, who is consistently the same individual."
+  },
+  {
+   "pass": 2,
+   "character": "jerry_seinfeld",
+   "arm": "K",
+   "grid": "p2_jerry_seinfeld_Y.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All seven tiles depict the same individual, consistently matching the provided description."
+  },
+  {
+   "pass": 2,
+   "character": "george_costanza",
+   "arm": "T",
+   "grid": "p2_george_costanza_X.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All three images depict the same middle-aged man with thinning hair, glasses, and similar facial features."
+  },
+  {
+   "pass": 2,
+   "character": "george_costanza",
+   "arm": "K",
+   "grid": "p2_george_costanza_Y.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All three tiles show the same middle-aged man with thinning hair, glasses, and similar facial features."
+  },
+  {
+   "pass": 2,
+   "character": "cosmo_kramer",
+   "arm": "T",
+   "grid": "p2_cosmo_kramer_Y.jpg",
+   "same_person": 1,
+   "odd_one_out": 3,
+   "matches_description": 3,
+   "note": "Tile 1 shows the back of a head, making identification impossible. Tile 2 is Richard Kind, while Tile 3 is a different, younger actor."
+  },
+  {
+   "pass": 2,
+   "character": "cosmo_kramer",
+   "arm": "K",
+   "grid": "p2_cosmo_kramer_X.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "The person in all three tiles is the same individual, displaying consistent facial features, hair style, and age characteristics that align perfectly with the provided description."
+  },
+  {
+   "pass": 2,
+   "character": "elaine_benes",
+   "arm": "T",
+   "grid": "p2_elaine_benes_X.jpg",
+   "same_person": 5,
+   "odd_one_out": 6,
+   "matches_description": 5,
+   "note": "All tiles except 6 show the same woman with dark, voluminous curly hair. Tile 6 is a close-up of the back of a person's head and does not show a face."
+  },
+  {
+   "pass": 2,
+   "character": "elaine_benes",
+   "arm": "K",
+   "grid": "p2_elaine_benes_Y.jpg",
+   "same_person": 5,
+   "odd_one_out": 0,
+   "matches_description": 5,
+   "note": "All tiles depict the same woman with consistent facial features and hair."
+  }
+ ],
+ "pairwise": [
+  {
+   "pass": 1,
+   "character": "jerry_seinfeld",
+   "A": "T",
+   "B": "K",
+   "winner": "K",
+   "more_consistent": "B",
+   "score_A": 2,
+   "score_B": 5,
+   "note": "Set A contains images of at least two different actors (e.g., the person in tile 1 and 2 looks significantly different from the person in tile 7). Set B consistently shows the same individual across all tiles."
+  },
+  {
+   "pass": 1,
+   "character": "george_costanza",
+   "A": "T",
+   "B": "K",
+   "winner": "T",
+   "more_consistent": "A",
+   "score_A": 5,
+   "score_B": 3,
+   "note": "Set A consistently shows the same individual across all three frames. Set B shows a person who looks similar in frames 1 and 2, but frame 3 appears to be a different person with different facial structure and features."
+  },
+  {
+   "pass": 1,
+   "character": "cosmo_kramer",
+   "A": "T",
+   "B": "K",
+   "winner": "K",
+   "more_consistent": "B",
+   "score_A": 2,
+   "score_B": 4,
+   "note": "In Set A, the person in the first and third images appears to be a different individual than the person in the second image, as the facial structure and features do not match well. In Set B, the character is consistently the same person across all three images, with only minor variations due to lighting and angle."
+  },
+  {
+   "pass": 1,
+   "character": "elaine_benes",
+   "A": "T",
+   "B": "K",
+   "winner": "T",
+   "more_consistent": "A",
+   "score_A": 5,
+   "score_B": 3,
+   "note": "Set A consistently depicts the same actress (likely from a specific show or movie). Set B shows a character that looks similar in some shots but has noticeable variations in facial structure and features across the different tiles, suggesting it might be a mix of different people or a less consistent representation."
+  },
+  {
+   "pass": 2,
+   "character": "jerry_seinfeld",
+   "A": "K",
+   "B": "T",
+   "winner": "K",
+   "more_consistent": "A",
+   "score_A": 5,
+   "score_B": 3,
+   "note": "Set A consistently depicts the same individual across all tiles. Set B shows significant variation in facial structure, nose shape, and overall features, suggesting it may include more than one person."
+  },
+  {
+   "pass": 2,
+   "character": "george_costanza",
+   "A": "K",
+   "B": "T",
+   "winner": "K",
+   "more_consistent": "A",
+   "score_A": 5,
+   "score_B": 3,
+   "note": "Set A consistently shows the same individual across all three frames. Set B shows a person who looks quite different in frame 3 compared to frames 1 and 2, suggesting it might be a different person or a significant change in appearance."
+  },
+  {
+   "pass": 2,
+   "character": "cosmo_kramer",
+   "A": "K",
+   "B": "T",
+   "winner": "K",
+   "more_consistent": "A",
+   "score_A": 5,
+   "score_B": 2,
+   "note": "Set A shows the same individual across all three frames with consistent facial structure and features. Set B shows two different people; the person in frame 2 has a significantly different facial structure, nose shape, and age compared to the person in frame 3."
+  },
+  {
+   "pass": 2,
+   "character": "elaine_benes",
+   "A": "K",
+   "B": "T",
+   "winner": "K",
+   "more_consistent": "A",
+   "score_A": 5,
+   "score_B": 3,
+   "note": "Set A consistently shows the same woman with distinct curly hair and facial features across all tiles. Set B contains a few images that look like different people, particularly tile 3 which is blurry and unrecognizable, and tile 6 which is a different person entirely."
+  }
+ ],
+ "clip_scores": [
+  {
+   "pass": 1,
+   "shot": 19,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific action of the man tilting his head back with eyes closed before opening them and speaking. The lighting and background are also spot on."
+  },
+  {
+   "pass": 1,
+   "shot": 19,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the man's head movement is slightly less pronounced than in the first clip. There is also a slight flicker in the background."
+  },
+  {
+   "pass": 1,
+   "shot": 21,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the 90s sitcom aesthetic, the setting, and the characters as described."
+  },
+  {
+   "pass": 1,
+   "shot": 21,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 3,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip features a different actor than the one in the first clip, and the motion is slightly unnatural, with some minor facial distortion."
+  },
+  {
+   "pass": 1,
+   "shot": 27,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the description, including the 90s sitcom aesthetic, the specific camera movement, and the background setting."
+  },
+  {
+   "pass": 1,
+   "shot": 27,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip captures the essence well, but the lighting and overall quality feel slightly less authentic to the 90s sitcom style compared to clip A."
+  },
+  {
+   "pass": 1,
+   "shot": 65,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific camera movement, lighting, and setting."
+  },
+  {
+   "pass": 1,
+   "shot": 65,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip is very good, but the actor's clothing does not match the description provided in the prompt."
+  },
+  {
+   "pass": 1,
+   "shot": 69,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific clothing, lighting, and natural motion of the actors."
+  },
+  {
+   "pass": 1,
+   "shot": 69,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip has some noticeable morphing around the woman's mouth and hands, and the motion is slightly less natural than in clip A."
+  },
+  {
+   "pass": 1,
+   "shot": 75,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip captures the essence of a 90s sitcom well. The characters match the description, though the man's shirt color is slightly off. The motion is natural and the lighting is appropriate."
+  },
+  {
+   "pass": 1,
+   "shot": 75,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 3,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip has a more modern look than the requested 90s sitcom style. The man's shirt color is also different from the prompt. The motion is okay, but the overall aesthetic doesn't quite match the prompt's specific requirements."
+  },
+  {
+   "pass": 1,
+   "shot": 82,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the requested aesthetic, lighting, and expression."
+  },
+  {
+   "pass": 1,
+   "shot": 82,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 3,
+   "note": "The clip is a static image rather than a video, failing the motion requirement. It also has some minor AI-generated artifacts."
+  },
+  {
+   "pass": 1,
+   "shot": 95,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly captures the 90s sitcom aesthetic, the specific camera movement, and the lighting described in the prompt."
+  },
+  {
+   "pass": 1,
+   "shot": 95,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip has some noticeable flickering and the characters' faces morph slightly during the movement, which detracts from the realism."
+  },
+  {
+   "pass": 1,
+   "shot": 109,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the requested lighting, setting, and character appearance with high quality."
+  },
+  {
+   "pass": 1,
+   "shot": 109,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip is excellent, accurately reflecting the prompt's requirements for lighting, setting, and character expression."
+  },
+  {
+   "pass": 1,
+   "shot": 117,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific camera movement, lighting, and character description."
+  },
+  {
+   "pass": 1,
+   "shot": 117,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the character's appearance is slightly different from the prompt's description, and there is some minor flickering."
+  },
+  {
+   "pass": 1,
+   "shot": 151,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 3,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip captures the setting and the man's action well, but the man's appearance does not match the description (he has straight hair, not curly). There is some slight flickering in the background."
+  },
+  {
+   "pass": 1,
+   "shot": 151,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 5,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "This clip is a very accurate representation of the prompt, including the man's physical features and the office setting. The motion is natural and fits the sitcom style."
+  },
+  {
+   "pass": 1,
+   "shot": 171,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the actor's appearance, the setting, the lighting, and the action."
+  },
+  {
+   "pass": 1,
+   "shot": 171,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The actor's appearance is slightly different from the prompt, and there is some minor flickering in the background."
+  },
+  {
+   "pass": 1,
+   "shot": 179,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, featuring a realistic middle-aged man in a hallway with a slow zoom, natural lighting, and appropriate motion."
+  },
+  {
+   "pass": 1,
+   "shot": 179,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the man's clothing changes from a t-shirt to a suit, which deviates from the prompt's consistency. The motion is slightly less fluid than in clip A."
+  },
+  {
+   "pass": 1,
+   "shot": 183,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific clothing and the natural head turn."
+  },
+  {
+   "pass": 1,
+   "shot": 183,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the clothing does not match the prompt's description of a grey shirt, and there is a slight flicker in the background."
+  },
+  {
+   "pass": 1,
+   "shot": 188,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the exact facial expression and head movement described in a high-quality, realistic style."
+  },
+  {
+   "pass": 1,
+   "shot": 188,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good but has a slightly different facial structure than the original, and the movement is a bit less fluid than in the first clip."
+  },
+  {
+   "pass": 1,
+   "shot": 189,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the 90s sitcom aesthetic, the specific clothing, and the natural, subtle facial expressions of the subject."
+  },
+  {
+   "pass": 1,
+   "shot": 189,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip is excellent, accurately reflecting the prompt's requirements for lighting, setting, and character appearance, with very natural motion."
+  },
+  {
+   "pass": 2,
+   "shot": 19,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly captures the 90s sitcom aesthetic, including the specific lighting, setting, and the actor's movements as described."
+  },
+  {
+   "pass": 2,
+   "shot": 19,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the background is a bookshelf rather than a video rental store with VHS tapes, and the actor's movement is slightly less dynamic than the prompt suggests."
+  },
+  {
+   "pass": 2,
+   "shot": 21,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly captures the requested aesthetic, setting, and character descriptions. The motion is natural and the quality is high."
+  },
+  {
+   "pass": 2,
+   "shot": 21,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 3,
+   "motion": 4,
+   "note": "The clip has some noticeable AI artifacts, particularly around the woman's mouth and the way the characters' features shift slightly during the dialogue. The lighting and setting are accurate."
+  },
+  {
+   "pass": 2,
+   "shot": 27,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the 90s sitcom aesthetic, lighting, and camera movement."
+  },
+  {
+   "pass": 2,
+   "shot": 27,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip has a slightly more modern, AI-generated look compared to the authentic 90s sitcom feel of A. There is some slight facial distortion during the movement."
+  },
+  {
+   "pass": 2,
+   "shot": 65,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly captures the requested aesthetic, lighting, and camera movement. The actor's appearance and actions align well with the prompt."
+  },
+  {
+   "pass": 2,
+   "shot": 65,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the actor's clothing differs from the prompt (grey t-shirt vs. tan shirt). There is also some slight flickering in the background."
+  },
+  {
+   "pass": 2,
+   "shot": 69,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 3,
+   "artefacts": 2,
+   "motion": 3,
+   "note": "The clip has a very strong 90s sitcom aesthetic, but the woman's face is quite distorted and morphs significantly while she speaks. The lighting and setting are accurate."
+  },
+  {
+   "pass": 2,
+   "shot": 69,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "This clip is excellent. It perfectly captures the requested 90s sitcom look, the lighting is spot on, and the characters look realistic with natural movement and no noticeable artifacts."
+  },
+  {
+   "pass": 2,
+   "shot": 75,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The video perfectly captures the requested scene, characters, and mood with high-quality, realistic visuals."
+  },
+  {
+   "pass": 2,
+   "shot": 75,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 3,
+   "artefacts": 3,
+   "motion": 2,
+   "note": "The video has noticeable artifacts, particularly around the characters' faces and hands. The motion is stiff and unnatural, and the clothing does not match the prompt's description."
+  },
+  {
+   "pass": 2,
+   "shot": 82,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the 90s sitcom aesthetic, the specific lighting, and the natural, subtle facial expressions described."
+  },
+  {
+   "pass": 2,
+   "shot": 82,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "This clip also adheres perfectly to the prompt, maintaining the requested aesthetic, lighting, and natural, subtle facial expressions."
+  },
+  {
+   "pass": 2,
+   "shot": 95,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the 90s sitcom aesthetic, the specific camera movement, and the characters' actions."
+  },
+  {
+   "pass": 2,
+   "shot": 95,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 3,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The clip has a more modern, AI-generated look rather than the requested 90s sitcom style. There is some slight morphing in the woman's face, and the camera movement is less precise."
+  },
+  {
+   "pass": 2,
+   "shot": 109,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the description, capturing the 90s sitcom aesthetic, the specific lighting, and the character's animated expression."
+  },
+  {
+   "pass": 2,
+   "shot": 109,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the lighting is slightly less dramatic than described, and there is a slight flicker in the background."
+  },
+  {
+   "pass": 2,
+   "shot": 117,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific camera movement and the actor's appearance."
+  },
+  {
+   "pass": 2,
+   "shot": 117,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The actor's appearance is slightly different from the prompt, and the camera movement is less pronounced than requested."
+  },
+  {
+   "pass": 2,
+   "shot": 151,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the description, capturing the 90s sitcom aesthetic, the specific character features, and the requested motion and lighting."
+  },
+  {
+   "pass": 2,
+   "shot": 151,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 3,
+   "artefacts": 3,
+   "motion": 3,
+   "note": "The character does not match the description (different hair, different facial features). The motion is somewhat unnatural and the lighting is less consistent with the requested 90s sitcom style."
+  },
+  {
+   "pass": 2,
+   "shot": 171,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The video perfectly matches the prompt, capturing the requested aesthetic, lighting, and action."
+  },
+  {
+   "pass": 2,
+   "shot": 171,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The video is good but has some minor issues with the character's appearance compared to the prompt, and the motion is slightly less natural."
+  },
+  {
+   "pass": 2,
+   "shot": 179,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, featuring a middle-aged man in a suit, with a slow zoom and natural movement."
+  },
+  {
+   "pass": 2,
+   "shot": 179,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 3,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The man is wearing a t-shirt instead of the suit described in the prompt, and the lighting is slightly different."
+  },
+  {
+   "pass": 2,
+   "shot": 183,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, capturing the requested action, lighting, and aesthetic of a 90s sitcom."
+  },
+  {
+   "pass": 2,
+   "shot": 183,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good but has some slight unnatural movement in the facial features and the lighting is a bit more modern than the requested 90s sitcom style."
+  },
+  {
+   "pass": 2,
+   "shot": 188,
+   "arm": "K",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, including the specific action, lighting, and aesthetic style."
+  },
+  {
+   "pass": 2,
+   "shot": 188,
+   "arm": "T",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the lighting and overall quality feel slightly less authentic to the 90s sitcom style compared to clip A."
+  },
+  {
+   "pass": 2,
+   "shot": 189,
+   "arm": "T",
+   "letter": "A",
+   "prompt_adherence": 5,
+   "artefacts": 5,
+   "motion": 5,
+   "note": "The clip perfectly matches the prompt, showing a man in a brown jacket in a static medium close-up shot, with natural facial expressions and lighting."
+  },
+  {
+   "pass": 2,
+   "shot": 189,
+   "arm": "K",
+   "letter": "B",
+   "prompt_adherence": 4,
+   "artefacts": 4,
+   "motion": 4,
+   "note": "The clip is good, but the man's face has some slight morphing and the movement is a bit less natural than in clip A."
+  }
+ ],
+ "style": [
+  {
+   "shot": 19,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a live-action frame from a film.",
+   "lookalike": "The Big Sick"
+  },
+  {
+   "shot": 19,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1,
+   "reason": "The image shows a real person in a realistic setting.",
+   "lookalike": ""
+  },
+  {
+   "shot": 21,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "Seinfeld"
+  },
+  {
+   "shot": 21,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image shows real people with natural skin textures and lighting.",
+   "lookalike": ""
+  },
+  {
+   "shot": 27,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a film or television show.",
+   "lookalike": "Seinfeld"
+  },
+  {
+   "shot": 27,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1,
+   "reason": "The image shows a real person in a natural, photographic style.",
+   "lookalike": ""
+  },
+  {
+   "shot": 65,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action film frame.",
+   "lookalike": ""
+  },
+  {
+   "shot": 65,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action photograph of a real person.",
+   "lookalike": ""
+  },
+  {
+   "shot": 69,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1,
+   "reason": "The image is a high-quality live-action film still.",
+   "lookalike": "The Affair"
+  },
+  {
+   "shot": 69,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1,
+   "reason": "The image displays realistic lighting, textures, and human features typical of film.",
+   "lookalike": ""
+  },
+  {
+   "shot": 75,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action film still.",
+   "lookalike": "The Bold Type"
+  },
+  {
+   "shot": 75,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image displays realistic lighting, textures, and human features typical of film.",
+   "lookalike": ""
+  },
+  {
+   "shot": 82,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "The Sopranos"
+  },
+  {
+   "shot": 82,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image displays natural lighting, skin texture, and realistic camera depth.",
+   "lookalike": ""
+  },
+  {
+   "shot": 95,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a film or television show.",
+   "lookalike": "Seinfeld"
+  },
+  {
+   "shot": 95,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image displays realistic lighting, skin textures, and natural camera focus.",
+   "lookalike": ""
+  },
+  {
+   "shot": 109,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action film still.",
+   "lookalike": "Lucifer"
+  },
+  {
+   "shot": 109,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1,
+   "reason": "The image is a high-quality live-action film still.",
+   "lookalike": ""
+  },
+  {
+   "shot": 117,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "The Middle"
+  },
+  {
+   "shot": 117,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action shot of real people.",
+   "lookalike": ""
+  },
+  {
+   "shot": 151,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "The West Wing"
+  },
+  {
+   "shot": 151,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image displays realistic lighting, textures, and human features typical of film.",
+   "lookalike": ""
+  },
+  {
+   "shot": 171,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "The Sopranos"
+  },
+  {
+   "shot": 171,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1,
+   "reason": "The image features realistic lighting, textures, and human skin details.",
+   "lookalike": ""
+  },
+  {
+   "shot": 179,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action film frame.",
+   "lookalike": "Person of Interest"
+  },
+  {
+   "shot": 179,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action film still.",
+   "lookalike": "Prison Break"
+  },
+  {
+   "shot": 183,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action frame from a television show.",
+   "lookalike": "The Office"
+  },
+  {
+   "shot": 183,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image shows a realistic human subject with natural lighting.",
+   "lookalike": ""
+  },
+  {
+   "shot": 188,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "Two and a Half Men"
+  },
+  {
+   "shot": 188,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image displays natural skin texture, lighting, and realistic human features.",
+   "lookalike": ""
+  },
+  {
+   "shot": 189,
+   "arm": "T",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "This is a live-action frame from a television show.",
+   "lookalike": "The Sopranos"
+  },
+  {
+   "shot": 189,
+   "arm": "K",
+   "style": "photoreal",
+   "confidence": 1.0,
+   "reason": "The image is a high-quality live-action film frame.",
+   "lookalike": "The Bear"
+  }
+ ],
+ "judge": {
+  "model": "gemini-3.1-flash-lite",
+  "tokens": {
+   "in": 116068,
+   "out": 8659
+  },
+  "usd": 0.0565
+ },
+ "summary": {
+  "T": {
+   "same_person": 3.5,
+   "same_person_by_pass": {
+    "1": 3.5,
+    "2": 3.5
+   },
+   "same_person_by_char": {
+    "cosmo_kramer": 1.0,
+    "elaine_benes": 5.0,
+    "george_costanza": 5.0,
+    "jerry_seinfeld": 3.0
+   },
+   "matches_description": 4.25,
+   "prompt_adherence": 4.5,
+   "artefacts": 4.41,
+   "motion": 4.44,
+   "photoreal_rate": 1.0
+  },
+  "K": {
+   "same_person": 5.0,
+   "same_person_by_pass": {
+    "1": 5.0,
+    "2": 5.0
+   },
+   "same_person_by_char": {
+    "cosmo_kramer": 5.0,
+    "elaine_benes": 5.0,
+    "george_costanza": 5.0,
+    "jerry_seinfeld": 5.0
+   },
+   "matches_description": 5.0,
+   "prompt_adherence": 4.31,
+   "artefacts": 4.28,
+   "motion": 4.25,
+   "photoreal_rate": 1.0
+  },
+  "pairwise_wins": {
+   "T": 2,
+   "K": 6,
+   "tie": 0
+  }
+ }
+}

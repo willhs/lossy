@@ -1,0 +1,248 @@
+{
+ "style_prefix": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting.",
+ "n_clips": 32,
+ "est_gpu_minutes": 45.9,
+ "est_cost_usd": 0.65,
+ "jobs": [
+  {
+   "shot": 19,
+   "seed": 19,
+   "frames": 49,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is talking, his head tilted slightly back with his eyes closed, then he opens his eyes and continues speaking while looking slightly off-camera to the right. Bright, flat, even studio lighting typical of a 90s sitcom set. Color palette: Neutral greys, black, and the varied, saturated colors of VHS tape spines on the shelves.. Mood: Casual, conversational, slightly humorous.. A video rental store with shelves filled with VHS tapes in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 19,
+   "seed": 19,
+   "frames": 49,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is talking, his head tilted slightly back with his eyes closed, then he opens his eyes and continues speaking while looking slightly off-camera to the right. Bright, flat, even studio lighting typical of a 90s sitcom set. Color palette: Neutral greys, black, and the varied, saturated colors of VHS tape spines on the shelves.. Mood: Casual, conversational, slightly humorous.. A video rental store with shelves filled with VHS tapes in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0019.png"
+  },
+  {
+   "shot": 21,
+   "seed": 21,
+   "frames": 57,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is speaking, his mouth moving in conversation while he maintains a steady gaze at the woman. The woman's hand is visible in the foreground, gesturing slightly as she speaks. Bright, flat, television-style studio lighting with soft shadows. Color palette: Neutral tones, muted greys, black, with splashes of color from the video cassette covers in the background.. Mood: Casual, conversational, sitcom-like.. An indoor video rental store with shelves of VHS tapes visible in the background, including a sign that says 'ADULT'.",
+   "arm": "T"
+  },
+  {
+   "shot": 21,
+   "seed": 21,
+   "frames": 57,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is speaking, his mouth moving in conversation while he maintains a steady gaze at the woman. The woman's hand is visible in the foreground, gesturing slightly as she speaks. Bright, flat, television-style studio lighting with soft shadows. Color palette: Neutral tones, muted greys, black, with splashes of color from the video cassette covers in the background.. Mood: Casual, conversational, sitcom-like.. An indoor video rental store with shelves of VHS tapes visible in the background, including a sign that says 'ADULT'.",
+   "arm": "K",
+   "start_image": "k_frames/0021.png"
+  },
+  {
+   "shot": 27,
+   "seed": 27,
+   "frames": 57,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, slow zoom in. The woman is talking, looking slightly off-camera to her left, and then turns her head further to the right as the camera slowly zooms in on her. Bright, flat, even overhead studio lighting typical of a 90s sitcom set. Color palette: Brown, white, blue, and a variety of colorful VHS cover art in the background.. Mood: Casual, conversational, sitcom-like.. A video rental store, specifically in the comedy section.",
+   "arm": "T"
+  },
+  {
+   "shot": 27,
+   "seed": 27,
+   "frames": 57,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, slow zoom in. The woman is talking, looking slightly off-camera to her left, and then turns her head further to the right as the camera slowly zooms in on her. Bright, flat, even overhead studio lighting typical of a 90s sitcom set. Color palette: Brown, white, blue, and a variety of colorful VHS cover art in the background.. Mood: Casual, conversational, sitcom-like.. A video rental store, specifically in the comedy section.",
+   "arm": "K",
+   "start_image": "k_frames/0027.png"
+  },
+  {
+   "shot": 65,
+   "seed": 65,
+   "frames": 65,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, slow zoom in. The man is engaged in a conversation, gesturing with his hands while speaking. The camera slowly zooms in on his face as he talks. Warm, soft indoor lighting, likely from a restaurant or lounge setting, creating gentle highlights on the man's face. Color palette: Warm tones with dominant tan, maroon, and dark, muted background colors.. Mood: Casual, conversational, and intimate.. A dimly lit restaurant or bar with a piano in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 65,
+   "seed": 65,
+   "frames": 65,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, slow zoom in. The man is engaged in a conversation, gesturing with his hands while speaking. The camera slowly zooms in on his face as he talks. Warm, soft indoor lighting, likely from a restaurant or lounge setting, creating gentle highlights on the man's face. Color palette: Warm tones with dominant tan, maroon, and dark, muted background colors.. Mood: Casual, conversational, and intimate.. A dimly lit restaurant or bar with a piano in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0065.png"
+  },
+  {
+   "shot": 69,
+   "seed": 69,
+   "frames": 73,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium shot, static. The woman is actively talking and gesturing with her hands while looking at the man, who is listening attentively. The woman's hands move up and down and outward to emphasize her points throughout the shot. Soft, warm, interior lighting typical of a restaurant setting, with a slight highlight on the woman's face. Color palette: Deep greens, browns, and the stark white of the woman's blazer.. Mood: Casual, conversational, and slightly intense.. A dimly lit, classic restaurant or diner booth.",
+   "arm": "T"
+  },
+  {
+   "shot": 69,
+   "seed": 69,
+   "frames": 73,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium shot, static. The woman is actively talking and gesturing with her hands while looking at the man, who is listening attentively. The woman's hands move up and down and outward to emphasize her points throughout the shot. Soft, warm, interior lighting typical of a restaurant setting, with a slight highlight on the woman's face. Color palette: Deep greens, browns, and the stark white of the woman's blazer.. Mood: Casual, conversational, and slightly intense.. A dimly lit, classic restaurant or diner booth.",
+   "arm": "K",
+   "start_image": "k_frames/0069.png"
+  },
+  {
+   "shot": 75,
+   "seed": 75,
+   "frames": 49,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium shot, static. The man is looking at the woman and smiling while talking; the woman is looking back at him with a skeptical or slightly annoyed expression, occasionally gesturing with her hand. Soft, warm indoor lighting, likely from overhead fixtures, creating gentle shadows on the subjects' faces. Color palette: Warm browns, white, soft pink, and muted dark tones in the background.. Mood: Casual, conversational, slightly tense or humorous.. An indoor restaurant or cafe setting with other patrons visible in the blurred background.",
+   "arm": "T"
+  },
+  {
+   "shot": 75,
+   "seed": 75,
+   "frames": 49,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium shot, static. The man is looking at the woman and smiling while talking; the woman is looking back at him with a skeptical or slightly annoyed expression, occasionally gesturing with her hand. Soft, warm indoor lighting, likely from overhead fixtures, creating gentle shadows on the subjects' faces. Color palette: Warm browns, white, soft pink, and muted dark tones in the background.. Mood: Casual, conversational, slightly tense or humorous.. An indoor restaurant or cafe setting with other patrons visible in the blurred background.",
+   "arm": "K",
+   "start_image": "k_frames/0075.png"
+  },
+  {
+   "shot": 82,
+   "seed": 82,
+   "frames": 49,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, static. The woman is listening intently to someone off-screen, maintaining a gentle, pleasant smile throughout the duration of the shot. Warm, soft indoor lighting, likely from overhead restaurant lamps, creating gentle highlights on her face. Color palette: Warm tones, including beige, soft brown, and muted dark background colors.. Mood: Warm, intimate, and friendly.. A dimly lit restaurant or bar with a patterned tapestry or wall hanging in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 82,
+   "seed": 82,
+   "frames": 49,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, static. The woman is listening intently to someone off-screen, maintaining a gentle, pleasant smile throughout the duration of the shot. Warm, soft indoor lighting, likely from overhead restaurant lamps, creating gentle highlights on her face. Color palette: Warm tones, including beige, soft brown, and muted dark background colors.. Mood: Warm, intimate, and friendly.. A dimly lit restaurant or bar with a patterned tapestry or wall hanging in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0082.png"
+  },
+  {
+   "shot": 95,
+   "seed": 95,
+   "frames": 73,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium shot, slow zoom in. The camera slowly zooms in on the man in the brown jacket as he turns his head from looking left to looking right to engage in conversation with the woman, while the man on the left remains seated and looking away. Warm, soft interior lighting, likely from overhead restaurant lamps, creating gentle highlights on the subjects' faces. Color palette: Warm earth tones, brown, burgundy, white, and dark shadows.. Mood: Casual, conversational, social.. A dimly lit, upscale restaurant or lounge with a piano in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 95,
+   "seed": 95,
+   "frames": 73,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium shot, slow zoom in. The camera slowly zooms in on the man in the brown jacket as he turns his head from looking left to looking right to engage in conversation with the woman, while the man on the left remains seated and looking away. Warm, soft interior lighting, likely from overhead restaurant lamps, creating gentle highlights on the subjects' faces. Color palette: Warm earth tones, brown, burgundy, white, and dark shadows.. Mood: Casual, conversational, social.. A dimly lit, upscale restaurant or lounge with a piano in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0095.png"
+  },
+  {
+   "shot": 109,
+   "seed": 109,
+   "frames": 65,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, static. The woman is sitting in a car at night, gesturing with her hands while speaking animatedly, shifting her head and expression to convey frustration or disbelief. Low-key, dramatic lighting with a single light source from the side, creating deep shadows on the opposite side of her face. Color palette: Deep blacks, warm beige, and muted skin tones.. Mood: Tense, agitated, and conversational.. Inside a vehicle at night.",
+   "arm": "T"
+  },
+  {
+   "shot": 109,
+   "seed": 109,
+   "frames": 65,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real woman in her early 30s with dark, voluminous curly hair. Natural skin texture, ordinary features. Cinematic medium close-up shot, static. The woman is sitting in a car at night, gesturing with her hands while speaking animatedly, shifting her head and expression to convey frustration or disbelief. Low-key, dramatic lighting with a single light source from the side, creating deep shadows on the opposite side of her face. Color palette: Deep blacks, warm beige, and muted skin tones.. Mood: Tense, agitated, and conversational.. Inside a vehicle at night.",
+   "arm": "K",
+   "start_image": "k_frames/0109.png"
+  },
+  {
+   "shot": 117,
+   "seed": 117,
+   "frames": 65,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, slow zoom in. The man is standing in his room, holding a tan jacket in his hands, looking at someone off-camera while talking and gesturing with the jacket. Soft, interior ambient lighting with a slight warm glow from the window blinds Color palette: muted tones, deep red, denim blue, tan, and neutral office colors. Mood: casual, conversational, domestic. A home office or bedroom with a desk, computer, and window blinds",
+   "arm": "T"
+  },
+  {
+   "shot": 117,
+   "seed": 117,
+   "frames": 65,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, slow zoom in. The man is standing in his room, holding a tan jacket in his hands, looking at someone off-camera while talking and gesturing with the jacket. Soft, interior ambient lighting with a slight warm glow from the window blinds Color palette: muted tones, deep red, denim blue, tan, and neutral office colors. Mood: casual, conversational, domestic. A home office or bedroom with a desk, computer, and window blinds",
+   "arm": "K",
+   "start_image": "k_frames/0117.png"
+  },
+  {
+   "shot": 151,
+   "seed": 151,
+   "frames": 57,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man is leaning back in his chair, tilting his head slightly while speaking, his expression shifting from a relaxed, slightly closed-eyed state to a more engaged, open-eyed look as he continues his conversation. Soft, diffuse interior lighting, likely from overhead office lights, creating gentle shadows on the face. Color palette: Deep red, muted browns, grays, and a pop of cobalt blue from the glass on the desk.. Mood: Casual, conversational, and slightly weary or cynical.. An office or study with a desk, a computer, and window blinds in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 151,
+   "seed": 151,
+   "frames": 57,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man is leaning back in his chair, tilting his head slightly while speaking, his expression shifting from a relaxed, slightly closed-eyed state to a more engaged, open-eyed look as he continues his conversation. Soft, diffuse interior lighting, likely from overhead office lights, creating gentle shadows on the face. Color palette: Deep red, muted browns, grays, and a pop of cobalt blue from the glass on the desk.. Mood: Casual, conversational, and slightly weary or cynical.. An office or study with a desk, a computer, and window blinds in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0151.png"
+  },
+  {
+   "shot": 171,
+   "seed": 171,
+   "frames": 73,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man stands in a room, looking slightly off-camera while holding and gesturing with a remote control in his hand, appearing to be in the middle of a conversation. Soft, warm interior lighting with a prominent wall-mounted light fixture providing a glow on the wall behind him. Color palette: Deep red, muted beige, dark brown, and cool blue tones.. Mood: Casual, conversational, and lighthearted.. An indoor living space, likely an apartment, with a window featuring blinds and a shelf unit visible in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 171,
+   "seed": 171,
+   "frames": 73,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his late 30s, tall and slim, with thick dark curly hair brushed upward and back from a high forehead. Long face, prominent straight nose, high cheekbones, deep-set dark eyes under a heavy brow, natural skin texture and light stubble. Cinematic medium shot, static. The man stands in a room, looking slightly off-camera while holding and gesturing with a remote control in his hand, appearing to be in the middle of a conversation. Soft, warm interior lighting with a prominent wall-mounted light fixture providing a glow on the wall behind him. Color palette: Deep red, muted beige, dark brown, and cool blue tones.. Mood: Casual, conversational, and lighthearted.. An indoor living space, likely an apartment, with a window featuring blinds and a shelf unit visible in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0171.png"
+  },
+  {
+   "shot": 179,
+   "seed": 179,
+   "frames": 89,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real middle-aged man with thinning hair and glasses. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, slow zoom in. The camera slowly zooms in on the man's face as he turns his head slightly and speaks, maintaining a focused expression. Soft, flat interior lighting, likely from overhead office or hallway lights. Color palette: Neutral tones, primarily browns, beiges, and off-whites.. Mood: Serious, conversational, slightly tense.. An indoor, nondescript hallway or office space with plain walls.",
+   "arm": "T"
+  },
+  {
+   "shot": 179,
+   "seed": 179,
+   "frames": 89,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real middle-aged man with thinning hair and glasses. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, slow zoom in. The camera slowly zooms in on the man's face as he turns his head slightly and speaks, maintaining a focused expression. Soft, flat interior lighting, likely from overhead office or hallway lights. Color palette: Neutral tones, primarily browns, beiges, and off-whites.. Mood: Serious, conversational, slightly tense.. An indoor, nondescript hallway or office space with plain walls.",
+   "arm": "K",
+   "start_image": "k_frames/0179.png"
+  },
+  {
+   "shot": 183,
+   "seed": 183,
+   "frames": 41,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real middle-aged man with thinning hair and glasses. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is looking slightly off-camera, smiling and nodding as if listening to someone, then turns his head further to the side to continue the conversation. Soft, flat, even indoor studio lighting. Color palette: Neutral tones, brown, white, dark blue, grey.. Mood: Casual, conversational, lighthearted.. An indoor office or apartment setting with plain, neutral-colored walls.",
+   "arm": "T"
+  },
+  {
+   "shot": 183,
+   "seed": 183,
+   "frames": 41,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real middle-aged man with thinning hair and glasses. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is looking slightly off-camera, smiling and nodding as if listening to someone, then turns his head further to the side to continue the conversation. Soft, flat, even indoor studio lighting. Color palette: Neutral tones, brown, white, dark blue, grey.. Mood: Casual, conversational, lighthearted.. An indoor office or apartment setting with plain, neutral-colored walls.",
+   "arm": "K",
+   "start_image": "k_frames/0183.png"
+  },
+  {
+   "shot": 188,
+   "seed": 188,
+   "frames": 97,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real middle-aged man with thinning hair and glasses. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is looking slightly off-camera, listening, then turns his head to the left with a subtle, knowing smirk or slight smile appearing on his face. Soft, diffuse indoor lighting, likely from an overhead source, creating gentle shadows on the face. Color palette: Neutral tones, brown, navy blue, white, and soft grey.. Mood: Contemplative, slightly amused, or observant.. An indoor office or living space with a plain wall and a window with blinds in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 188,
+   "seed": 188,
+   "frames": 97,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real middle-aged man with thinning hair and glasses. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man is looking slightly off-camera, listening, then turns his head to the left with a subtle, knowing smirk or slight smile appearing on his face. Soft, diffuse indoor lighting, likely from an overhead source, creating gentle shadows on the face. Color palette: Neutral tones, brown, navy blue, white, and soft grey.. Mood: Contemplative, slightly amused, or observant.. An indoor office or living space with a plain wall and a window with blinds in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0188.png"
+  },
+  {
+   "shot": 189,
+   "seed": 189,
+   "frames": 41,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man in the brown jacket remains in a static position, shifting his gaze slightly and reacting with facial expressions as if engaged in a conversation with the person in the foreground. Soft, diffuse indoor lighting, likely from overhead studio lights, creating gentle shadows on the subject's face. Color palette: Warm tones from the brown suede jacket, neutral gray wall, and dark tones from the foreground figure's suit.. Mood: Casual, conversational, and lighthearted.. An indoor office or apartment setting with a window or glass partition in the background.",
+   "arm": "T"
+  },
+  {
+   "shot": 189,
+   "seed": 189,
+   "frames": 41,
+   "prompt": "Live-action 1990s American TV sitcom footage of real actors, photographed on 35mm film, photorealistic skin and lighting. A real man in his mid 30s with short dark wavy hair and a lean build. Clean-shaven, natural skin texture, ordinary features. Cinematic medium close-up shot, static. The man in the brown jacket remains in a static position, shifting his gaze slightly and reacting with facial expressions as if engaged in a conversation with the person in the foreground. Soft, diffuse indoor lighting, likely from overhead studio lights, creating gentle shadows on the subject's face. Color palette: Warm tones from the brown suede jacket, neutral gray wall, and dark tones from the foreground figure's suit.. Mood: Casual, conversational, and lighthearted.. An indoor office or apartment setting with a window or glass partition in the background.",
+   "arm": "K",
+   "start_image": "k_frames/0189.png"
+  }
+ ]
+}

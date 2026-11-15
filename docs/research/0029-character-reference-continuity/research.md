@@ -31,6 +31,11 @@ given, and many come from fal.ai pages or resellers, so recheck before spending.
 
 ## Answer
 
+- **Trial result (16 Nov): keyframe-first (K) passes.** On 16 Seinfeld shots, blind "same
+  person" went from 3.5 to 5.0 and face-embedding cosine from 0.23 to 0.55. Adherence and
+  motion fell 0.19, inside the rule's 0.3, and photoreal held at 100%. Total spend was ≤$1.04.
+  Adopt K for SW4 via a follow-up strategy flag with two fixes: sheet wardrobe leak and
+  look-alike sheets. See "Trial results".
 - **Most of the drift is not solvable by text.** Today a shot's first frame comes from text
   alone. The identity block is byte-identical across shots (0020), but the same 260 characters
   of description can be drawn as many different faces. [Direct: `strategies_video.py`
@@ -506,6 +511,150 @@ an existing encode, the `--ab-manifest` runner, and a free baseline. [Direct: 00
 - the scoring scripts.
 
 All of it can be validated with `--dry-run` and no spend, as 0028's runner was.
+
+## Trial results (run 15-16 Nov 2026)
+
+Steady task `274d2328`. Will approved the run at 19:10 NZ on 15 Nov with a $1.25 cap. Arms T and
+K ran; arm I (Ingredients) and arm R (Kling) were skipped as instructed.
+
+**Verdict: K passes the decision rule on every line. Recommendation for SW4: adopt K, as a
+strategy flag built and checked in a follow-up job before 30 Nov, with the two fixes below.
+Don't wait on I.** [Direct: `trial/results.json`]
+
+### What ran
+
+- **Shots.** 16 one-part Seinfeld S01E03 shots, medium or close, 1.6-2.9 s, spread through
+  the episode: 3 each of Jerry, Elaine, Kramer and George, plus 4 Elaine+Jerry shots, the only
+  pair in the episode that met the filter. George had too few clean shots of 3 s or less, so his
+  were topped up from shots of up to 4 s. Seed = shot index. [Direct: `trial/make_trial_manifest.py`,
+  `trial/trial_plan.json`]
+- **Text, identical in both arms.** 0028's photoreal style prefix plus one name-free photographic
+  identity block per character. Jerry, George and Elaine were converted from the episode's own
+  `characters.json` text (wardrobe and demeanour dropped, nothing added from knowing the actors).
+  Kramer's is 0028's `KRAMER_PHOTO`. The blocks are prepended by the real
+  `CharacterIdentityMixin`, and no prompt contains a name. [Direct]
+- **K's references.** FLUX.2 [klein] 4B made one 2x2 sheet per character (front, 3/4, profile,
+  full body) from the block alone, then one 1280x704 first frame per shot from that shot's
+  sheets (at most 2) plus the shot's own prompt. It ran on fal rather than on the pod. These
+  are the same Apache-2.0 weights, and this kept the pod to the already-proven LTX-2.5 graph.
+  [Direct: `trial/make_refs.py`, `trial/k_keyframes.jpg`]
+- **Video.** LTX-2.5 two-stage via `decode.py --ab-manifest`. K jobs carry a `start_image`
+  (new optional manifest field), which feeds the existing `LTXVImgToVideo` branch, with the
+  stage-2 re-pin. All 32 clips completed with no failures. [Direct: `evidence/capped_run.log`]
+
+| Spend | USD |
+|---|---|
+| RunPod (balance before minus after, under `capped_run --cap 0.87`; no pods left) | 0.60 |
+| fal klein: 4 sheets + 16 keyframes (upper bound, counting input MP; ~$0.17 if billed on output only) | ≤0.38 |
+| Gemini judge (`gemini-3.1-flash-lite` on Vertex; AI Studio was rate-limited) | 0.06 |
+| **Total** | **≤1.04 of the 1.25 cap** |
+
+### Scores
+
+| Measure | T (text) | K (keyframe) | Rule | |
+|---|---|---|---|---|
+| Blind grid "same person", 1-5 (both passes identical) | 3.50 | **5.00** | K ≥ T + 1.0 | pass |
+| Face-embedding cosine, mean pairwise across a character's shots | 0.234 | **0.547** | K ≥ T + 0.10 | pass |
+| Same, single-character shots only | 0.305 | 0.524 | | |
+| Prompt adherence, 1-5 (per-shot clip judge, 2 passes) | 4.50 | 4.31 | ≥ T − 0.3 | pass (−0.19) |
+| Motion, 1-5 | 4.44 | 4.25 | ≥ T − 0.3 | pass (−0.19) |
+| Artefacts, 1-5 | 4.41 | 4.28 | | −0.13 |
+| Photoreal rate (0028 classifier prompt) | 100% | 100% | K ≥ T | pass |
+| Measured motion, mean abs frame difference / frozen-step share | 2.61 / 10.3% | 3.26 / 4.6% | | K moves *more* |
+| Matches the description, 1-5 | 4.25 | 5.00 | | |
+
+[Direct: `trial/results.json`. Face cosine uses OpenCV-zoo YuNet + SFace on CPU, where SFace's
+same-person threshold is ~0.36.]
+
+Per character, face cosine T → K: Jerry 0.33 → 0.54, George 0.34 → 0.62, Kramer 0.16 → 0.64,
+Elaine 0.11 → 0.40. The judge's per-character "same person" scores, T → K: Jerry 3 → 5,
+George 5 → 5, Kramer 1 → 5, Elaine 5 → 5.
+
+**Read the judge with care.** [Direct + Inferred]
+
+- **Lenient grid judge.** It gave T's Elaine 5/5 although her face cosine is 0.11. By eye,
+  T's Elaine is several different women who share curly hair (`trial/identity_grids_T_vs_K.jpg`).
+  The cosine and the contact sheet are the stronger evidence here. The judge is the lite model,
+  not 0025's `gemini-2.5-flash`, which AI Studio was rate-limiting and Vertex does not serve
+  on this project.
+- **Position bias in the pairwise judge.** Set A won 7 of 8 comparisons. Counting only
+  verdicts that held across both passes, K wins Jerry and Kramer, and George and Elaine are
+  split. The raw tally is K 6, T 2.
+- **Mis-crops in T's grids.** In T's two-person shots, two of Elaine's tiles are wrong crops
+  (a man's head, and a poster face). Those faces are matched to the arm's own single-shot faces,
+  and T has no stable face to match to. That lowers T's pair-shot cosine slightly. The
+  singles-only row avoids it and still shows +0.22.
+
+**K decay curve** (no published figure exists). Mean face cosine to the character's sheet:
+
+| Keyframe | Clip first frame | Middle | Last |
+|---|---|---|---|
+| 0.689 | 0.631 | 0.619 | 0.622 |
+
+T's floor against the same sheets is ~0.25. Most of the drop happens between the keyframe and
+the clip's first frame: the stage-1 half-resolution encode plus the stage-2 refine. After that,
+identity holds flat across these 1.6-2.9 s clips. Shots longer than ~3 s were not tested.
+[Direct]
+
+**Reference: the real episode on the same metric.** Single-character shots, source keyframes,
+scored locally only: mean 0.45 (Jerry 0.62, George 0.69, Kramer 0.27, Elaine 0.20). Real
+footage varies in pose and lighting. K scoring above the source suggests K is quite uniform,
+partly because of the next point. [Direct]
+
+### Problems found (fix before SW4)
+
+1. **The sheet's clothes leak into the shot.** Many K frames keep the sheets' plain grey
+   t-shirt even when the shot describes a blazer or a suede jacket. That is most of K's −0.19
+   adherence. Fix: head-and-shoulders-only sheets, or a keyframe prompt that names the shot's
+   wardrobe first and tells the editor to take only the face and hair from the sheet. [Direct:
+   `trial/k_keyframes.jpg`; Inferred fix]
+2. **The sheets can invent look-alikes.** Jerry's and Kramer's generated sheets have face cosine
+   0.78 with each other. Their blocks both say dark hair and slim, and klein drew two similar
+   young men. K's cross-character cosine is 0.45, against T's 0.26. Continuity within a
+   character went up, but separation between characters went down. Fix: a distinctness gate
+   when sheets are made (reseed any sheet whose face cosine to another sheet is over ~0.5).
+   [Direct; Inferred fix]
+
+### Decision and SW4 recommendation
+
+- **Adopt K.** It clears every line of the decision rule, and it costs pennies per episode.
+- **Ingredients (I) is not needed to pass.** K's weakness was meant to be within-shot decay,
+  and the curve shows little of it over ≤3 s. Test I only if SW4's longer chained shots
+  later show drift.
+- **Build and verify in a follow-up job before 30 Nov.** Build it as a
+  `RunPodLtx25KeyframeStrategy` flag with the two fixes above, then check it on a short Star
+  Wars segment. If it is not ready and checked by 30 Nov, run SW4 as scheduled with text.
+  This trial changed no production default and not the schedule.
+- **Where the keyframes run.** fal klein edit is about $0.009-0.03 per keyframe (billing
+  basis unclear), so roughly $10-60 for SW4's character shots. That is too much of a $50-60
+  budget. Self-hosting klein on the LTX pod (§2c, ~+$1 a film) is the production route. It
+  needs a klein ComfyUI graph validated on a pod, which this trial skipped by using fal.
+  [Inferred from fal list prices]
+- **No sheets for design characters.** `keep_name` characters (droids, Vader, stormtroopers)
+  still get none (§1). K only touches human-character shots.
+
+### What Will must do to run arm I later [HUMAN]
+
+1. Signed in at huggingface.co, open
+   https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients and click **"Agree and
+   access repository"** (the LTX-2.x community licence).
+2. At https://huggingface.co/settings/tokens, create a **Read** token. A fine-grained token
+   also works if it has "Read access to contents of all public gated repos you can access".
+3. Add `HF_TOKEN=hf_…` to `/Users/will/projects/lossy/.env`. It is not there today.
+4. Code is also needed: `runpod_pod.py` has no HF-token support for pinned downloads, so the
+   adapter download must send the token without printing it. The I arm itself (composite sheet,
+   3 IC-LoRA nodes, two-part prompt) is about 150 lines (§2d).
+
+### Trial files
+
+- `trial/make_trial_manifest.py`, `trial/make_refs.py`, `trial/score.py`: the builder, the
+  reference maker and the scorer.
+- `trial/trial_manifest.json`, `trial/trial_plan.json`, `trial/refs_cost.jsonl`,
+  `trial/results.json`, `trial/grid_key.json`: inputs and results.
+- `trial/identity_grids_T_vs_K.jpg`: the sheets and per-arm face grids. `trial/k_keyframes.jpg`:
+  the 16 K first frames.
+- The clips, full-size sheets, keyframes, frames and grids (61 MB) are outside git, in the job
+  workspace `evidence/trial0029/`, with the run log in `evidence/capped_run.log`.
 
 ## What we don't know
 
