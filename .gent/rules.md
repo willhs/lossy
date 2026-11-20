@@ -57,7 +57,7 @@ python encode.py stage2 output/film
 python encode.py stage3 output/film
 
 # Stage 3: TMDB-seeded (recommended for movies)
-# Requires TMDB_API_KEY in .env. Get a free key at themoviedb.org/settings/api.
+# Requires TMDB_API_KEY (see "Secrets"). Get a free key at themoviedb.org/settings/api.
 # Find the TMDB ID on themoviedb.org (e.g. Star Wars IV = 11)
 python encode.py stage3 output/film --tmdb-id 11
 python encode.py stage3 output/film --tmdb-id 60059 --tmdb-type tv  # TV series
@@ -104,3 +104,17 @@ external APIs. No real API calls in tests.
 - Respect human-owned files flagged in `docs/philosophy/`.
 - Keep generated content ASCII unless the project explicitly opts in.
 - Do not add new dependencies without discussion; when agreed, add them via `uv add` so `pyproject.toml` and `uv.lock` stay in sync.
+
+## Secrets
+
+Keys live in the 1Password vault `proj-lossy`, one item per key, value in the `credential`
+field: `FAL_KEY`, `GEMINI_API_KEY`, `HF_TOKEN`, `REPLICATE_API_TOKEN`, `RUNPOD_API_KEY`,
+`TMDB_API_KEY` (e.g. `op://proj-lossy/FAL_KEY/credential`). `.env.tpl` (committed) holds only
+`op://` references. Run anything that needs a key one of three ways:
+
+- `op run --env-file .env.tpl -- <command>` (prompts 1Password on the Mac)
+- `op-scope lossy -- <command>` (the vault-scoped service account)
+- Manager jobs dispatched with `secrets=true`
+
+Never write a resolved key to a file or print it. Don't regenerate a secret-bearing `.env`
+with `op inject`. The old plaintext `.env` is being retired (Nov 2026).
