@@ -3,7 +3,9 @@
 import json
 import os
 import pytest
-from runpod_pod import RunPodSession
+from runpod_pod import RunPodSession, UnsafeToAllocateError
+
+_REAL_REGISTER_CLEANUP = RunPodSession._register_cleanup
 
 
 class TestRunPodSessionState:
@@ -357,6 +359,9 @@ class _FakeRunpod:
 
     def terminate_pod(self, pod_id):
         self.terminated.append(pod_id)
+        # A terminated pod leaves the account's listing; the exit sweep re-lists
+        # to confirm, so a fake that kept it would (rightly) never settle.
+        self._pods[:] = [p for p in self._pods if p.get("id") != pod_id]
 
 
 @pytest.fixture
@@ -681,6 +686,11 @@ class _FleetRunpod:
         self.process_dies_in_terminate = False  # SIGKILL mid-terminate: pod not removed
         self.fail_list = False                  # get_pods raises (API outage)
         self.hidden_from_list: set[str] = set() # live, but get_pods lags and omits them
+        self.list_failures = 0                  # next N get_pods calls raise (then recover)
+        self.linger_calls = 0                   # a terminated pod stays listed for N get_pods calls
+        self.lingering: dict[str, int] = {}     # terminated pod id -> listings it still appears in
+        self.lingering_names: dict[str, str] = {}
+        self.terminate_calls = 0
 
     def create_pod(self, name, **kwargs):
         self.created += 1
@@ -718,9 +728,19 @@ class _FleetRunpod:
     def get_pods(self):
         if self.fail_list:
             raise RuntimeError("API unavailable")
-        return [p for i, p in self.live.items() if i not in self.hidden_from_list]
+        if self.list_failures > 0:
+            self.list_failures -= 1
+            raise RuntimeError("API hiccup")
+        listed = [p for i, p in self.live.items() if i not in self.hidden_from_list]
+        for pod_id in list(self.lingering):
+            listed.append({"id": pod_id, "name": self.lingering_names[pod_id], "desiredStatus": "RUNNING"})
+            self.lingering[pod_id] -= 1
+            if self.lingering[pod_id] <= 0:
+                del self.lingering[pod_id]
+        return listed
 
     def terminate_pod(self, pod_id):
+        self.terminate_calls += 1
         if self.process_dies_in_terminate:
             raise _Killed()
         if pod_id in self.fail_terminate:
@@ -730,7 +750,10 @@ class _FleetRunpod:
             raise RuntimeError("API hiccup")
         if pod_id not in self.live:
             raise RuntimeError("pod not found to terminate")
-        del self.live[pod_id]
+        pod = self.live.pop(pod_id)
+        if self.linger_calls:
+            self.lingering[pod_id] = self.linger_calls
+            self.lingering_names[pod_id] = pod["name"]
         self.events.append(("terminate", pod_id))
 
 
@@ -1065,6 +1088,345 @@ class TestPodLeakReview:
         assert fleet.live == {}
 
 
+class TestBoundedOverlapAndConfirmedExit:
+    """Research 0026 follow-up 2 (ADR 0010 addendum).
+
+    Policy under test: a session never rents a second pod while a pod it
+    abandoned is not confirmed gone (fail closed), and its exit sweep retries
+    until the account confirms nothing of its own is left, reporting honestly
+    when it cannot. Every case ends on pods still live in the fake account.
+    """
+
+    @pytest.fixture
+    def fleet(self, monkeypatch):
+        import sys
+
+        import runpod_pod
+
+        fleet = _FleetRunpod()
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+        monkeypatch.setitem(sys.modules, "runpod", fleet)
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda _s: None)
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", lambda self: None)
+        return fleet
+
+    @staticmethod
+    def _journal_files(tmp_path):
+        d = tmp_path / "runpod_journal"
+        return sorted(os.listdir(d)) if d.exists() else []
+
+    # -- do not allocate over an unconfirmed pod -------------------------------
+
+    def test_no_replacement_is_rented_while_the_old_pod_cannot_be_terminated(
+            self, tmp_path, fleet):
+        """Persistent API outage: terminate exhausts its retries, then the
+        replacement used to be created anyway -- two pods billing."""
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.forget_pod()                              # retries exhaust quietly
+
+        with pytest.raises(UnsafeToAllocateError):
+            s.create_pod()
+        assert fleet.created == 1                   # nothing was rented
+        assert list(fleet.live) == ["pod-1"]        # exactly the pod we already owed
+
+    def test_the_replacement_is_rented_once_the_old_pod_is_confirmed_gone(
+            self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.forget_pod()
+        fleet.fail_terminate.clear()                # outage over
+
+        s.create_pod()
+
+        assert list(fleet.live) == ["pod-2"]
+        assert fleet.events.index(("terminate", "pod-1")) < fleet.events.index(("create", "pod-2"))
+
+    def test_a_terminate_that_errored_but_landed_does_not_block_the_replacement(
+            self, tmp_path, fleet):
+        """The call timed out client-side after the server acted: the account
+        says the pod is gone, which is all the gate needs."""
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.forget_pod()
+        del fleet.live["pod-1"]                     # it was terminated after all
+
+        s.create_pod()
+        assert list(fleet.live) == ["pod-2"]
+
+    def test_setup_retry_during_an_outage_never_stacks_pods(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        fleet.fail_terminate.add("pod-1")
+        calls = []
+
+        def setup():
+            calls.append(1)
+            s.create_pod()
+            raise __import__("runpod_pod").PodSetupError("ComfyUI never came up")
+
+        with pytest.raises(UnsafeToAllocateError):
+            s.with_setup_retry(setup, attempts=3)
+
+        assert fleet.created == 1 and len(calls) == 3   # attempts 2 and 3 were refused at the gate
+        assert list(fleet.live) == ["pod-1"]
+        fleet.fail_terminate.clear()
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_an_unlistable_account_with_an_earlier_runs_journal_refuses_to_allocate(
+            self, tmp_path, fleet):
+        """We cannot tell whether the dead run's pod is still up; renting
+        beside it would be the same overlap, so retry rather than guess."""
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        import pod_journal
+        pod_journal._unlock(dead._journal._fd)
+        dead._journal._fd = None
+
+        fresh = RunPodSession(str(tmp_path))
+        fleet.fail_list = True
+        with pytest.raises(UnsafeToAllocateError):
+            fresh.create_pod()
+        assert fleet.created == 1
+
+        fleet.fail_list = False                     # retry converges
+        fresh.create_pod()
+        assert list(fleet.live) == [fresh.pod_id]
+
+    # -- the exit sweep retries and confirms -----------------------------------
+
+    def test_exit_sweep_rides_out_a_terminate_outage_and_confirms(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.flaky_terminate["pod-1"] = 4          # all of pass 1, then one more
+        s._cleanup()
+
+        assert fleet.live == {}
+        assert s.cleanup_confirmed is True
+        assert self._journal_files(tmp_path) == []
+
+    def test_exit_sweep_rides_out_a_listing_outage(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.terminate()                               # abandoned, still up
+        fleet.fail_terminate.clear()
+        fleet.list_failures = 2
+        s._cleanup()
+
+        assert fleet.live == {}
+        assert s.cleanup_confirmed is True
+
+    def test_exit_sweep_under_a_persistent_outage_is_bounded_and_says_so(
+            self, tmp_path, fleet, capsys):
+        import runpod_pod
+
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        fleet.terminate_calls = 0
+        s._cleanup()                                # must not raise
+
+        assert s.cleanup_confirmed is False
+        assert "NOT confirmed" in capsys.readouterr().out
+        assert fleet.terminate_calls <= runpod_pod.EXIT_SWEEP_ATTEMPTS * runpod_pod.TERMINATE_ATTEMPTS + runpod_pod.TERMINATE_ATTEMPTS
+        # The durable claim is what lets the next run finish the job.
+        assert len(self._journal_files(tmp_path)) == 2   # .json + .lock kept
+        fleet.fail_terminate.clear()
+        nxt = RunPodSession(str(tmp_path))
+        nxt.create_pod()
+        assert list(fleet.live) == [nxt.pod_id]
+
+    def test_a_terminated_pod_that_lingers_in_the_listing_is_confirmed_once_it_leaves(
+            self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.linger_calls = 2                      # listing keeps showing it for two calls
+        s._cleanup()
+
+        assert fleet.live == {}
+        assert s.cleanup_confirmed is True
+
+    def test_a_pod_that_never_leaves_the_listing_is_not_reported_clean(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.linger_calls = 50
+        s._cleanup()
+
+        assert fleet.live == {}                     # it IS gone...
+        assert s.cleanup_confirmed is False         # ...but the account never said so
+
+    def test_a_pod_the_listing_omits_is_still_found_and_ended(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.terminate()
+        fleet.fail_terminate.clear()
+        fleet.hidden_from_list.add("pod-1")         # listing lags behind reality
+        s._cleanup()
+
+        assert fleet.live == {}
+        assert s.cleanup_confirmed is True
+
+    def test_a_clean_exit_with_nothing_owed_is_confirmed_and_leaves_no_files(
+            self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        s._cleanup()
+        assert s.cleanup_confirmed is True
+        assert self._journal_files(tmp_path) == []
+
+    # -- interrupted cleanup ---------------------------------------------------
+
+    def test_a_kill_mid_exit_terminate_leaves_a_claim_the_next_run_settles(
+            self, tmp_path, fleet):
+        import pod_journal
+
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.process_dies_in_terminate = True
+        with pytest.raises(_Killed):
+            s._cleanup()
+        pod_journal._unlock(s._journal._fd)         # the kernel drops the lock
+        s._journal._fd = None
+        fleet.process_dies_in_terminate = False
+        assert list(fleet.live) == ["pod-1"]
+
+        nxt = RunPodSession(str(tmp_path))
+        nxt.create_pod()
+        assert list(fleet.live) == [nxt.pod_id]
+
+    def test_a_second_signal_during_cleanup_does_not_restart_or_abort_it(
+            self, tmp_path, fleet, monkeypatch):
+        import atexit
+        import signal
+
+        handlers = {}
+        monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: fn)
+        monkeypatch.setattr(signal, "signal", lambda sig, h: handlers.__setitem__(sig, h))
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", _REAL_REGISTER_CLEANUP)
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        calls = []
+        real = s._terminate_pod_id
+
+        def interrupted(pod_id):
+            calls.append(pod_id)
+            handlers[signal.SIGINT](signal.SIGINT, None)   # Ctrl-C lands mid-terminate
+            return real(pod_id)
+
+        monkeypatch.setattr(s, "_terminate_pod_id", interrupted)
+        s._cleanup()                                # no KeyboardInterrupt escapes
+
+        assert fleet.live == {}
+        assert calls == ["pod-1"]
+        assert s.cleanup_confirmed is True
+
+    def test_the_supervisors_grace_covers_the_sessions_cleanup_budget(self):
+        import runpod_pod
+        from tools import capped_run
+
+        assert capped_run.CHILD_GRACE_S > runpod_pod.CLEANUP_BUDGET_S
+
+    # -- state-write failure ---------------------------------------------------
+
+    @staticmethod
+    def _disk_full(monkeypatch):
+        import pod_journal
+
+        def boom(path, payload):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(pod_journal, "_write_atomic", boom)
+
+    def test_a_journal_that_cannot_be_written_never_stops_a_terminate(
+            self, tmp_path, fleet, monkeypatch):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        self._disk_full(monkeypatch)
+
+        s.forget_pod()                              # 'abandoned' cannot be written first
+        assert fleet.live == {}
+
+    def test_a_journal_that_cannot_be_written_never_stops_the_exit_sweep(
+            self, tmp_path, fleet, monkeypatch):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        fleet.fail_terminate.add("pod-1")
+        s.forget_pod()
+        self._disk_full(monkeypatch)
+        fleet.fail_terminate.clear()
+
+        s._cleanup()                                # in-memory ownership still holds
+        assert fleet.live == {}
+
+    def test_no_pod_is_rented_when_the_write_ahead_record_cannot_be_written(
+            self, tmp_path, fleet, monkeypatch):
+        """Claims are written before the create they protect; if that promise
+        cannot be kept, do not rent."""
+        self._disk_full(monkeypatch)
+        s = RunPodSession(str(tmp_path))
+        with pytest.raises(UnsafeToAllocateError):
+            s.create_pod()
+        assert fleet.created == 0
+
+    def test_a_pod_whose_claim_cannot_be_journaled_is_still_owned_and_cleaned_up(
+            self, tmp_path, fleet, monkeypatch):
+        import pod_journal
+
+        s = RunPodSession(str(tmp_path))
+        real = pod_journal._write_atomic
+        state = {"n": 0}
+
+        def fail_second(path, payload):
+            state["n"] += 1
+            if state["n"] >= 2:                     # window written, claim is not
+                raise OSError(28, "No space left on device")
+            return real(path, payload)
+
+        monkeypatch.setattr(pod_journal, "_write_atomic", fail_second)
+        s.create_pod()                              # does not raise
+        assert s.pod_id == "pod-1"
+
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_a_keep_pod_exit_that_cannot_write_its_state_terminates_the_pod(
+            self, tmp_path, fleet, monkeypatch):
+        s = RunPodSession(str(tmp_path), keep_pod=True)
+        s.create_pod()
+        s.mark_clean_exit()
+        monkeypatch.setattr(RunPodSession, "arm_self_destruct", lambda self, m: True)
+
+        def boom(self):
+            raise OSError(13, "Permission denied")
+
+        monkeypatch.setattr(RunPodSession, "write_state", boom)
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_a_state_file_that_cannot_be_removed_does_not_skip_the_sweep(
+            self, tmp_path, fleet, monkeypatch):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        s.write_state()
+        real_remove = os.remove
+
+        def boom(path, *a, **k):
+            if str(path).endswith("runpod_pod.json"):
+                raise PermissionError(13, "Permission denied")
+            return real_remove(path, *a, **k)
+
+        monkeypatch.setattr(os, "remove", boom)
+        s._cleanup()
+        assert fleet.live == {}
+        assert s.cleanup_confirmed is True
+
+
 class TestPodOwnershipJournal:
     """Research 0026 follow-up 1 / ADR 0010: pods a dead run left behind are found.
 
@@ -1243,8 +1605,10 @@ class TestPodOwnershipJournal:
         fleet.fail_terminate.add(stuck)            # the API is still down
 
         fresh = RunPodSession(str(tmp_path))
-        fresh.create_pod()
+        with pytest.raises(UnsafeToAllocateError):  # follow-up 2: no second pod beside it
+            fresh.create_pod()
         assert stuck in fleet.live                 # could not be removed...
+        assert fleet.created == 1
         fresh2 = RunPodSession(str(tmp_path))      # ...so the claim must still be on disk
         self._dies(fresh)
         fleet.fail_terminate.clear()               # API recovers
@@ -1261,10 +1625,12 @@ class TestPodOwnershipJournal:
         fleet.fail_terminate.add(stuck)
 
         fresh = RunPodSession(str(tmp_path))
-        fresh.create_pod()
+        with pytest.raises(UnsafeToAllocateError):
+            fresh.create_pod()                     # refuses, but adopts the claim
         fleet.fail_terminate.clear()
         fresh._cleanup()
         assert fleet.live == {}
+        assert fresh.cleanup_confirmed is True
         assert self._journal_files(tmp_path) == []
 
     def test_failed_listing_keeps_the_journal_and_a_later_run_settles_it(self, tmp_path, fleet):
@@ -1275,8 +1641,9 @@ class TestPodOwnershipJournal:
 
         fleet.fail_list = True
         blind = RunPodSession(str(tmp_path))
-        blind.create_pod()                         # cannot verify; proceeds, but remembers
-        assert orphan in fleet.live
+        with pytest.raises(UnsafeToAllocateError):  # cannot verify: do not rent beside it
+            blind.create_pod()
+        assert orphan in fleet.live and fleet.created == 1
         self._dies(blind)
         fleet.fail_list = False
 
@@ -1325,12 +1692,12 @@ class TestPodOwnershipJournal:
         """Keep-pod used to skip the exit sweep wholesale, so a pod whose terminate
         failed earlier in the session billed on next to the kept one."""
         s = kept_pod_session()
-        sibling = s.pod_id
-        fleet.fail_terminate.add(sibling)
-        s.forget_pod()                             # abandoned but alive
-        fleet.fail_terminate.clear()
-        s.create_pod()
         kept = s.pod_id
+        # A pod this session answers for that is not its active handle: its
+        # terminate cannot have failed before the create (that now refuses to
+        # rent), so it is simply owned and still up.
+        sibling = fleet.create_pod(s.pod_name)["id"]
+        s._own(sibling)
         assert set(fleet.live) == {sibling, kept}
 
         s.mark_clean_exit()

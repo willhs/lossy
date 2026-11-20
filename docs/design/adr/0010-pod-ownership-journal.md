@@ -3,7 +3,7 @@ id: adr-0010-pod-ownership-journal
 type: decision
 purpose: "Record who answers for a RunPod pod, how that survives a dead process, and when a later run may terminate what an earlier one left."
 scope: ["design", "runpod", "decode", "cost-safety"]
-non_goals: ["cap enforcement", "bounding replacement overlap", "other output dirs' journals"]
+non_goals: ["cap enforcement", "other output dirs' journals"]
 tags: ["adr", "runpod", "leak", "journal"]
 related: ["research/0026-seinfeld-s01e03-first-end-to-end-run/research.md", "design/adr/008-runpod-self-hosted-wan-strategy.md"]
 ---
@@ -71,10 +71,9 @@ journal in the same output dir:
    `abandoned`, or `kept`), then the dead file is deleted. The adopting session's
    exit sweep retries it. A crash between adopt and delete is harmless: both
    files claim the same ids and a repeat terminate answers "not found".
-5. If the account cannot be listed, or there is no API key, nothing is deleted
-   and creation proceeds with a warning; the journal is retried by the next run.
-   (Whether to *refuse* to allocate in that state is a separate decision, the
-   "bound replacement overlap" follow-up in research 0026.)
+5. If the account cannot be listed, nothing is deleted, the journal is kept,
+   and `create_pod` **refuses to allocate** (`UnsafeToAllocateError`, see the
+   addendum). With no API key `create_pod` never gets this far.
 
 Pods with the lossy prefix that appear in **no** journal are never touched by
 reconcile or the default sweep (a concurrent run's render looks identical).
@@ -99,3 +98,55 @@ same journaled, retried path.
 - Not proved live: real RunPod listing visibility after a create, and real
   `flock` behaviour on a network filesystem. Mocks and local files only.
 - Windows is unsupported by the journal (`fcntl`).
+
+# Addendum: bounded overlap and a confirmed exit (research 0026 follow-up 2)
+
+**Decision: stop allocating after a failed terminate.** A session never rents a
+pod while any pod it abandoned is not confirmed gone, and never rents beside an
+earlier run's leftovers it could not check. `create_pod` runs a gate
+(`_settle_abandoned`) before the first request: for each `abandoned` claim it asks
+the account by id (a terminate that errored may have landed), terminates what is
+still up, and raises `UnsafeToAllocateError` (a retryable `PodSetupError`) if any
+claim stays unconfirmed.
+
+Why: the alternative bounds nothing. With a terminate API that keeps failing, a
+replacement-anyway policy stacks one more billing pod per replacement for as long
+as the outage lasts, on a run nobody is watching. Refusing costs a stalled run,
+which resumes from disk (`with_setup_retry` re-attempts the terminate on each
+retry; the supervisor or a resume re-attempts after that). If terminate is down,
+create is very likely down too, so the stall rarely costs real work. The overlap
+bound is therefore zero extra pods, not "some".
+
+Same rule, same error: the pod listing failing while a dead journal is waiting
+(we cannot tell if its pod is still up), and the write-ahead window failing to
+write (the promise "claim before create" cannot be kept).
+
+**Confirmed exit.** `_cleanup` no longer marks itself done after one pass.
+`_exit_sweep` repeats list/terminate/list up to `EXIT_SWEEP_ATTEMPTS` (5) passes,
+`EXIT_SWEEP_DELAY_S` apart, inside a `CLEANUP_BUDGET_S` (90 s) wall-clock budget.
+A pass is *settled* only if the listing worked, none of this session's pods
+appeared in it, and no non-kept claim remains; the pass after a terminate is the
+confirmation, which also covers a listing that still shows a terminated pod.
+The result is `session.cleanup_confirmed` and a printed line; "NOT confirmed"
+means the claim stays in the journal for the next run to settle (the process exit
+code is unchanged: an atexit hook cannot change it, and `capped_run`'s own account
+sweep is the exit-code authority). An open late-create window is reported by the
+journal, not counted as unconfirmed.
+
+**Interrupted cleanup.** Every claim is journaled `abandoned` before its terminate
+call, so a SIGKILL anywhere in cleanup leaves a claim the next run settles before
+renting. `capped_run.CHILD_GRACE_S` is now 120 s (was 20 s, shorter than three
+terminate attempts plus backoff) so the child normally finishes first; a repeat
+signal during cleanup is ignored rather than aborting it.
+
+**State-write failure.** A journal write that raises `OSError` (full disk,
+read-only) is reported and never stops a terminate or the sweep: the in-memory
+snapshot and `_owned_pod_ids` still answer for the pod. A failed `remove_state`
+is a warning. A `--keep-pod` exit that cannot write `runpod_pod.json` terminates
+the pod (nothing could reconnect to it). A claim that could not be journaled
+leaves the write-ahead window open as the durable trace. Only the write-ahead
+before a create fails closed.
+
+**Not proved live:** how long RunPod's listing really lags after a terminate;
+the delay/attempt constants are guesses sized by the mock outage. That is the
+paid observation task (follow-up 7).

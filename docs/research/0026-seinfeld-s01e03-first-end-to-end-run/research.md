@@ -278,7 +278,7 @@ Dispatcher: file under goal `b33ea4e0`; do not dispatch automatically.
   reconcile before creating on restart. Include unknown-id requests, late API
   success, SIGKILL/power loss and kept-pod sibling leaks. Needs an ownership and
   reconciliation policy; no Will interaction or spend for implementation.
-- **Bound replacement overlap and confirm deletion before declaring clean (M).**
+- **Bound replacement overlap and confirm deletion before declaring clean (M). DONE: ADR 0010 addendum, mock-tested.**
   Decide whether to stop allocating after failed terminate; retry/confirm the
   standalone exit sweep and cover interrupted cleanup/state-write failure.
   Mock persistent API outage and delayed listing visibility. No Will or spend

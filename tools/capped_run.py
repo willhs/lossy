@@ -66,7 +66,11 @@ def terminate(pod_ids: list[str]) -> None:
 
 SWEEP_ATTEMPTS = 5
 SWEEP_DELAY_S = 5
-CHILD_GRACE_S = 20
+# After SIGTERM the child's handler terminates its pod and runs a confirmed exit
+# sweep (runpod_pod.CLEANUP_BUDGET_S = 90 s between passes, plus one request's
+# own timeout). 20 s used to SIGKILL it mid-cleanup; the account sweep below is
+# still the backstop, but the child's journaled cleanup should get to finish.
+CHILD_GRACE_S = 120
 
 
 def sweep(pods0: list[str], attempts: int = SWEEP_ATTEMPTS, delay: float = SWEEP_DELAY_S) -> list[str]:
