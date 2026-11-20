@@ -818,6 +818,58 @@ The trial measured $0.60 of RunPod for 32 shorter clips including boot, so the R
 likely high. Both RunPod runs are under `capped_run`; fal is under `--keyframe-fal-cap`. If K
 fails the rule, SW4 runs on text on 30 Nov, as planned.
 
+### SW4 paid check, attempt 1 (21 Nov 2026): free prep done, K arm blocked on pod SSH, no verdict
+
+Steady task `a2c14bfa`, job `61de4147`. Will approved ~$2.5 (cap $3.0). **No clip was rendered, so
+there is no K-vs-T result and no verdict yet. SW4 stays on text as scheduled** (30 Nov).
+
+**Free prep (done)**
+- Face models: opencv_zoo `face_detection_yunet_2023mar.onnx` and `face_recognition_sface_2021dec.onnx`
+  in `models/face/` as `yunet.onnx` / `sface.onnx` (not committed; `LOSSY_FACE_MODELS` default).
+- Dry run on the whole SW4 v2 encode (2070 shot entries): **795 keyframe shots, 1275 text** (design
+  character 1047, no character 228). So the "no design character" rule keeps 38% of the film for K
+  (this closes unverified item 5 above). 12 sheets would be drawn for the full film.
+- Window chosen: shot indices 684-713 (30 shots, 64 s, Luke/Obi-Wan/Han scene with 5 droid/design
+  shots for the fallback). The dry run shows 20 KEYFRAME shots. Picked for short shots (cost) and three
+  distinct lead faces; windows with 20+ keyframe shots are common (best: 30/30 at index 370).
+- Plan builder for `score.py`: `trial/make_sw4_score_inputs.py` (lays out the run dir `score.py` reads,
+  from two plain decode output dirs; **untested**, no clips existed). `trial/sw4_prepare.py` draws the
+  K arm's sheets and keyframes with no pod, so they can be inspected before RunPod is paid for.
+
+**Sheets and keyframes, looked at before any pod (fal spend $0.31)**
+- **Look-alike gate dropped Han Solo's sheet.** Han's face cosine to Luke's was 0.51, 0.53, 0.55
+  over three draws (limit 0.5), so all 7 Han shots in the window fell back to text. The window
+  therefore had **13 keyframe shots, not 20** (Luke 9 incl. pairs, Obi-Wan 6 incl. pairs, Luke+Owen 1).
+  Han and Luke have near-identical text descriptions (young, light-brown hair, fair skin), so the gate
+  fires. On a full film the gate will route many shots of look-alike pairs to text. [confirmed, run log]
+- **Fix 1 (clothing-free sheets) holds for Luke only.** Luke's sheet is bare-shouldered. Obi-Wan's sheet
+  shows a cream robe collar and Uncle Owen's a navy shirt: klein still draws clothes on older men
+  despite "no clothing in frame". [confirmed, `evidence/sw4_sheets.jpg` in the job workspace]
+- **Keyframes look right.** The 13 frames show one consistent Luke and one consistent Obi-Wan, distinct from each
+  other, each in the scene's own wardrobe (white tunic, grey/black tops, brown robe); the grey t-shirt
+  leak of the first trial is not visible. No droid keyframes. [confirmed by eye, `evidence/sw4_keyframes.jpg`]
+
+**K arm run: blocked.** `capped_run` (cap $1.0) made four decode attempts (14 pods across them).
+Every pod failed at setup: `ComfyUI upgrade to v0.39.2 failed: Permission denied ... Too many
+authentication failures` (ssh to the pod), or the pod did not start in 600 s. No video was generated.
+`runpod_pod._ssh_opts` passes no `-i`/`IdentitiesOnly`; the pod is given `~/.ssh/id_ed25519.pub`
+as `PUBLIC_KEY`, and ssh then offers whatever keys it finds. In this Manager job the pods rejected
+every offered key. Cause not established: the job could not inspect `~/.ssh` (commands denied) and
+I did not work around that. Plausible causes [unverified]: the `~/.ssh/id_ed25519` private key and the
+`.pub` that is injected no longer match (an `id_ed25519.old` pair sits beside them), or the job sandbox
+cannot use the key. The earlier 20 Nov bake-off pods did boot, so this is new.
+`capped_run` was stopped by the Bash tool's time limit while attempt 4 was waiting; one pod
+(`z1pvi92891rcae`) was left running and I terminated it by hand. Account balance now $3.46.
+
+**Spend so far**: fal $0.31 (`keyframes/cost.jsonl`); RunPod about $0.51 by balance (3.96 -> 3.46;
+this includes any other lossy run's pod on the same account, since `capped_run` saw one already
+running at start). Gemini $0. Total about $0.82 of the $3.0 cap; none of it bought a clip.
+
+**To finish** (needs Will for the SSH key): fix pod SSH from a Manager job, then run K and T on shots
+684-713 (the K arm reuses the cached sheets and keyframes, so fal is already paid), then
+`make_sw4_score_inputs.py` and `score.py`. Expect the K arm to be judged on 13 keyframe shots; if
+that is too thin, redraw Han with a more distinct description first.
+
 ### Trial files
 
 - `trial/make_trial_manifest.py`, `trial/make_refs.py`, `trial/score.py`: the builder, the
