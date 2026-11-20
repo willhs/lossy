@@ -653,6 +653,10 @@ class TestPodLiveness:
         assert s.pod_alive() is False
 
 
+class _Killed(BaseException):
+    """Stands in for SIGKILL: not an Exception, so no handler in the code under test sees it."""
+
+
 class _FleetRunpod:
     """Fake RunPod account that tracks which pods are live.
 
@@ -671,17 +675,35 @@ class _FleetRunpod:
         self.ports_ready = True                 # whether new pods expose ports
         self.name_of_created: list[str] = []
         self.events: list[tuple[str, str]] = []  # ("create"|"terminate", pod_id), in order
+        self.late_creates = False               # call times out; the pod only appears on land_pending()
+        self.pending: list[dict] = []
+        self.process_dies_in_create = False     # SIGKILL mid-request: pod made, caller never hears
+        self.process_dies_in_terminate = False  # SIGKILL mid-terminate: pod not removed
+        self.fail_list = False                  # get_pods raises (API outage)
+        self.hidden_from_list: set[str] = set() # live, but get_pods lags and omits them
 
     def create_pod(self, name, **kwargs):
         self.created += 1
         pod_id = f"pod-{self.created}"
         self.events.append(("create", pod_id))
-        self.live[pod_id] = {"id": pod_id, "name": name, "desiredStatus": "RUNNING",
-                             "ports_ready": self.ports_ready}
+        pod = {"id": pod_id, "name": name, "desiredStatus": "RUNNING",
+               "ports_ready": self.ports_ready}
         self.name_of_created.append(name)
+        if self.late_creates:
+            self.pending.append(pod)
+            raise TimeoutError("create_pod timed out (the server has not acted yet)")
+        self.live[pod_id] = pod
+        if self.process_dies_in_create:
+            raise _Killed()
         if self.ghost_creates:
             raise TimeoutError("create_pod timed out (server-side the pod exists)")
         return {"id": pod_id, "costPerHr": 0.5}
+
+    def land_pending(self):
+        """The server finally acts on a create the client had given up on."""
+        for pod in self.pending:
+            self.live[pod["id"]] = pod
+        self.pending = []
 
     def get_pod(self, pod_id):
         pod = self.live.get(pod_id)
@@ -694,9 +716,13 @@ class _FleetRunpod:
         return {**pod, "runtime": runtime}
 
     def get_pods(self):
-        return list(self.live.values())
+        if self.fail_list:
+            raise RuntimeError("API unavailable")
+        return [p for i, p in self.live.items() if i not in self.hidden_from_list]
 
     def terminate_pod(self, pod_id):
+        if self.process_dies_in_terminate:
+            raise _Killed()
         if pod_id in self.fail_terminate:
             raise RuntimeError("API unavailable")
         if self.flaky_terminate.get(pod_id, 0) > 0:
@@ -1036,6 +1062,430 @@ class TestPodLeakReview:
         s._cleanup()
         with pytest.raises(SystemExit):
             handlers[signal.SIGTERM](signal.SIGTERM, None)
+        assert fleet.live == {}
+
+
+class TestPodOwnershipJournal:
+    """Research 0026 follow-up 1 / ADR 0010: pods a dead run left behind are found.
+
+    Every "dies" below is a session abandoned without running any cleanup (its
+    lock is released the way the kernel does on SIGKILL); every assertion is
+    about pods still live in the fake account.
+    """
+
+    @pytest.fixture
+    def fleet(self, monkeypatch):
+        import sys
+
+        import runpod_pod
+
+        fleet = _FleetRunpod()
+        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+        monkeypatch.delenv("LOSSY_RUNPOD_SWEEP", raising=False)
+        monkeypatch.setitem(sys.modules, "runpod", fleet)
+        monkeypatch.setattr(runpod_pod.time, "sleep", lambda _s: None)
+        monkeypatch.setattr(RunPodSession, "_register_cleanup", lambda self: None)
+        return fleet
+
+    @staticmethod
+    def _dies(session):
+        """The process is gone: no cleanup ran, the kernel dropped its lock."""
+        import pod_journal
+
+        pod_journal._unlock(session._journal._fd)
+        session._journal._fd = None
+
+    @staticmethod
+    def _journal_files(tmp_path):
+        d = tmp_path / "runpod_journal"
+        return sorted(os.listdir(d)) if d.exists() else []
+
+    # -- SIGKILL / power loss ------------------------------------------------
+
+    def test_a_pod_orphaned_by_sigkill_is_terminated_before_the_next_create(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        orphan = dead.pod_id
+        self._dies(dead)
+        assert orphan in fleet.live                # nothing ran: still billing
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+
+        assert orphan not in fleet.live
+        assert list(fleet.live) == [fresh.pod_id]
+        # ...and it happened BEFORE the new allocation, not at some later sweep.
+        assert fleet.events.index(("terminate", orphan)) < fleet.events.index(("create", fresh.pod_id))
+
+        fresh._cleanup()
+        assert fleet.live == {}
+        assert self._journal_files(tmp_path) == []  # nothing owed to anyone
+
+    def test_sigkill_during_the_create_request_leaves_a_findable_pod(self, tmp_path, fleet):
+        """The id was never returned. Only the write-ahead name can find it."""
+        dead = RunPodSession(str(tmp_path))
+        fleet.process_dies_in_create = True
+        with pytest.raises(_Killed):
+            dead.create_pod()
+        self._dies(dead)
+        fleet.process_dies_in_create = False
+        assert len(fleet.live) == 1 and dead._owned_pod_ids == set()
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+
+        assert [p["name"] for p in fleet.live.values()] == [fresh.pod_name]
+        fresh._cleanup()
+        assert fleet.live == {}
+
+    def test_sigkill_mid_terminate_is_still_a_claim(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        victim = dead.pod_id
+        fleet.process_dies_in_terminate = True
+        with pytest.raises(_Killed):
+            dead.forget_pod()
+        self._dies(dead)
+        fleet.process_dies_in_terminate = False
+        assert victim in fleet.live
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert victim not in fleet.live
+        fresh._cleanup()
+        assert fleet.live == {}
+
+    # -- late API success ----------------------------------------------------
+
+    def test_a_create_that_lands_after_the_run_ended_is_caught_by_the_next_run(self, tmp_path, fleet):
+        from runpod_pod import PodSetupError
+
+        s = RunPodSession(str(tmp_path))
+        fleet.late_creates = True
+        with pytest.raises(PodSetupError):
+            s.create_pod()
+        s._cleanup()                               # exit sweep: nothing exists yet
+        assert fleet.live == {}
+        fleet.late_creates = False
+        fleet.land_pending()                       # ...and then the server acts, once per fallback
+        assert len(fleet.live) == 8
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert list(fleet.live) == [fresh.pod_id]
+        fresh._cleanup()
+        assert fleet.live == {}
+
+    def test_a_late_window_that_has_expired_is_forgotten(self, tmp_path, fleet):
+        import json
+
+        from runpod_pod import PodSetupError
+
+        s = RunPodSession(str(tmp_path))
+        fleet.late_creates = True
+        with pytest.raises(PodSetupError):
+            s.create_pod()
+        self._dies(s)
+        path = tmp_path / "runpod_journal" / f"{s.run_id}.json"
+        data = json.loads(path.read_text())
+        data["windows"][0]["until"] = 1.0          # long expired
+        path.write_text(json.dumps(data))
+
+        fresh = RunPodSession(str(tmp_path))
+        fleet.late_creates = False
+        fresh.create_pod()
+        fresh._cleanup()
+        assert fleet.live == {}
+        assert self._journal_files(tmp_path) == []
+
+    def test_a_definite_rejection_leaves_no_window_behind(self, tmp_path, fleet, monkeypatch):
+        """RunPod answered 'no' (QueryError): provably nothing was created."""
+        from runpod_pod import PodSetupError
+
+        class QueryError(Exception):
+            pass
+
+        def refuse(name, **kw):
+            raise QueryError("There are no longer any instances available")
+
+        monkeypatch.setattr(fleet, "create_pod", refuse)
+        s = RunPodSession(str(tmp_path))
+        with pytest.raises(PodSetupError):
+            s.create_pod()
+        s._cleanup()
+        assert self._journal_files(tmp_path) == []
+
+    # -- unresolved terminates survive the process ---------------------------
+
+    def test_a_terminate_that_never_worked_is_retried_by_the_next_run(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        stuck = dead.pod_id
+        fleet.fail_terminate.add(stuck)
+        dead.forget_pod()                          # terminate fails; connection state is deleted
+        assert not os.path.exists(dead.state_path)
+        assert stuck in fleet.live
+        self._dies(dead)
+        fleet.fail_terminate.clear()
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert stuck not in fleet.live
+        fresh._cleanup()
+        assert fleet.live == {}
+
+    def test_a_pod_the_next_run_cannot_terminate_yet_is_adopted_and_retried_at_exit(
+            self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        stuck = dead.pod_id
+        self._dies(dead)
+        fleet.fail_terminate.add(stuck)            # the API is still down
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert stuck in fleet.live                 # could not be removed...
+        fresh2 = RunPodSession(str(tmp_path))      # ...so the claim must still be on disk
+        self._dies(fresh)
+        fleet.fail_terminate.clear()               # API recovers
+        fresh2.create_pod()
+        assert stuck not in fleet.live
+        fresh2._cleanup()
+        assert fleet.live == {}
+
+    def test_adopted_leftovers_are_swept_by_the_adopting_sessions_exit(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        stuck = dead.pod_id
+        self._dies(dead)
+        fleet.fail_terminate.add(stuck)
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        fleet.fail_terminate.clear()
+        fresh._cleanup()
+        assert fleet.live == {}
+        assert self._journal_files(tmp_path) == []
+
+    def test_failed_listing_keeps_the_journal_and_a_later_run_settles_it(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        orphan = dead.pod_id
+        self._dies(dead)
+
+        fleet.fail_list = True
+        blind = RunPodSession(str(tmp_path))
+        blind.create_pod()                         # cannot verify; proceeds, but remembers
+        assert orphan in fleet.live
+        self._dies(blind)
+        fleet.fail_list = False
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert list(fleet.live) == [fresh.pod_id]
+
+    def test_a_pod_the_listing_omits_is_still_terminated(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        orphan = dead.pod_id
+        self._dies(dead)
+        fleet.hidden_from_list.add(orphan)         # listing lags behind reality
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert orphan not in fleet.live
+
+    def test_a_claim_for_a_pod_that_is_really_gone_is_dropped(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        del fleet.live[dead.pod_id]                # reaped by someone else
+        self._dies(dead)
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        fresh._cleanup()
+        assert fleet.live == {}
+        assert self._journal_files(tmp_path) == []
+
+    # -- kept pods -----------------------------------------------------------
+
+    @pytest.fixture
+    def kept_pod_session(self, tmp_path, fleet, monkeypatch):
+        monkeypatch.setattr(RunPodSession, "arm_self_destruct", lambda self, m: True)
+        monkeypatch.setattr(RunPodSession, "disarm_self_destruct", lambda self: None)
+
+        def make():
+            s = RunPodSession(str(tmp_path), keep_pod=30)
+            s.create_pod()
+            return s
+        return make
+
+    def test_an_abandoned_sibling_of_a_kept_pod_does_not_survive_the_exit(
+            self, tmp_path, fleet, kept_pod_session):
+        """Keep-pod used to skip the exit sweep wholesale, so a pod whose terminate
+        failed earlier in the session billed on next to the kept one."""
+        s = kept_pod_session()
+        sibling = s.pod_id
+        fleet.fail_terminate.add(sibling)
+        s.forget_pod()                             # abandoned but alive
+        fleet.fail_terminate.clear()
+        s.create_pod()
+        kept = s.pod_id
+        assert set(fleet.live) == {sibling, kept}
+
+        s.mark_clean_exit()
+        s._cleanup()
+        assert list(fleet.live) == [kept]          # the sibling is gone, the kept pod is not
+
+    def test_a_kept_pod_inside_its_deadline_survives_a_later_runs_reconcile(
+            self, tmp_path, fleet, kept_pod_session):
+        s = kept_pod_session()
+        kept = s.pod_id
+        s.mark_clean_exit()
+        s._cleanup()
+        assert kept in fleet.live
+
+        other = RunPodSession(str(tmp_path))
+        other.create_pod()                         # a fresh pod, not adopting the kept one
+        assert kept in fleet.live
+
+    def test_a_kept_pod_whose_reaper_never_fired_is_terminated_after_its_deadline(
+            self, tmp_path, fleet, kept_pod_session):
+        import json
+
+        s = kept_pod_session()
+        kept = s.pod_id
+        s.mark_clean_exit()
+        s._cleanup()
+        path = tmp_path / "runpod_journal" / f"{s.run_id}.json"
+        data = json.loads(path.read_text())
+        assert data["pods"][kept]["state"] == "kept"
+        data["pods"][kept]["kept_until"] = 1.0     # deadline long past; pod still there
+        path.write_text(json.dumps(data))
+        os.remove(s.state_path)                    # nobody is reconnecting to it
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        assert kept not in fleet.live
+
+    def test_reconnecting_to_a_kept_pod_adopts_it_and_cleans_it_up(
+            self, tmp_path, fleet, kept_pod_session):
+        s = kept_pod_session()
+        kept = s.pod_id
+        s.mark_clean_exit()
+        s._cleanup()
+
+        resumed = RunPodSession(str(tmp_path))
+        resumed.ensure_pod()
+        assert resumed.pod_id == kept and list(fleet.live) == [kept]
+
+        resumed._cleanup()                         # not kept this time
+        assert fleet.live == {}
+
+    def test_a_dead_runs_stale_kept_claim_cannot_kill_the_pod_a_resumed_run_is_using(
+            self, tmp_path, fleet, kept_pod_session):
+        import json
+
+        s = kept_pod_session()
+        kept = s.pod_id
+        s.mark_clean_exit()
+        s._cleanup()
+        path = tmp_path / "runpod_journal" / f"{s.run_id}.json"
+        data = json.loads(path.read_text())
+        data["pods"][kept]["kept_until"] = 1.0
+        path.write_text(json.dumps(data))
+
+        resumed = RunPodSession(str(tmp_path))
+        resumed.ensure_pod()                       # adopts the pod whose old deadline lapsed
+        assert list(fleet.live) == [kept]
+        resumed.create_pod()                       # reconcile ran already; must not have shot it
+        resumed._cleanup()
+        assert fleet.live == {}
+
+    # -- who is NOT ours -------------------------------------------------------
+
+    def test_a_live_sibling_sessions_pod_is_never_touched(self, tmp_path, fleet):
+        """Video and audio sessions share an output dir and run at once."""
+        sibling = RunPodSession(str(tmp_path))
+        sibling.create_pod()                       # still running: holds its lock
+        mine = RunPodSession(str(tmp_path))
+        mine.create_pod()
+        assert set(fleet.live) == {sibling.pod_id, mine.pod_id}
+
+        mine._cleanup()
+        assert list(fleet.live) == [sibling.pod_id]
+        sibling._cleanup()
+        assert fleet.live == {}
+
+    def test_a_prefixed_pod_in_no_journal_is_left_alone(self, tmp_path, fleet):
+        import runpod_pod
+
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        self._dies(dead)
+        fleet.live["pod-theirs"] = {"id": "pod-theirs", "name": f"{runpod_pod.POD_NAME_PREFIX}-feedface",
+                                    "desiredStatus": "RUNNING", "ports_ready": True}
+
+        fresh = RunPodSession(str(tmp_path))
+        fresh.create_pod()
+        fresh._cleanup()
+        assert list(fleet.live) == ["pod-theirs"]
+
+    def test_journals_of_a_different_output_dir_are_not_this_runs_business(self, tmp_path, fleet):
+        a, b = tmp_path / "a", tmp_path / "b"
+        dead = RunPodSession(str(a))
+        dead.create_pod()
+        self._dies(dead)
+
+        other = RunPodSession(str(b))
+        other.create_pod()
+        assert dead.pod_id in fleet.live           # documented limit: ADR 0010
+        other._cleanup()
+
+    def test_an_unreadable_journal_does_not_block_a_new_pod(self, tmp_path, fleet):
+        (tmp_path / "runpod_journal").mkdir()
+        (tmp_path / "runpod_journal" / "deadbeef.json").write_text("{not json")
+
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        assert list(fleet.live) == [s.pod_id]
+        s._cleanup()
+        assert fleet.live == {}
+
+    def test_no_api_key_means_no_reconcile_and_the_journal_is_kept(self, tmp_path, fleet, monkeypatch):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        self._dies(dead)
+        monkeypatch.delenv("RUNPOD_API_KEY")
+
+        fresh = RunPodSession(str(tmp_path))
+        assert fresh.reconcile_journals() == []
+        assert self._journal_files(tmp_path) == [f"{dead.run_id}.json", f"{dead.run_id}.lock"]
+
+    # -- clean runs leave nothing on disk ------------------------------------
+
+    def test_a_clean_session_leaves_no_journal_behind(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s.create_pod()
+        s.forget_pod()
+        s.create_pod()
+        s._cleanup()
+        assert fleet.live == {}
+        assert self._journal_files(tmp_path) == []
+
+    def test_a_session_that_never_asks_for_a_pod_writes_nothing(self, tmp_path, fleet):
+        s = RunPodSession(str(tmp_path))
+        s._cleanup()
+        assert self._journal_files(tmp_path) == []
+
+    def test_reconciling_twice_converges(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        self._dies(dead)
+
+        fresh = RunPodSession(str(tmp_path))
+        assert fresh.reconcile_journals() == [dead.pod_id]
+        assert fresh.reconcile_journals() == []
         assert fleet.live == {}
 
 

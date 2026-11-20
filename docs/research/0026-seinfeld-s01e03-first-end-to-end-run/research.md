@@ -273,7 +273,7 @@ quality remain unproved; synthetic tests do not establish them.
 
 Dispatcher: file under goal `b33ea4e0`; do not dispatch automatically.
 
-- **Persist pod ownership and reconcile crash leftovers (M).** Journal every
+- **Persist pod ownership and reconcile crash leftovers (M). DONE: ADR 0010 + `pod_journal.py`, mock-tested.** Journal every
   allocation/adoption and unresolved terminate, use a stable run identity, and
   reconcile before creating on restart. Include unknown-id requests, late API
   success, SIGKILL/power loss and kept-pod sibling leaks. Needs an ownership and

@@ -11,6 +11,8 @@ import time
 import uuid
 from typing import NamedTuple
 
+import pod_journal
+
 
 # Default GPU preferences (cheapest first, with VRAM headroom preference)
 GPU_TYPES = [
@@ -82,6 +84,14 @@ CANCEL_CONFIRM_POLLS = 5
 # expected answer for a pod that is already gone and is not retried.
 TERMINATE_ATTEMPTS = 3
 TERMINATE_BACKOFF_S = 3
+# Ownership journal (pod_journal.py, ADR 0010). A create request that failed
+# ambiguously may still land server-side; how long a later run keeps looking
+# for a pod under that name before concluding it never will.
+LATE_CREATE_GRACE_S = 3600
+# Slack past a kept pod's armed deadline before a later run concludes the
+# on-pod reaper failed and terminates it.
+KEPT_DEADLINE_SLACK_S = 600
+JOURNAL_DIRNAME = "runpod_journal"
 
 
 
@@ -92,6 +102,20 @@ TERMINATE_BACKOFF_S = 3
 # hours into a 690-shot render: the pod was killed when the balance hit zero,
 # and the message pointed at the wrong problem entirely.
 _OUT_OF_FUNDS_MARKERS = ("balance is too low", "add funds", "insufficient funds")
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """Whether a terminate error means the pod is already gone."""
+    return "not found" in str(exc).lower()
+
+
+def _is_definite_rejection(exc: Exception) -> bool:
+    """Whether RunPod itself answered 'no' to a create: nothing was made.
+
+    The SDK raises QueryError only for an error the server returned. Anything
+    else (timeout, dropped connection, bad gateway) leaves the outcome unknown.
+    """
+    return type(exc).__name__ == "QueryError" or _is_out_of_funds(exc)
 
 
 def _is_out_of_funds(exc: Exception) -> bool:
@@ -206,7 +230,8 @@ class RunPodSession:
         self.gpu_types = gpu_types or GPU_TYPES
         # Unique per session, decided up front so it is stable across a
         # create/terminate cycle and recorded in the state file for reconnects.
-        self.pod_name = f"{POD_NAME_PREFIX}-{uuid.uuid4().hex[:8]}"
+        self.run_id = uuid.uuid4().hex[:8]
+        self.pod_name = f"{POD_NAME_PREFIX}-{self.run_id}"
         self.pod_id: str | None = None
         self.base_url: str | None = None
         self.ssh_host: str | None = None
@@ -233,6 +258,14 @@ class RunPodSession:
         # or forgotten -- that would let an abandoned pod whose terminate
         # failed escape the one check that exists to catch it.
         self._owned_pod_ids: set[str] = set()
+        # Durable twin of the above (pod_journal.py): created lazily, so a
+        # session that never asks for a pod leaves nothing on disk.
+        self._journal = pod_journal.PodJournal(
+            os.path.join(output_dir, JOURNAL_DIRNAME), self.run_id, self.pod_name)
+        self._reconciled = False
+        # A create request has failed in a way that does not prove no pod was
+        # made (timeout, dropped connection). Keeps its late-create window open.
+        self._create_ambiguous = False
 
     def _register_cleanup(self):
         """Register atexit and signal handlers to terminate pod on exit."""
@@ -269,6 +302,10 @@ class RunPodSession:
                 self.write_state()
                 armed = self.arm_self_destruct(self.keep_pod_minutes)
                 if armed:
+                    # Durable: if a later run finds the reaper never fired,
+                    # this is what lets it terminate the pod.
+                    self._journal.set_pod(self.pod_id, self.pod_name, pod_journal.KEPT,
+                                          time.time() + self.keep_pod_minutes * 60)
                     print(f"  Pod {self.pod_id} kept alive (self-destructs in "
                           f"{self.keep_pod_minutes}min); state at {self.state_path}")
                 else:
@@ -283,11 +320,15 @@ class RunPodSession:
 
         self.close_http()
 
-        # A deliberately kept-alive pod is not a stray -- don't sweep it away.
-        if keeping or self._swept:
+        # A deliberately kept-alive pod is not a stray, but its abandoned
+        # siblings are: sweep anyway, sparing only the pod we kept.
+        if self._swept:
             return
         self._swept = True
-        self.sweep_stray_pods()
+        try:
+            self.sweep_stray_pods(spare={self.pod_id} if keeping and self.pod_id else frozenset())
+        finally:
+            self._journal.close()
 
     @property
     def state_path(self) -> str:
@@ -296,6 +337,163 @@ class RunPodSession:
     def mark_clean_exit(self):
         """Call before normal return to signal that pod should be kept."""
         self._clean_exit = True
+
+    # -- Ownership journal (ADR 0010) --
+
+    def _own(self, pod_id: str) -> None:
+        """Record, durably, that this session answers for `pod_id`."""
+        self._owned_pod_ids.add(pod_id)
+        self._journal.set_pod(pod_id, self.pod_name, pod_journal.OWNED)
+
+    def _claimed_names(self) -> set[str]:
+        """Pod names this session answers for: its own plus any it adopted."""
+        return {self.pod_name} | self._journal.snapshot.names
+
+    def _spared_ids(self) -> set[str]:
+        """Pods deliberately kept alive whose own reaper is still entitled to them."""
+        now = time.time()
+        return {pid for pid, c in self._journal.snapshot.claims.items()
+                if c.state == pod_journal.KEPT and c.kept_until is not None
+                and now < c.kept_until + KEPT_DEADLINE_SLACK_S}
+
+    def _settle_create_window(self) -> None:
+        """Close the late-create window if no failed request is still unexplained."""
+        if not self._create_ambiguous:
+            self._journal.close_window(self.pod_name)
+
+    def _release(self, pod_id: str) -> Exception | None:
+        """Terminate `pod_id`, keeping the journal truthful at every instant.
+
+        'abandoned' is written first, so a crash during the call still leaves a
+        claim; the claim is dropped only once the pod is confirmed gone
+        (terminated, or the API says it never/no longer existed).
+        """
+        self._journal.set_pod(
+            pod_id,
+            (self._journal.snapshot.claims.get(pod_id) or pod_journal.Claim(pod_id, self.pod_name)).name,
+            pod_journal.ABANDONED)
+        err = self._terminate_pod_id(pod_id)
+        if err is None or _is_not_found(err):
+            self._journal.drop_pod(pod_id)
+        return err
+
+    def _pod_status(self, runpod, pod_id: str) -> str:
+        """Ask the account about one pod by id: 'gone', 'running' or 'unknown'.
+
+        The listing can lag behind a pod that exists, so absence from it is
+        not proof; an error is not proof either.
+        """
+        try:
+            status = runpod.get_pod(pod_id)
+        except Exception:
+            return "unknown"
+        if not status or status.get("desiredStatus") == "EXITED":
+            return "gone"
+        return "running"
+
+    def reconcile_journals(self, spare: set[str] | frozenset[str] = frozenset()) -> list[str]:
+        """Settle what dead sessions left behind, before this one allocates.
+
+        For every journal in this output dir whose owner no longer holds its
+        lock: terminate each pod it still claims (and any pod carrying a name it
+        spoke for, which catches creates whose id was never received), unless a
+        live owner has it. A claim that cannot be settled this time -- terminate
+        failed, listing unavailable -- is adopted into this session's journal so
+        the exit sweep retries it and nothing is forgotten. Idempotent: running
+        it twice, or after a crash halfway, converges to the same account.
+        Returns the ids it terminated.
+        """
+        if self._reconciled:
+            return []
+        peers = pod_journal.scan_peers(self._journal.directory, self.run_id)
+        dead = [p for p in peers if not p.live]
+        for p in peers:
+            if p.live or p.snapshot is None:
+                p.release()
+        try:
+            return self._reconcile_dead(peers, dead, spare)
+        finally:
+            for p in dead:
+                p.release()
+
+    def _reconcile_dead(self, peers, dead, spare) -> list[str]:
+        unreadable = [p for p in dead if p.snapshot is None]
+        for p in unreadable:
+            print(f"  Journal {p.json_path} is unreadable; leaving it. Check "
+                  f"https://www.runpod.io/console/pods for stray pods.")
+        dead = [p for p in dead if p.snapshot is not None]
+        if not dead:
+            self._reconciled = True
+            return []
+        if not os.environ.get("RUNPOD_API_KEY"):
+            print(f"  {len(dead)} earlier run(s) left a pod journal but RUNPOD_API_KEY is "
+                  f"not set; cannot check for leftover pods.")
+            return []
+
+        import runpod
+        runpod.api_key = os.environ["RUNPOD_API_KEY"]
+        try:
+            listing = runpod.get_pods() or []
+        except Exception as e:
+            print(f"  Could not list pods to reconcile an earlier run's journal ({e}); "
+                  f"it is kept and retried next time. Verify at https://www.runpod.io/console/pods")
+            return []
+        running = {p["id"]: p for p in listing
+                   if p.get("id") and p.get("desiredStatus", "RUNNING") != "EXITED"}
+
+        protected = set(spare) | self._owned_pod_ids
+        if self.pod_id:
+            protected.add(self.pod_id)
+        for p in peers:
+            if p.live and p.snapshot is not None:
+                protected.update(p.snapshot.claims)
+
+        now = time.time()
+        terminated: list[str] = []
+        unsettled: dict[str, pod_journal.Claim] = {}
+        windows: list[pod_journal.Window] = []
+        for peer in dead:
+            snap = peer.snapshot
+            # id -> claim, for the pods we must end: claimed by id, or running
+            # under a name this journal spoke for (a create whose id was lost).
+            targets: dict[str, pod_journal.Claim] = {}
+            for pid, claim in snap.claims.items():
+                if pid in protected:
+                    continue            # a live owner (or we) hold it; the stale claim is dropped
+                if claim.state == pod_journal.KEPT and claim.kept_until is not None \
+                        and now < claim.kept_until + KEPT_DEADLINE_SLACK_S:
+                    unsettled[pid] = claim   # its own reaper is still entitled to it
+                    continue
+                targets[pid] = claim
+            for pid, pod in running.items():
+                if pid not in protected and pid not in targets and pod.get("name") in snap.names \
+                        and pid not in unsettled:
+                    targets[pid] = pod_journal.Claim(pid, pod["name"], pod_journal.ABANDONED)
+            for pid, claim in targets.items():
+                status = "running" if pid in running else self._pod_status(runpod, pid)
+                if status == "running":
+                    print(f"  Reconcile: terminating pod {pid} left by an earlier run "
+                          f"({claim.name}, {claim.state})")
+                    err = self._terminate_pod_id(pid)
+                    if err is None or _is_not_found(err):
+                        terminated.append(pid)
+                    else:
+                        print(f"  Reconcile: FAILED to terminate {pid} ({err}); "
+                              f"retrying at exit. Check https://www.runpod.io/console/pods")
+                        unsettled[pid] = claim
+                elif status == "unknown":
+                    unsettled[pid] = claim   # cannot tell; keep the claim rather than forget a billing pod
+            windows += [w for w in snap.windows if w.until > now]
+
+        if unsettled or windows:
+            for pid, claim in unsettled.items():
+                if claim.state != pod_journal.KEPT:
+                    self._owned_pod_ids.add(pid)
+            self._journal.adopt(list(unsettled.values()), windows)
+        for peer in dead:
+            peer.discard()
+        self._reconciled = True
+        return terminated
 
     # -- State file I/O --
 
@@ -353,6 +551,10 @@ class RunPodSession:
         # never reached us. Register before the request so exit sweeps by name.
         self._register_cleanup()
 
+        # Earlier runs' leftovers (SIGKILL, power loss, a create that landed
+        # late) bill alongside whatever we are about to rent: settle them first.
+        self.reconcile_journals()
+
         if self.pod_id is not None:
             # Overwriting the handle would orphan a pod that is still billing.
             print(f"  Replacing pod {self.pod_id}: terminating it first.")
@@ -368,6 +570,10 @@ class RunPodSession:
             print(f"  Trying {label}...")
             try:
                 self._create_attempted = True
+                # Write-ahead: if the process dies mid-request, or the request
+                # lands server-side after we gave up, a later run finds this
+                # name in the journal and looks for the pod by it.
+                self._journal.open_window(self.pod_name, time.time() + LATE_CREATE_GRACE_S)
                 ssh_pubkey = ""
                 pubkey_path = os.path.expanduser("~/.ssh/id_ed25519.pub")
                 if not os.path.exists(pubkey_path):
@@ -392,9 +598,12 @@ class RunPodSession:
                 print(f"  Got {label} @ ${gpu_rate}/hr")
                 break
             except Exception as e:
+                if not _is_definite_rejection(e):
+                    self._create_ambiguous = True   # the pod may exist; keep the window open
                 if _is_out_of_funds(e):
                     # Not a capacity problem, and no amount of retrying or
                     # cycling GPU types fixes it. Say so immediately.
+                    self._settle_create_window()
                     raise OutOfFundsError(
                         f"RunPod account balance is too low to rent a pod "
                         f"({label}). Add funds at "
@@ -405,6 +614,7 @@ class RunPodSession:
                 continue
 
         if pod is None:
+            self._settle_create_window()
             raise PodSetupError(
                 f"no capacity on any of {len(self.gpu_types)} GPU types "
                 f"across {len(CLOUD_TYPES)} cloud(s)"
@@ -412,7 +622,8 @@ class RunPodSession:
 
         pod_id = str(pod["id"])
         self.pod_id = pod_id
-        self._owned_pod_ids.add(pod_id)
+        self._own(pod_id)
+        self._settle_create_window()
         self.gpu_hourly_rate = gpu_rate
         self.pod_start_time = time.time()
         print(f"  Pod created: {self.pod_id}")
@@ -462,6 +673,9 @@ class RunPodSession:
             print("Error: RUNPOD_API_KEY not set in .env or environment.")
             sys.exit(1)
 
+        # The state file's pod is the one we are here to adopt: never reap it.
+        self.reconcile_journals(spare={self.pod_id} if self.pod_id else frozenset())
+
         try:
             status = runpod.get_pod(self.pod_id)
             runtime = status.get("runtime")
@@ -476,7 +690,7 @@ class RunPodSession:
 
         print(f"  Reconnected: {self.base_url}")
         if self.pod_id:
-            self._owned_pod_ids.add(self.pod_id)
+            self._own(self.pod_id)
         # This pod was left alive with a deadline armed; clear it so it does
         # not terminate underneath the run that just picked it up.
         self.disarm_self_destruct()
@@ -573,11 +787,12 @@ class RunPodSession:
 
         The name is the load-bearing test, not the id: the failure this whole
         sweep exists for is precisely the recorded id going stale, so an
-        id-only check would miss the case it is meant to catch.
+        id-only check would miss the case it is meant to catch. Names include
+        any adopted from an earlier run's journal.
         """
-        return pod.get("name") == self.pod_name or pod.get("id") in self._owned_pod_ids
+        return pod.get("name") in self._claimed_names() or pod.get("id") in self._owned_pod_ids
 
-    def sweep_stray_pods(self) -> list[str]:
+    def sweep_stray_pods(self, spare: set[str] | frozenset[str] = frozenset()) -> list[str]:
         """Terminate this session's leftover pods; report anyone else's.
 
         terminate() removes the pod id it recorded and warns if that call
@@ -591,7 +806,11 @@ class RunPodSession:
         else carrying the lossy prefix is another run's (or an older orphan's)
         and is only reported -- killing it would take down a render that is
         very likely someone's active work. Set LOSSY_RUNPOD_SWEEP=1 to
-        terminate those too.
+        terminate those too. `spare` (and any kept pod still inside its armed
+        deadline) is never touched.
+
+        A claim in the ownership journal is dropped only on evidence the pod
+        is gone: a confirmed terminate, or the account no longer showing it.
 
         Returns the ids of the stray pods found, for tests and callers.
         """
@@ -609,14 +828,13 @@ class RunPodSession:
                   f"verify at https://www.runpod.io/console/pods")
             return []
 
+        spared = set(spare) | self._spared_ids()
         strays = [
             p for p in pods
             if str(p.get("name", "")).startswith(POD_NAME_PREFIX)
             and p.get("desiredStatus", "RUNNING") != "EXITED"
-            and p.get("id")
+            and p.get("id") and p["id"] not in spared
         ]
-        if not strays:
-            return []
 
         force = os.environ.get("LOSSY_RUNPOD_SWEEP", "").lower() in ("1", "true", "yes")
         for pod in strays:
@@ -625,10 +843,16 @@ class RunPodSession:
             if ours or force:
                 why = "ours" if ours else "LOSSY_RUNPOD_SWEEP=1"
                 print(f"  Sweep: terminating stray pod {pod_id} ({why})")
-                try:
-                    runpod.terminate_pod(pod_id)
-                except Exception as e:
-                    print(f"  Sweep: FAILED to terminate {pod_id} ({e}) -- "
+                if ours:
+                    err = self._release(pod_id)
+                else:
+                    try:
+                        runpod.terminate_pod(pod_id)
+                        err = None
+                    except Exception as e:
+                        err = e
+                if err is not None and not _is_not_found(err):
+                    print(f"  Sweep: FAILED to terminate {pod_id} ({err}) -- "
                           f"terminate it at https://www.runpod.io/console/pods")
             else:
                 print(f"  NOTE: pod {pod_id} ({pod.get('name')}) is still running and "
@@ -636,6 +860,19 @@ class RunPodSession:
                 print("        Probably a concurrent run. If it is orphaned, terminate it "
                       "at https://www.runpod.io/console/pods (or re-run with "
                       "LOSSY_RUNPOD_SWEEP=1).")
+
+        # Claims for pods the listing does not show: drop those the account
+        # confirms are gone. A listing can lag, so ask for the pod by id first.
+        listed = {p.get("id") for p in pods}
+        for pid in list(self._journal.snapshot.claims):
+            if pid in listed or pid in spared:
+                continue
+            status = self._pod_status(runpod, pid)
+            if status == "gone":
+                self._journal.drop_pod(pid)
+            elif status == "running":
+                print(f"  Sweep: pod {pid} is running though the listing omits it; terminating")
+                self._release(pid)
         return [p["id"] for p in strays]
 
     def pod_alive(self) -> bool:
@@ -703,13 +940,13 @@ class RunPodSession:
                 return None
             except Exception as e:
                 err = e
-                if "not found" in str(e).lower() or attempt == TERMINATE_ATTEMPTS:
+                if _is_not_found(e) or attempt == TERMINATE_ATTEMPTS:
                     break
                 time.sleep(TERMINATE_BACKOFF_S * attempt)
         return err
 
     def _terminate_quietly(self, pod_id: str) -> None:
-        err = self._terminate_pod_id(pod_id)
+        err = self._release(pod_id)
         if err is None:
             print(f"  Terminated abandoned pod {pod_id}.")
         else:
@@ -728,7 +965,7 @@ class RunPodSession:
         elapsed_h = (time.time() - self.pod_start_time) / 3600 if self.pod_start_time else 0
         estimated_cost = elapsed_h * self.gpu_hourly_rate
 
-        err = self._terminate_pod_id(pod_id)
+        err = self._release(pod_id)
         if err is None:
             print(f"  Pod {pod_id} terminated. Session cost: ~${estimated_cost:.2f} ({elapsed_h:.1f}hrs)")
         else:
