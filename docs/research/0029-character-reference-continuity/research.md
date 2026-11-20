@@ -818,10 +818,10 @@ The trial measured $0.60 of RunPod for 32 shorter clips including boot, so the R
 likely high. Both RunPod runs are under `capped_run`; fal is under `--keyframe-fal-cap`. If K
 fails the rule, SW4 runs on text on 30 Nov, as planned.
 
-### SW4 paid check, attempt 1 (21 Nov 2026): free prep done, K arm blocked on pod SSH, no verdict
+### SW4 paid check (21 Nov 2026): free prep done, renders stalled on flaky pod SSH, no verdict
 
-Steady task `a2c14bfa`, job `61de4147`. Will approved ~$2.5 (cap $3.0). **No clip was rendered, so
-there is no K-vs-T result and no verdict yet. SW4 stays on text as scheduled** (30 Nov).
+Steady task `a2c14bfa`, job `61de4147`. Will approved ~$2.5 (cap $3.0). **Only 12 K clips and 1 T clip
+were rendered, so there is no K-vs-T result and no verdict yet. SW4 stays on text as scheduled** (30 Nov).
 
 **Free prep (done)**
 - Face models: opencv_zoo `face_detection_yunet_2023mar.onnx` and `face_recognition_sface_2021dec.onnx`
@@ -849,26 +849,36 @@ there is no K-vs-T result and no verdict yet. SW4 stays on text as scheduled** (
   other, each in the scene's own wardrobe (white tunic, grey/black tops, brown robe); the grey t-shirt
   leak of the first trial is not visible. No droid keyframes. [confirmed by eye, `evidence/sw4_keyframes.jpg`]
 
-**K arm run: blocked.** `capped_run` (cap $1.0) made four decode attempts (14 pods across them).
-Every pod failed at setup: `ComfyUI upgrade to v0.39.2 failed: Permission denied ... Too many
-authentication failures` (ssh to the pod), or the pod did not start in 600 s. No video was generated.
-`runpod_pod._ssh_opts` passes no `-i`/`IdentitiesOnly`; the pod is given `~/.ssh/id_ed25519.pub`
-as `PUBLIC_KEY`, and ssh then offers whatever keys it finds. In this Manager job the pods rejected
-every offered key. Cause not established: the job could not inspect `~/.ssh` (commands denied) and
-I did not work around that. Plausible causes [unverified]: the `~/.ssh/id_ed25519` private key and the
-`.pub` that is injected no longer match (an `id_ed25519.old` pair sits beside them), or the job sandbox
-cannot use the key. The earlier 20 Nov bake-off pods did boot, so this is new.
-`capped_run` was stopped by the Bash tool's time limit while attempt 4 was waiting; one pod
-(`z1pvi92891rcae`) was left running and I terminated it by hand. Account balance now $3.46.
+**Render attempts: K 12 of 30 clips, T 1 of 30, no verdict.** Pod SSH is intermittent, not dead.
+In the first attempt (cap $1.0, 14 pods) every pod failed at setup with `ComfyUI upgrade to v0.39.2
+failed: Permission denied ... Too many authentication failures` (ssh to the pod). A later one-shot
+probe booted, upgraded ComfyUI, downloaded the models and rendered shot 684 (T arm, $0.04), and one K
+run then rendered 12 clips (shots 684-694, $0.30) before the session was cut off. Every later attempt
+(two more K, two more T, retries on) failed the same way: about 50 of ~55 pods across the job were
+refused at the ssh step, on every GPU type and both clouds (A40, A6000, L40, L40S, RTX 6000 Ada), so it is not
+a bad host. `runpod_pod._ssh_opts` passes no `-i`/`IdentitiesOnly`; the pod is given
+`~/.ssh/id_ed25519.pub` as `PUBLIC_KEY` and ssh then offers whatever keys it finds. Cause not established:
+the job was denied access to `~/.ssh` and I did not work around that. Plausible [unverified]: the key
+is not reliably installed on the pod by the time `Waiting for SSH` returns (a race), an `id_ed25519.old`
+pair sits beside the live key, or the job sandbox only sometimes reaches the key. Each failed pod costs
+$0.01-0.05, but 23 of them in the last two runs burned ~$0.8 with no clip, which is what exhausted the budget.
+One pod was left running when a `capped_run` was killed by the Bash time limit; I terminated it by hand.
 
-**Spend so far**: fal $0.31 (`keyframes/cost.jsonl`); RunPod about $0.51 by balance (3.96 -> 3.46;
-this includes any other lossy run's pod on the same account, since `capped_run` saw one already
-running at start). Gemini $0. Total about $0.82 of the $3.0 cap; none of it bought a clip.
+**Spend**: fal $0.43 (`keyframes/cost.jsonl`, sheets and 13 keyframes); RunPod about $2.26 by
+balance (3.96 -> 1.71; this may include another lossy run's pod on the same account, since `capped_run`
+saw one already running at start). Gemini $0. **About $2.7 of the $3.0 cap**, of which only the 12 K
+clips and one T clip are usable. I stopped there: finishing both arms needs about $0.9 more.
 
-**To finish** (needs Will for the SSH key): fix pod SSH from a Manager job, then run K and T on shots
-684-713 (the K arm reuses the cached sheets and keyframes, so fal is already paid), then
-`make_sw4_score_inputs.py` and `score.py`. Expect the K arm to be judged on 13 keyframe shots; if
-that is too thin, redraw Han with a more distinct description first.
+**Usable now**: K clips for shots 684-694 (7 of the 13 keyframe shots), T clip for 684 only.
+Not enough for a K-vs-T comparison; I did not score a partial result.
+
+**To finish**: (1) make pod SSH reliable: retry the upgrade/setup ssh step until the key is accepted,
+or pass an explicit key with `IdentitiesOnly=yes`, and confirm `id_ed25519` matches the `.pub` (needs
+Will). (2) About $1.0 more RunPod plus ~$0.1 Gemini, which is over the $3.0 cap Will approved, so it needs
+a new approval. The K run resumes from the 12 clips on disk and fal is already paid. (3) Run T on 684-711
+(28 shots minimum; only shots with both arms are scored), then `make_sw4_score_inputs.py` and
+`score.py`. The K arm will be judged on at most 13 keyframe shots; if that is too thin, redraw Han with
+a more distinct description first.
 
 ### Trial files
 
