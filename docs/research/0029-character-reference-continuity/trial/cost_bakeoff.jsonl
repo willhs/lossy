@@ -38,3 +38,5 @@
 {"kind": "runpod", "arm": "KQ(rest)", "note": "second session, 7 KQ clips; capped_run FINAL spent 0.1975; total RunPod 4.8447->3.9849 = 0.86", "usd": 0.2}
 {"kind": "judge", "arm": "T,W", "model": "gemini-3.1-flash-lite (Vertex)", "usd": 0.0562}
 {"kind": "judge", "arm": "T,KQ", "model": "gemini-3.1-flash-lite (Vertex)", "usd": 0.0563}
+{"kind": "sheet", "arm": "I-attempt", "note": "4 klein sheets redrawn (21 Nov, arm I job dd91522b)", "usd": 0.0208}
+{"kind": "runpod", "arm": "T(I-attempt)", "note": "capped_run: balance 3.9627->3.5351, 0 clips; every pod failed SSH setup (Permission denied / Too many authentication failures), two never started in 600s", "usd": 0.4276}

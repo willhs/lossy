@@ -953,6 +953,37 @@ uv run python docs/research/0029-character-reference-continuity/trial/score.py R
 `RUN_DIR` needs `trial_plan.json` and `trial_manifest.json` (both in `trial/`). Its estimate is
 $0.5-0.9 [Speculative]. The $1.31 left of this job's $5 would have covered it; it was not spent.
 
+### Arm I attempt (21 Nov, job `dd91522b`): not run, no verdict
+
+Will's follow-up gave arm I the bake-off's last ~$1.3 (hard cap $1.30, all providers) and put
+`HF_TOKEN` in the `proj-lossy` vault. **Arm I still has no result.** [Direct: run log, balance]
+
+- **Preflight worked.** Inside the job, `op` resolved the token, the four sheets were redrawn on fal
+  ($0.02), the 16 composites and `trial_manifest_I.json` were built, and the gate check printed
+  `HF gate OK`. The previous job's T clips and sheets were in another job's workspace, so T had to be
+  rendered again for the `--arms T,I` pair, as the bake-off did.
+- **Priced before spending.** T about $0.3 (16 clips, ~93 s each, one boot) plus I about $0.5-0.9
+  ([Speculative]: 1.5-3x a T clip, +1.3 GB adapter download, another boot), plus ~$0.06 judge: about
+  $0.9-1.3, against $1.30. It was marginal and was started because it could fit.
+- **What went wrong.** The T render, under `capped_run --cap 0.45`, never produced a clip. Over three
+  attempts, every pod boot failed in `RunPodSession` setup at the ComfyUI upgrade step, with ssh `Permission denied,
+  please try again` and `Too many authentication failures`; one pod never became reachable in 600 s.
+  `~/.ssh/id_ed25519.pub` exists on this machine, so a missing public key is not the cause. I did not
+  find the cause: the job has no ssh agent, and diagnosing it needs a live pod. Spend: $0.43 on RunPod
+  for zero clips, balance 3.9627 -> 3.5351, no pod left running. [Direct: `capped_run` FINAL line]
+- **Why it stopped.** With about $0.85 left, T plus I no longer fits under the cap even if the ssh
+  problem were fixed, and an unfixed ssh problem would burn it again. The task says to skip and say so.
+  Total spent this job: $0.45 (sheets $0.02, RunPod $0.43). Judge: none.
+- **Verdict.** None. Does I beat K is still open; **K stays** the recommendation for SW4. I did not
+  run I alone against the quoted T numbers: the rule needs the paired score, and a single unpaired run
+  would have cost most of what was left.
+- **To finish it.** Fix or find the pod ssh problem first, preferably from a terminal where
+  `ssh root@<pod>` works by hand (the previous bake-off job booted pods fine from its session, so the
+  difference is this job's environment, not the pod code). Then, from the lossy checkout with `op`
+  signed in: render the T arm, `run_arm_i.sh RUN_DIR 0.9`, and `score.py RUN_DIR MODELS_DIR --arms T,I`
+  (see "Arm I: what Will must do"). Budget about $1.2-1.5 for T and I together; the $1.30 is not
+  enough margin after this attempt's loss, so it needs a fresh approval.
+
 ### Can klein and Qwen run on the LTX RunPod pod?
 
 **Yes in principle, probably with no custom nodes. Nobody has run either on the pod, so it is not
@@ -1012,7 +1043,7 @@ proven.** [Direct from sources; Inferred where marked]
   adherence and motion in this sample, and costs 4-9 times more per frame on fal.
 - **Wan VACE-14B reference-to-video: no.** No identity gain over text, about 20 times the cost, and
   it leaves LTX-2.5.
-- **Open:** Ingredients (I) has still never run, and Kling (R) is unmeasured.
+- **Open:** Ingredients (I) has still never run (a 21 Nov attempt failed at pod ssh setup, see "Arm I attempt"), and Kling (R) is unmeasured.
 
 ### Bake-off files
 
