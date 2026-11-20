@@ -1,5 +1,5 @@
 # ruff: noqa: E501  -- judge rubrics are prose sent verbatim
-"""Score research 0029's trial: arm T (text) vs arm K (keyframe-first), or T vs I (Ingredients).
+"""Score research 0029's trial: arm T (text) vs arm K (keyframe-first), or T vs I (Ingredients), KQ (Qwen keyframes) or W (Wan VACE). Pairs other than T,K write to score_<A>_<B>/.
 Free except ~cents of Gemini.
 
 Usage (from the repo root, after the render):
@@ -49,7 +49,7 @@ import config  # noqa: E402
 
 ARMS = ("T", "K")   # the two arms compared; `--arms T,I` swaps in arm I (Ingredients)
 # Arm I runs under its own strategy, so its clips sit in a different directory.
-ARM_STRATEGY = {"I": "runpod-ltx25-ingredients"}
+ARM_STRATEGY = {"I": "runpod-ltx25-ingredients", "W": "fal-wan-vace"}   # KQ, T, K: runpod-ltx25
 POS = ("first", "mid", "last")
 # 0025 judged with gemini-2.5-flash; when AI Studio is rate-limited, run with
 # LOSSY_GEMINI_BACKEND=vertex LOSSY_JUDGE_MODEL=gemini-3.1-flash-lite (what Vertex serves here).
@@ -210,7 +210,7 @@ def main(run: str, models: str, judge: bool) -> None:
     config.load_env()
     plan = json.load(open(os.path.join(run, "trial_plan.json")))
     prompts = {(j["arm"], j["shot"]): j["prompt"] for j in json.load(open(os.path.join(run, "trial_manifest.json")))["jobs"]}
-    out = os.path.join(run, "score")
+    out = os.path.join(run, "score" if ARMS == ("T", "K") else f"score_{ARMS[0]}_{ARMS[1]}")
     for d in ("frames", "grids", "pairs"):
         os.makedirs(os.path.join(out, d), exist_ok=True)
     faces = Faces(models)
@@ -284,15 +284,16 @@ def main(run: str, models: str, judge: bool) -> None:
             metrics["within_shot_first_last"].setdefault(arm, {})[c] = round(float(np.mean(fl)), 4) if fl else None
             if c in sheet_emb:
                 curve = {}
-                if arm == "K":
-                    kf = [faces.find(cv2.imread(os.path.join(run, "k_frames", f"{s['shot']:04d}.png"))) for s in mine]
+                if arm in ("K", "KQ"):
+                    kdir = "k_frames" if arm == "K" else "kq_frames"
+                    kf = [faces.find(cv2.imread(os.path.join(run, kdir, f"{s['shot']:04d}.png"))) for s in mine]
                     # keyframe faces: largest for singles, best sheet match for pairs
                     kv = [max(cos(f["emb"], sheet_emb[c]) for f in fs[:2]) for fs in kf if fs]
                     curve["keyframe"] = round(float(np.mean(kv)), 4) if kv else None
                 for pos in POS:
                     v = [cos(f["emb"], sheet_emb[c]) for s in mine if (f := face_of(arm, s, c, pos))]
                     curve[pos] = round(float(np.mean(v)), 4) if v else None
-                mk = "k_decay_vs_sheet" if arm == "K" else f"{arm.lower()}_vs_sheet"
+                mk = "k_decay_vs_sheet" if arm in ("K", "KQ") else f"{arm.lower()}_vs_sheet"
                 metrics.setdefault(mk, {})[c] = curve
         cents = {c: centroid(arm, c, "mid") for c in chars}
         cc = [cos(cents[a], cents[b]) for a, b in itertools.combinations(chars, 2)

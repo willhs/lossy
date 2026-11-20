@@ -31,6 +31,10 @@ given, and many come from fal.ai pages or resellers, so recheck before spending.
 
 ## Answer
 
+- **Bake-off (20-21 Nov): K stays.** Qwen first frames (KQ) match K on identity but fail the
+  adherence and motion rule; hosted Wan VACE-14B (W) gives no identity gain at about 20 times the
+  cost; Ingredients (I) could not run (no HF token reachable); Kling (R) did not fit the $5 cap.
+  Spent <= $3.69. Klein and Qwen can very likely run on the LTX pod, unproven. See "Bake-off".
 - **Trial result (16 Nov): keyframe-first (K) passes.** On 16 Seinfeld shots, blind "same
   person" went from 3.5 to 5.0 and face-embedding cosine from 0.23 to 0.55. Adherence and
   motion fell 0.19, inside the rule's 0.3, and photoreal held at 100%. Total spend was ≤$1.04.
@@ -826,6 +830,197 @@ fails the rule, SW4 runs on text on 30 Nov, as planned.
   the 16 K first frames.
 - The clips, full-size sheets, keyframes, frames and grids (61 MB) are outside git, in the job
   workspace `evidence/trial0029/`, with the run log in `evidence/capped_run.log`.
+
+## Bake-off: Qwen first frames, Wan VACE, Ingredients, Kling (20-21 Nov 2026)
+
+Steady task `efc02dbe`, job `9b74e2bf`. Will approved up to $5 (all providers) to try more routes on the
+same 16 Seinfeld shots. No production default and no schedule changed. **Result: neither arm that
+ran beats K. KQ (Qwen first frames) fixes identity as well as K does but costs more adherence and
+motion than the rule allows; W (Wan VACE-14B reference-to-video) does not hold identity better than
+text. Arm I could not run (no `HF_TOKEN` reachable from the job), and arm R (Kling) did not fit the
+budget. K stays the recommendation.**
+
+### What ran, and where it differs from the first trial
+
+| Arm | What | Status |
+|---|---|---|
+| T | text only | **Re-rendered** (see below) |
+| K | klein first frame -> LTX-2.5 I2V | Not rerun: the first trial's numbers are quoted |
+| I | LTX-2.5 Ingredients | **Not run**: no HF token (below) |
+| KQ | Qwen-Image-Edit-2511 first frame (fal) -> the same LTX-2.5 I2V | Ran |
+| W | Wan 2.1 VACE-14B on fal, the klein sheets as `ref_image_urls`, T's text | Ran |
+| R | Kling O3 reference-to-video | Skipped: about $4.03 against about $1.3 left |
+
+Deviations from "reuse T and K, don't rerun". [Direct]
+
+- **T clips were re-rendered.** The first trial's clips and sheets live in an earlier job's workspace,
+  which this job may not read, and `score.py` judges two arms' clips side by side. So T ran again in
+  the same pod session as KQ, same 16 shots, seeds and text (about $0.2). It reproduced the first
+  T closely: face cosine 0.266 against 0.234, blind "same person" 3.75 against 3.50, adherence
+  4.50 and motion 4.44 (both identical). K's row below is the first trial's, not rerun.
+- **The four klein sheets were drawn again** (same prompt and seeds, $0.02), so they may differ a
+  little from the first trial's. KQ and W use these.
+- **Each new arm is scored against the new T in its own pair**, with the first trial's protocol:
+  `score.py --arms T,KQ` and `--arms T,W` (results in `trial/results_T_KQ.json`,
+  `trial/results_T_W.json`). The K column is not in a pair with them, so read K vs KQ as two
+  separate comparisons against T, not a head-to-head.
+- **Judge.** `gemini-3.1-flash-lite` on Vertex (AI Studio was rate-limited again), the same as the
+  first trial. It is lenient: it gave T's George 1/5 here and T's Elaine 5/5 in the first trial
+  although both have a low face cosine. Lean on the cosine and the contact sheets.
+- **W is a different resolution and frame rate**: 832x480 at 16 fps (VACE's output; LTX is 1280x704
+  at 24 fps). 480p was the cheapest tier and the only one that fit. Small and profile faces score
+  worse on the embedder at 480p. The "motion" measure (mean frame difference) is per frame, so it
+  is not comparable across frame rates; read only the judge's motion score for W.
+
+### Scores
+
+| Measure (rule) | T first trial | T here | K first trial | **KQ** | **W** |
+|---|---|---|---|---|---|
+| Blind "same person", 1-5 (>= T + 1.0) | 3.50 | 3.75 | 5.00 | **5.00** (+1.25, pass) | 4.25 (+0.50, **fail**) |
+| Face cosine across a character's shots (>= T + 0.10) | 0.234 | 0.266 | 0.547 | **0.506** (+0.24, pass) | 0.270 (+0.004, **fail**) |
+| Same, single-character shots | 0.305 | 0.270 | 0.524 | 0.537 | 0.301 |
+| Prompt adherence, 1-5 (>= T - 0.3) | 4.50 | 4.50 | 4.31 | 3.94 (-0.56, **fail**) | 3.91 (-0.59, **fail**) |
+| Motion, 1-5 (>= T - 0.3) | 4.44 | 4.44 | 4.25 | 3.91 (-0.53, **fail**) | 4.09 (-0.35, **fail**) |
+| Artefacts, 1-5 | 4.41 | 4.41 | 4.28 | 4.06 | 4.28 |
+| Photoreal rate (>= T) | 100% | 100% | 100% | 100% (pass) | 100% (pass) |
+| Cosine between different characters (lower is better) | 0.26 | 0.30 | 0.45 | 0.43 | 0.33 |
+| Pairwise "most consistent" wins | | | K 6, T 2 | KQ 6, T 2 | W 4, T 4 |
+| **Rule** | | | **pass** | **fail (adherence, motion)** | **fail (identity, adherence, motion)** |
+
+[Direct: `trial/results_T_KQ.json`, `trial/results_T_W.json`, `trial/results.json`. n = 16 clips, one
+judge call per grid and per clip, two passes, so a 0.3 gap is near the noise floor.]
+
+- **KQ holds identity as well as K.** The cosine is 0.51 against K's 0.55, and the judge gives all
+  four characters 5/5. Against its own sheet, KQ's frames lose little from keyframe to last frame
+  (Jerry 0.64 -> 0.63, Elaine 0.64 -> 0.58), the same flat decay as K.
+- **KQ loses on adherence and motion**, by about three times K's margin (-0.56 against -0.19).
+  The keyframes show it: Qwen kept the sheets' plain grey t-shirt in most of the 16 frames
+  (`trial/kq_keyframes.jpg`; counted by eye, about 11), the same wardrobe leak as K. Measured motion also fell: 9.7% of
+  frame steps are near-frozen, against 6.9% for T and 4.6% for K. This is **one editor-swap on 16
+  shots, so I would not call Qwen worse than klein for sure**, only that it gave no gain and
+  cost more. [Direct for the numbers; the cause is Inferred.]
+- **W does not hold identity.** Cosine to T is +0.004. Its George and Kramer are close to their
+  sheets (0.44-0.47) but Jerry and Elaine are not (0.28-0.31), and the contact sheet
+  (`trial/w_contact.jpg`) shows many profile and turned-away faces plus the same grey t-shirt.
+  Part of the miss may be 480p; the judge still lifted it by 0.5.
+- **Cross-character separation.** KQ's 0.43 matches K's look-alike effect (0.45). The two fixes
+  built into `runpod-ltx25-keyframe` (a distinctness gate and head-and-shoulders sheets) are for
+  this and were not applied to KQ here.
+
+### Cost, time and projection for Star Wars IV (2,012 shots, 7,482 s)
+
+Spend this job, every charge logged in `trial/cost_bakeoff.jsonl`. [Direct]
+
+| Line | USD |
+|---|---|
+| fal klein: 4 sheets | 0.02 |
+| fal Qwen-Image-Edit-2511: 16 keyframes (upper bound, input MP counted; $0.43 on output MP only) | <= 1.06 |
+| fal Wan VACE-14B: 16 clips, 480p, 40.8 video-s at $0.04/s | 1.63 |
+| RunPod, balance before minus after: T (16) and KQ (16) clips, with three pod boots (two hit a RunPod API error that the retry handled, one I stopped by hand and terminated) | 0.86 |
+| Gemini judge, two scoring runs | 0.11 |
+| **Total, upper bound** | **<= 3.69 of the 5.00 cap** |
+
+| Arm | Seconds per shot | Cost, this trial | Projected for SW4 (all 2,012 shots) |
+|---|---|---|---|
+| T | 93 (A6000/A40 pod, 16 clips) | RunPod share about $0.4 | about $14.90 (0025) |
+| K, from the first trial | not timed per clip (planned at about 60) | <= $0.38 fal + RunPod | $14.90 + $17-38 klein on fal, or about +$1 self-hosted |
+| **KQ** | 107 (median of 16), plus the fal edit | <= $1.06 fal + about $0.4 RunPod | $14.90 + **$54-133** Qwen on fal (every shot; fewer in practice, since design-character shots get none), about +$6-11 self-hosted [Inferred, unbenchmarked] |
+| **W** | 57-273 each with 8 submitted in parallel; 474 for a lone probe (queue time) | $1.63 | **about $299** at 480p ($0.04/s x 7,482 s), $599 at 720p, before any audio |
+| I | not measured | not run | $22-45 [Speculative, from the earlier estimate] |
+| R | not run | about $4.03 for 16 clips (3 s minimum at $0.084/s) | about $630 (table in 2a) |
+
+W at 480p is 20 times the $14.90 baseline for the same 16 shots and gave no identity gain. KQ on
+fal is 4-9 times the keyframe cost of klein for a worse adherence score.
+
+### Arm I: what Will must do
+
+The preflight stopped at the gate: no `HF_TOKEN` was reachable. `.env` has none, and `op run
+--env-file .env.tpl` fails inside a Manager job session with "No accounts configured for use with
+1Password CLI" (the job's private `op` home has no service-account token). The run, the retry at the
+end of the job, and the steer that `.env.tpl` holds the token, all ended the same way. So arm I is
+not run, and nothing was spent on it. To run it from a terminal where `op` is signed in, in the
+lossy checkout:
+
+```
+# 1. free: remake the sheets if RUN_DIR has none (about $0.02) and make the composites
+uv run python docs/research/0029-character-reference-continuity/trial/make_refs.py RUN_DIR --sheets-only
+# 2. one command; the HF gate check is its first step and stops before any pod if it fails
+op run --env-file .env.tpl -- docs/research/0029-character-reference-continuity/trial/run_arm_i.sh RUN_DIR 1.00
+# 3. score against T (T's clips must be in RUN_DIR: render the T arm of trial_manifest.json first)
+uv run python docs/research/0029-character-reference-continuity/trial/score.py RUN_DIR MODELS_DIR --arms T,I
+```
+
+`RUN_DIR` needs `trial_plan.json` and `trial_manifest.json` (both in `trial/`). Its estimate is
+$0.5-0.9 [Speculative]. The $1.31 left of this job's $5 would have covered it; it was not spent.
+
+### Can klein and Qwen run on the LTX RunPod pod?
+
+**Yes in principle, probably with no custom nodes. Nobody has run either on the pod, so it is not
+proven.** [Direct from sources; Inferred where marked]
+
+- **ComfyUI support.** The pod upgrades itself to v0.39.2. That release's source has
+  `Flux2` in `supported_models.py`, the nodes `EmptyFlux2LatentImage`, `Flux2Scheduler`,
+  `FluxKontextMultiReferenceLatentMethod` and `ReferenceLatent`, and, for Qwen, `QwenImage`,
+  `TextEncodeQwenImageEdit` and `TextEncodeQwenImageEditPlus` (multi-image). ComfyUI's own
+  tutorials cover both. [Direct: raw v0.39.2 source; docs.comfy.org klein and Qwen-Image-Edit-2511 pages]
+- **Weights, all ungated and public.** [Direct: HF API, 20 Nov]
+
+  | Piece | File | Size |
+  |---|---|---|
+  | klein 4B | `Comfy-Org/flux2-klein-4B` `flux-2-klein-4b.safetensors` (fp8 variant: 4.07 GB, Apache-2.0) | 7.75 GB |
+  | klein text encoder | `qwen_3_4b.safetensors` (fp4 variant: 3.85 GB) | 8.04 GB |
+  | klein VAE | `flux2-vae.safetensors` | 0.34 GB |
+  | Qwen-Edit-2511 | `Comfy-Org/Qwen-Image-Edit_ComfyUI` `qwen_image_edit_2511_fp8mixed.safetensors` | 20.5 GB |
+  | Qwen text encoder | `qwen_2.5_vl_7b_fp8_scaled.safetensors` | 9.4 GB |
+  | Qwen VAE | `qwen_image_vae.safetensors` | 0.25 GB |
+
+- **Disk.** `RunPodLtx25Strategy.DISK_GB` is 120 for about 40 GB of LTX weights. klein adds about
+  16 GB and Qwen about 30 GB, so both fit. Download time is the cost: about 3 and 5 minutes of
+  an already 20-minute boot. [Inferred]
+- **Memory.** klein's published footprint is 8-9 GB of VRAM (docs.comfy.org). Qwen's fp8 weights
+  are 20 GB plus a 9 GB encoder. The LTX int8 model takes most of a 48 GB card, so the keyframes
+  must be a separate pass before the video pass, with ComfyUI told to free models in between
+  (`/free`), as 2c already says. Not measured. [Inferred]
+- **Speed.** klein: ComfyUI lists about 1.2 s distilled on an RTX 5090; an A6000/A40 is several
+  times slower, so seconds per frame (my estimate was 5 s). Qwen: no published A6000 figure, and the
+  full 28-step model is 20B; 30-60 s is a guess, and the 4-step Lightning LoRA exists for 2511.
+  Neither was benchmarked. [Supported + Speculative]
+
+**What is left to make it work (klein first; Qwen is the same shape)**
+
+1. **A ComfyUI API graph** per editor: loaders (`UNETLoader`, `CLIPLoader` type flux2, `VAELoader`),
+   a `LoadImage` plus `VAEEncode` and `ReferenceLatent` chain per reference, `EmptyFlux2LatentImage`,
+   `Flux2Scheduler`, sampler and `VAEDecode`. Check node input names against the pod's
+   `/object_info`: only the node names are confirmed here.
+2. **A `KeyframeGenerator` that calls it** (`keyframes.py` already has the interface and the fal
+   implementation `FalKleinGenerator`; this is its second implementation), with `PINNED_MODELS`
+   entries and hashes for the weights above.
+3. **A pod before `prepare()`.** `RunPodLtx25KeyframeStrategy.prepare()` runs before any pod exists,
+   because fal needs none. A self-hosted generator needs the pod first, so sheets and keyframes
+   must be made after boot and before the first video, then the models freed.
+4. **One paid validation on a pod** (about $0.3): run the graph on the 16 shots, compare its face
+   cosine with fal klein's (0.55) so the self-hosted output is not worse, and time it.
+5. **Whether it is worth it.** At $0.009-0.019 a shot on fal klein, SW4's keyframes cost about
+   $17-38 at most; self-hosting saves most of that but is the main remaining engineering. Qwen is
+   not worth the work on this evidence.
+
+### Decision
+
+- **K stays the choice for SW4**, as a strategy flag after its own pod check (see "Keyframe
+  strategy built"). Neither new arm gives a reason to change it.
+- **Qwen-Image-Edit-2511 as the editor: no.** It matches klein on identity but scored worse on
+  adherence and motion in this sample, and costs 4-9 times more per frame on fal.
+- **Wan VACE-14B reference-to-video: no.** No identity gain over text, about 20 times the cost, and
+  it leaves LTX-2.5.
+- **Open:** Ingredients (I) has still never run, and Kling (R) is unmeasured.
+
+### Bake-off files
+
+- `trial/make_arm_kq.py`, `trial/make_arm_w.py`: the KQ and W builders (both resumable, both log to
+  `refs_cost.jsonl`). `trial/score.py` now takes `--arms T,KQ` and `--arms T,W`.
+- `trial/results_T_KQ.json`, `trial/results_T_W.json`, `trial/cost_bakeoff.jsonl`,
+  `trial/kq_keyframes.jpg`, `trial/w_contact.jpg`.
+- The clips, frames and grids are in the job workspace under `evidence/run0029/`, outside git.
 
 ## What we don't know
 

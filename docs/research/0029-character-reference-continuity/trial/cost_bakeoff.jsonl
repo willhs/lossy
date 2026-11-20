@@ -1,0 +1,40 @@
+{"kind": "sheet", "name": "jerry_seinfeld", "model": "fal-ai/flux-2/klein/4b", "seed": 1234, "usd": 0.0052}
+{"kind": "sheet", "name": "george_costanza", "model": "fal-ai/flux-2/klein/4b", "seed": 1235, "usd": 0.0052}
+{"kind": "sheet", "name": "cosmo_kramer", "model": "fal-ai/flux-2/klein/4b", "seed": 1236, "usd": 0.0052}
+{"kind": "sheet", "name": "elaine_benes", "model": "fal-ai/flux-2/klein/4b", "seed": 1237, "usd": 0.0052}
+{"kind": "keyframe", "arm": "KQ", "shot": 19, "model": "fal-ai/qwen-image-edit-2511", "seed": 19, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 21, "model": "fal-ai/qwen-image-edit-2511", "seed": 21, "usd": 0.0899}
+{"kind": "keyframe", "arm": "KQ", "shot": 27, "model": "fal-ai/qwen-image-edit-2511", "seed": 27, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 65, "model": "fal-ai/qwen-image-edit-2511", "seed": 65, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 69, "model": "fal-ai/qwen-image-edit-2511", "seed": 69, "usd": 0.0899}
+{"kind": "keyframe", "arm": "KQ", "shot": 75, "model": "fal-ai/qwen-image-edit-2511", "seed": 75, "usd": 0.0899}
+{"kind": "keyframe", "arm": "KQ", "shot": 82, "model": "fal-ai/qwen-image-edit-2511", "seed": 82, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 95, "model": "fal-ai/qwen-image-edit-2511", "seed": 95, "usd": 0.0899}
+{"kind": "keyframe", "arm": "KQ", "shot": 109, "model": "fal-ai/qwen-image-edit-2511", "seed": 109, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 117, "model": "fal-ai/qwen-image-edit-2511", "seed": 117, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 151, "model": "fal-ai/qwen-image-edit-2511", "seed": 151, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 171, "model": "fal-ai/qwen-image-edit-2511", "seed": 171, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 179, "model": "fal-ai/qwen-image-edit-2511", "seed": 179, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 183, "model": "fal-ai/qwen-image-edit-2511", "seed": 183, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 188, "model": "fal-ai/qwen-image-edit-2511", "seed": 188, "usd": 0.0585}
+{"kind": "keyframe", "arm": "KQ", "shot": 189, "model": "fal-ai/qwen-image-edit-2511", "seed": 189, "usd": 0.0585}
+{"kind": "clip", "arm": "W", "shot": 19, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 33, "usd": 0.0825, "wall_s": 474.2}
+{"kind": "clip", "arm": "W", "shot": 75, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 33, "usd": 0.0825, "wall_s": 155.8}
+{"kind": "clip", "arm": "W", "shot": 95, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 49, "usd": 0.1225, "wall_s": 179.4}
+{"kind": "clip", "arm": "W", "shot": 82, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 33, "usd": 0.0825, "wall_s": 194.7}
+{"kind": "clip", "arm": "W", "shot": 65, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 41, "usd": 0.1025, "wall_s": 213.7}
+{"kind": "clip", "arm": "W", "shot": 21, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 37, "usd": 0.0925, "wall_s": 235.2}
+{"kind": "clip", "arm": "W", "shot": 27, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 37, "usd": 0.0925, "wall_s": 252.8}
+{"kind": "clip", "arm": "W", "shot": 109, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 41, "usd": 0.1025, "wall_s": 268.4}
+{"kind": "clip", "arm": "W", "shot": 69, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 49, "usd": 0.1225, "wall_s": 272.8}
+{"kind": "clip", "arm": "W", "shot": 117, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 41, "usd": 0.1025, "wall_s": 128.7}
+{"kind": "clip", "arm": "W", "shot": 151, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 37, "usd": 0.0925, "wall_s": 112.0}
+{"kind": "clip", "arm": "W", "shot": 171, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 49, "usd": 0.1225, "wall_s": 107.6}
+{"kind": "clip", "arm": "W", "shot": 179, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 57, "usd": 0.1425, "wall_s": 101.0}
+{"kind": "clip", "arm": "W", "shot": 183, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 25, "usd": 0.0625, "wall_s": 79.7}
+{"kind": "clip", "arm": "W", "shot": 189, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 25, "usd": 0.0625, "wall_s": 57.4}
+{"kind": "clip", "arm": "W", "shot": 188, "model": "fal-ai/wan-vace-14b", "resolution": "480p", "frames": 65, "usd": 0.1625, "wall_s": 89.0}
+{"kind": "runpod", "arm": "T+KQ(partial)", "note": "balance 4.8447->4.1825, 16 T + 9 KQ clips + boot, incl. earlier aborted pod; balance-based, covers the aborted/flaked pods", "usd": 0.66}
+{"kind": "runpod", "arm": "KQ(rest)", "note": "second session, 7 KQ clips; capped_run FINAL spent 0.1975; total RunPod 4.8447->3.9849 = 0.86", "usd": 0.2}
+{"kind": "judge", "arm": "T,W", "model": "gemini-3.1-flash-lite (Vertex)", "usd": 0.0562}
+{"kind": "judge", "arm": "T,KQ", "model": "gemini-3.1-flash-lite (Vertex)", "usd": 0.0563}
