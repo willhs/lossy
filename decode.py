@@ -279,8 +279,7 @@ def run_decode(args, strategy: GenerationStrategy) -> list[int]:
 
         # Save progress every 5 clips
         if generated % 5 == 0:
-            with open(progress_path, "w") as f:
-                json.dump(progress, f, indent=2)
+            manifest.write_json_atomic(progress_path, progress)
 
         if errors > 20:
             print("Too many errors, saving progress and stopping.")
@@ -290,8 +289,7 @@ def run_decode(args, strategy: GenerationStrategy) -> list[int]:
     strategy.finish_audio()
 
     # Final save
-    with open(progress_path, "w") as f:
-        json.dump(progress, f, indent=2)
+    manifest.write_json_atomic(progress_path, progress)
 
     # Save audio progress if pipelined audio was used
     audio_results, audio_failures = strategy.get_audio_results()
@@ -310,8 +308,7 @@ def run_decode(args, strategy: GenerationStrategy) -> list[int]:
                 for idx, results_list in audio_results.items()
             },
         }
-        with open(audio_progress_path, "w") as f:
-            json.dump(audio_progress, f, indent=2)
+        manifest.write_json_atomic(audio_progress_path, audio_progress)
         print(f"  Pipelined audio: {len(audio_results)} completed, {len(audio_failures)} failed")
 
     # Signal clean exit for --keep-pod support
@@ -409,8 +406,7 @@ def run_ab_manifest(args, strategy: GenerationStrategy, jobs: list[dict]):
     done = set(progress["completed"])
 
     def save():
-        with open(progress_path, "w") as f:
-            json.dump(progress, f, indent=2)
+        manifest.write_json_atomic(progress_path, progress)
 
     print(f"A/B manifest: {len(jobs)} jobs via {strategy.name} ({len(done)} already done)...")
     for job in jobs:
@@ -560,16 +556,14 @@ def run_audio(args, strategy: AudioStrategy):
 
         # Save progress every 5 clips
         if generated % 5 == 0:
-            with open(progress_path, "w") as f:
-                json.dump(progress, f, indent=2)
+            manifest.write_json_atomic(progress_path, progress)
 
         if errors > 20:
             print("Too many errors, saving progress and stopping.")
             break
 
     # Final save
-    with open(progress_path, "w") as f:
-        json.dump(progress, f, indent=2)
+    manifest.write_json_atomic(progress_path, progress)
 
     print(f"\nDone. Generated {generated} audio clips, skipped {skipped}.")
     print(f"  Total: {len(progress['completed'])} completed, "
@@ -673,8 +667,7 @@ def run_speech(args, strategy: "SpeechStrategy | KokoroSpeechStrategy"):
             progress["completed"].append(i)
             completed_set.add(i)
             generated += 1
-            with open(progress_path, "w") as f:
-                json.dump(progress, f, indent=2)
+            manifest.write_json_atomic(progress_path, progress)
             continue
 
         line_strategy = strategy_for_line(i)
@@ -693,8 +686,7 @@ def run_speech(args, strategy: "SpeechStrategy | KokoroSpeechStrategy"):
             errors += 1
             progress["failed"].append(i)
 
-        with open(progress_path, "w") as f:
-            json.dump(progress, f, indent=2)
+        manifest.write_json_atomic(progress_path, progress)
 
         if errors > 20:
             print("Too many errors, saving progress and stopping.")
@@ -827,10 +819,13 @@ def main():
         if VIDEO_STRATEGIES[args.strategy].ab_manifest_only:
             sys.exit(f"{args.strategy} only runs with --ab-manifest (its inputs are per clip).")
         if args.dry_run:
-            if args.strategy != RunPodLtx25KeyframeStrategy.name:
-                sys.exit("--dry-run needs --ab-manifest, or --strategy runpod-ltx25-keyframe "
+            if args.strategy == RunPodLtx25KeyframeStrategy.name:
+                dry_run_keyframes(args)
+            elif issubclass(VIDEO_STRATEGIES[args.strategy].cls, RunPodLtx2Strategy):
+                dry_run_shot_plan(args)
+            else:
+                sys.exit("--dry-run needs --ab-manifest or an LTX strategy "
                          "(it would otherwise start a real decode).")
-            dry_run_keyframes(args)
             return
         strategy = strategies[args.strategy]()
         try:
@@ -839,6 +834,50 @@ def main():
             sys.exit(f"Error: {e}")
         if incomplete:
             sys.exit(1)  # shots remain failed/undecoded: not a finished film
+
+
+def dry_run_shot_plan(args) -> None:
+    """Build every remaining shot's prompts and ComfyUI graphs, as a real decode
+    would, and print the totals. No pod, no network, nothing written."""
+    try:
+        prompts, _ = manifest.load_shots(args.output_dir)
+    except FileNotFoundError:
+        sys.exit(f"Error: {manifest.shots_path(args.output_dir)} not found. Run encoder first.")
+    if args.start_index:
+        prompts = [p for p in prompts if p["index"] >= args.start_index]
+    if args.limit:
+        prompts = prompts[:args.limit]
+    strategy_cls = VIDEO_STRATEGIES[args.strategy].cls
+    done = set()
+    progress_path = manifest.decode_progress_path(args.output_dir, strategy_cls.name)
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            done = set(json.load(f).get("completed", []))
+    characters_data = {}
+    if os.path.exists(manifest.characters_path(args.output_dir)):
+        with open(manifest.characters_path(args.output_dir)) as f:
+            characters_data = json.load(f)
+    style = getattr(args, "style_prefix", None) or manifest.load_style_prefix(args.output_dir)
+    probe = object.__new__(strategy_cls)   # skip __init__: it creates a RunPod session
+    probe._init_character_identity(build_character_shot_map(characters_data), characters_data, style)
+    todo = [p for p in prompts if p["index"] not in done]
+    parts = frames = 0
+    for entry in todo:
+        counts = probe._target_durations(entry["duration_s"])
+        text = probe.format_prompt(entry)
+        for i, n in enumerate(counts):   # building the graph is what rejects a bad frame count
+            probe._build_workflow(probe._part_prompt(text, entry, i, len(counts)),
+                                  entry["index"] + i, length=n, start_image="chain.png" if i else None)
+        parts += len(counts)
+        frames += sum(counts)
+    print(f"Shot plan for {args.output_dir} via {strategy_cls.name} (dry run):")
+    print(f"  {len(prompts)} shots in scope, {len(prompts) - len(todo)} already done, "
+          f"{len(todo)} to generate as {parts} clips ({frames / probe.FPS / 60:.1f} min of video).")
+    print(f"  Style prefix: {style or '(none)'}; characters: "
+          f"{len(characters_data.get('characters', [])) or 'none (no identity blocks)'}")
+    if todo:
+        print(f"  First prompt (shot {todo[0]['index']}): {probe.format_prompt(todo[0])[:400]}")
+    print("Dry run OK. No network call was made and nothing was written.")
 
 
 def dry_run_keyframes(args) -> None:

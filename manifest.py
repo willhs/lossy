@@ -29,6 +29,20 @@ import subprocess
 PROMPTS_FORMAT_VERSION = "v2"
 
 
+def write_json_atomic(path: str, payload) -> None:
+    """Write JSON so a kill mid-write leaves the old file or the new one, never half.
+
+    Progress files are rewritten every few shots for days. capped_run stops a
+    run with SIGTERM, then SIGKILL after a grace; a signal landing inside a
+    plain ``json.dump`` left a truncated file that every resume then failed to
+    parse, so the run could not restart without a human (research 0030).
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, path)
+
+
 # ---------------------------------------------------------------------------
 # Top-level file paths
 # ---------------------------------------------------------------------------
@@ -226,13 +240,7 @@ def existing_clip_parts(clips_dir_path: str, shot_idx: int,
 # once.
 
 
-def load_shots(output_dir: str) -> tuple[list[dict], list[dict]]:
-    """Read shots.json (v2) and return ``(shots, dialog)``.
-
-    Raises ``FileNotFoundError`` if the file is missing, ``ValueError`` if
-    it is not in v2 format. v1 flat-list shots are no longer supported on
-    the decode side — re-run ``encode stage2`` to regenerate.
-    """
+def _read_v2(output_dir: str) -> dict:
     path = shots_path(output_dir)
     with open(path) as f:
         raw = json.load(f)
@@ -243,8 +251,23 @@ def load_shots(output_dir: str) -> tuple[list[dict], list[dict]]:
             f"({{'format': 'v2', 'shots': [...], 'dialog': [...]}}). "
             f"Re-run `python encode.py stage2 {output_dir}` to regenerate."
         )
+    return raw
 
-    return raw["shots"], raw.get("dialog", [])
+
+def load_shots(output_dir: str) -> tuple[list[dict], list[dict]]:
+    """Read shots.json (v2) and return ``(shots, dialog)``, shots in index order.
+
+    Raises ``FileNotFoundError`` if the file is missing, ``ValueError`` if
+    it is not in v2 format. v1 flat-list shots are no longer supported on
+    the decode side — re-run ``encode stage2`` to regenerate.
+    """
+    raw = _read_v2(output_dir)
+    # Film order, whatever order the file is in. A resumed or retried stage 2
+    # appends late shots at the end: the Star Wars IV encode lists 97 after 401,
+    # 334 after 97 and 451 last. Every consumer walks this list in order, and
+    # the stitch's boundary-locked timeline put those shots in the wrong place
+    # in the film (research 0030).
+    return sorted(raw["shots"], key=lambda s: s["index"]), raw.get("dialog", [])
 
 
 def load_style_prefix(output_dir: str) -> str:
@@ -299,7 +322,11 @@ def encode_fingerprint(output_dir: str) -> str:
     """
     import hashlib
 
-    shots, dialog = load_shots(output_dir)
+    # File order, not load_shots' sorted order: fingerprints already stamped on
+    # progress files (Star Wars IV: 8855b97c449f) were computed over the list
+    # as stored, and must still match after load_shots started sorting.
+    raw = _read_v2(output_dir)
+    shots, dialog = raw["shots"], raw.get("dialog", [])
     h = hashlib.sha1()
     h.update(f"{len(shots)}|{len(dialog)}".encode())
     for s in shots:

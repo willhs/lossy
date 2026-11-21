@@ -2834,3 +2834,99 @@ def test_main_exit_status_follows_run_decode(monkeypatch, tmp_path, incomplete, 
         with pytest.raises(SystemExit) as e:
             decode.main()
         assert e.value.code == code
+
+
+def test_a_kill_during_a_progress_save_does_not_block_the_resume(tmp_path, monkeypatch):
+    """capped_run stops a run with SIGTERM then SIGKILL. A signal inside the
+    progress save used to leave half a JSON file, and every resume then died
+    parsing it, so a 2,070-shot run could not restart unattended (research 0030)."""
+    import decode
+    from strategies_video import GenerationStrategy
+
+    entries = [{"index": i, "duration_s": 1.0, "description": {"action": "x"}} for i in range(12)]
+    monkeypatch.setattr(decode.manifest, "load_shots", lambda _: (entries, {}))
+    monkeypatch.setattr(decode.manifest, "check_encode_fingerprint", lambda *a: True)
+
+    class Strategy(GenerationStrategy):
+        name = "mock-kill"
+
+        def generate(self, prompt, clips_dir, idx, *a, **kw):
+            return [ClipResult(path=os.path.join(clips_dir, f"x{idx}.mp4"),
+                               actual_duration_s=1.0, cost=0.0)]
+
+    real_dump = json.dump
+    saves = {"n": 0}
+
+    def dump(obj, fp, **kw):
+        if "decode_progress" in getattr(fp, "name", ""):
+            saves["n"] += 1
+            if saves["n"] == 2:   # the second save (after 10 shots) is interrupted halfway
+                fp.write(json.dumps(obj, **kw)[:40])
+                raise KeyboardInterrupt
+        return real_dump(obj, fp, **kw)
+
+    monkeypatch.setattr(json, "dump", dump)
+    args = SimpleNamespace(output_dir=str(tmp_path), start_index=0, limit=None)
+    with pytest.raises(KeyboardInterrupt):
+        decode.run_decode(args, Strategy())
+
+    path = decode.manifest.decode_progress_path(str(tmp_path), "mock-kill")
+    with open(path) as f:
+        assert json.load(f)["completed"] == [0, 1, 2, 3, 4]   # the save before the kill
+
+    assert decode.run_decode(args, Strategy()) == []           # resumes and finishes
+    with open(path) as f:
+        assert sorted(json.load(f)["completed"]) == list(range(12))
+
+
+def test_stitch_concatenates_out_of_order_shots_in_film_order(tmp_path, monkeypatch):
+    """The Star Wars IV shots.json lists 97 after 401. The stitch walked the list
+    as stored, so shot 97 played 20 minutes late and the boundary-locked timeline
+    stretched 98 over its slot and squashed the shots after it (research 0030)."""
+    import stitch
+    from manifest import save_shots
+
+    order = [0, 1, 3, 2]
+    shots = [{"index": i, "start_s": i * 2.0, "end_s": i * 2.0 + 2.0, "duration_s": 2.0,
+              "description": {}} for i in order]
+    save_shots(str(tmp_path), shots, [])
+    clips = tmp_path / "clips" / "fake"
+    clips.mkdir(parents=True)
+    for i in order:
+        (clips / f"{i:04d}.mp4").write_bytes(b"")
+
+    monkeypatch.setattr(stitch, "_retime_shot_clips", lambda paths, dur, adj: paths)
+    monkeypatch.setattr(stitch, "_probe_duration", lambda p: 2.0)
+    monkeypatch.setattr(stitch, "_run_ffmpeg", lambda *a, **kw: None)
+    monkeypatch.setattr(stitch, "_mux_audio", lambda *a, **kw: None)
+
+    stitch.stitch_clips(SimpleNamespace(output_dir=str(tmp_path), strategy="fake"))
+
+    with open(tmp_path / "concat_fake.txt") as f:
+        names = [os.path.basename(line.strip().strip("'").split("'")[-1] or line) for line in f]
+    assert [n.split(".")[0] for n in names] == ["0000", "0001", "0002", "0003"]
+
+
+def test_ltx25_dry_run_plans_every_clip_without_a_pod(tmp_path, monkeypatch, capsys):
+    """The full run's free first step: build every prompt and graph, rent nothing."""
+    import sys
+
+    import decode
+    import runpod_pod
+    from manifest import save_shots
+
+    def no_pod(*a, **kw):
+        raise AssertionError("a dry run must not create a RunPod session")
+
+    monkeypatch.setattr(runpod_pod, "RunPodSession", no_pod)
+    shots = [{"index": 0, "start_s": 0.0, "end_s": 2.0, "duration_s": 2.0,
+              "description": {"action": "A door opens."}},
+             {"index": 1, "start_s": 2.0, "end_s": 12.0, "duration_s": 10.0,
+              "description": {"action": "A long walk."}}]
+    save_shots(str(tmp_path), shots, [])
+    monkeypatch.setattr(sys, "argv", ["decode.py", str(tmp_path), "--strategy", "runpod-ltx25", "--dry-run"])
+    decode.main()
+    out = capsys.readouterr().out
+    assert "2 to generate as 4 clips" in out   # 10 s splits into three <=4.84 s parts
+    assert "Dry run OK" in out
+    assert sorted(os.listdir(tmp_path)) == ["shots.json"]

@@ -133,3 +133,43 @@ class TestEncodeFingerprint:
         shots_mtime = os.path.getmtime(manifest.shots_path(str(tmp_path)))
         prog = {"_mtime": shots_mtime - 3600}     # progress written an hour earlier
         assert manifest.check_encode_fingerprint(prog, str(tmp_path), "test") is False
+
+
+class TestShotOrder:
+    """shots.json can list shots out of film order (a retried stage 2 appends late
+    shots: Star Wars IV lists 97 after 401 and 451 last). Readers get film order;
+    fingerprints already stamped on progress files must not move (research 0030)."""
+
+    def _write(self, tmp_path, order):
+        shots = [{"index": i, "start_s": i * 2.0, "end_s": i * 2.0 + 2.0,
+                  "duration_s": 2.0, "description": {}} for i in order]
+        manifest.save_shots(str(tmp_path), shots, [])
+
+    def test_load_shots_returns_film_order(self, tmp_path):
+        self._write(tmp_path, [0, 1, 3, 4, 2, 5])
+        shots, _ = manifest.load_shots(str(tmp_path))
+        assert [s["index"] for s in shots] == [0, 1, 2, 3, 4, 5]
+
+    def test_fingerprint_of_an_out_of_order_file_keeps_its_stamped_value(self, tmp_path):
+        # 7984f2dd651a is what encode_fingerprint returned for this file before
+        # load_shots sorted; progress files carry values computed that way.
+        self._write(tmp_path, [0, 2, 1])
+        assert manifest.encode_fingerprint(str(tmp_path)) == "7984f2dd651a"
+
+
+class TestWriteJsonAtomic:
+    def test_a_kill_mid_write_leaves_the_previous_file_whole(self, tmp_path, monkeypatch):
+        path = str(tmp_path / "decode_progress_x.json")
+        manifest.write_json_atomic(path, {"completed": [1, 2]})
+
+        def dies_halfway(obj, fp, **kw):
+            fp.write(json.dumps(obj, **kw)[:5])
+            raise KeyboardInterrupt  # stands in for SIGTERM/SIGKILL mid-dump
+
+        monkeypatch.setattr(manifest.json, "dump", dies_halfway)
+        try:
+            manifest.write_json_atomic(path, {"completed": [1, 2, 3]})
+        except KeyboardInterrupt:
+            pass
+        with open(path) as f:
+            assert json.load(f) == {"completed": [1, 2]}

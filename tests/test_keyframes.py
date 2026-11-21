@@ -617,6 +617,8 @@ class TestDryRun:
 
     def test_dry_run_flag_is_refused_for_other_strategies_instead_of_spending(self, tmp_path, monkeypatch):
         _write_output_dir(tmp_path)
-        monkeypatch.setattr(sys, "argv", ["decode.py", str(tmp_path), "--strategy", "runpod-ltx25", "--dry-run"])
+        # LTX strategies have their own dry run (research 0030); a strategy with
+        # none must refuse rather than start a real decode.
+        monkeypatch.setattr(sys, "argv", ["decode.py", str(tmp_path), "--strategy", "runpod-wan", "--dry-run"])
         with pytest.raises(SystemExit, match="--dry-run needs"):
             decode.main()
