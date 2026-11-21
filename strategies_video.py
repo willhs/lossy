@@ -649,19 +649,7 @@ class RunPodWanStrategy(GenerationStrategy):
                 return []
 
             # Download FLAC via SSH binary transfer (ssh_cmd uses text=True, can't use it)
-            dl = subprocess.run(
-                [
-                    "ssh",
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "UserKnownHostsFile=/dev/null",
-                    "-o", "LogLevel=ERROR",
-                    "-p", str(self._session.ssh_port),
-                    f"root@{self._session.ssh_host}",
-                    f"cat {remote_path}",
-                ],
-                capture_output=True,
-                timeout=30,
-            )
+            dl = self._session.ssh_bytes(f"cat {remote_path}", timeout=30)
             if dl.returncode != 0 or not dl.stdout:
                 print(f"  [audio] Download failed for shot {shot_index}")
                 return []

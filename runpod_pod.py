@@ -12,6 +12,8 @@ import uuid
 from typing import NamedTuple
 
 import pod_journal
+import pod_ssh
+from pod_ssh import PodSshAuthError, SshKeyError, SshOutcome  # noqa: F401  (re-exported for callers)
 
 
 # Default GPU preferences (cheapest first, with VRAM headroom preference)
@@ -77,6 +79,13 @@ REAPER_PID_FILE = "/workspace/.lossy_reaper.pid"
 # -- each stalled the run until a human reissued the command.
 POD_SETUP_ATTEMPTS = 4
 POD_SETUP_BACKOFF_S = 30
+# A pod reports its ports before sshd accepts connections. Probe until it does:
+# refused/timed-out is "not up yet" (wait, bounded), but sshd answering with
+# "Permission denied" is the server rejecting our key -- retrying the same key
+# cannot fix that, so it is confirmed once and then fatal.
+SSH_READY_ATTEMPTS = 15
+SSH_PROBE_TIMEOUT_S = 30
+SSH_AUTH_REJECTIONS_FATAL = 2
 # After /interrupt, how many 2 s polls of /queue before declaring the pod wedged.
 CANCEL_CONFIRM_POLLS = 5
 # A terminate call that errors is retried: it is the only thing standing between
@@ -254,6 +263,7 @@ class RunPodSession:
         self.base_url: str | None = None
         self.ssh_host: str | None = None
         self.ssh_port: int | None = None
+        self._ssh_identity: pod_ssh.SshIdentity | None = None
         self.gpu_hourly_rate: float = self.gpu_types[0][1]
         self.pod_start_time: float | None = None
         self._clean_exit = False
@@ -662,6 +672,10 @@ class RunPodSession:
             print("Error: RUNPOD_API_KEY not set in .env or environment.")
             sys.exit(1)
 
+        # A pod we cannot ssh into is worthless and still bills: prove the key
+        # works for both halves (registered with RunPod, offered by ssh) first.
+        ssh_identity = self.ssh_identity
+
         # Even a failed request may have created a server-side pod whose id
         # never reached us. Register before the request so exit sweeps by name.
         self._register_cleanup()
@@ -706,14 +720,6 @@ class RunPodSession:
             print(f"  Trying {label}...")
             try:
                 self._create_attempted = True
-                ssh_pubkey = ""
-                pubkey_path = os.path.expanduser("~/.ssh/id_ed25519.pub")
-                if not os.path.exists(pubkey_path):
-                    pubkey_path = os.path.expanduser("~/.ssh/id_rsa.pub")
-                if os.path.exists(pubkey_path):
-                    with open(pubkey_path) as f:
-                        ssh_pubkey = f.read().strip()
-
                 pod = runpod.create_pod(
                     name=self.pod_name,
                     image_name=DOCKER_IMAGE,
@@ -724,7 +730,7 @@ class RunPodSession:
                     ports=f"{COMFYUI_PORT}/http,22/tcp",
                     support_public_ip=True,
                     start_ssh=True,
-                    env={"PUBLIC_KEY": ssh_pubkey} if ssh_pubkey else None,
+                    env={"PUBLIC_KEY": ssh_identity.public_key},
                 )
                 gpu_rate = rate_for(cloud_type, gpu_type, rate, pod)
                 print(f"  Got {label} @ ${gpu_rate}/hr")
@@ -791,6 +797,7 @@ class RunPodSession:
                 self.ssh_host = port_info["ip"]
                 self.ssh_port = port_info["publicPort"]
                 break
+        self.wait_for_ssh()
 
     def reconnect(self) -> bool:
         """Reconnect to an existing pod via state file. Returns True if successful."""
@@ -854,13 +861,14 @@ class RunPodSession:
             try:
                 setup_fn()
                 return
+            except PodSshAuthError:
+                # Definite: the next pod is given the same key and refuses it
+                # the same way. Release this one, then fail instead of renting more.
+                self._drop_failed_pod()
+                raise
             except PodSetupError as e:
                 last = e
-                self.terminate()  # no-op if the raising site already did
-                self.pod_id = None
-                self.base_url = None
-                self.ssh_host = None
-                self.remove_state()
+                self._drop_failed_pod()
                 if attempt < attempts:
                     wait = POD_SETUP_BACKOFF_S * attempt
                     print(f"  Pod setup failed ({e}). "
@@ -869,6 +877,13 @@ class RunPodSession:
                     time.sleep(wait)
         print(f"Error: pod setup failed {attempts} times; giving up.")
         raise last if last else PodSetupError("pod setup failed")
+
+    def _drop_failed_pod(self) -> None:
+        self.terminate()  # no-op if the raising site already did
+        self.pod_id = None
+        self.base_url = None
+        self.ssh_host = None
+        self.remove_state()
 
     def arm_self_destruct(self, minutes: int) -> bool:
         """Schedule the pod to terminate itself after `minutes`. Returns success.
@@ -1154,13 +1169,64 @@ class RunPodSession:
 
     # -- SSH helpers --
 
+    @property
+    def ssh_identity(self) -> pod_ssh.SshIdentity:
+        """The one key used to register with RunPod and to ssh in. Resolved
+        (and verified) on first use; raises SshKeyError if it is unusable."""
+        if self._ssh_identity is None:
+            self._ssh_identity = pod_ssh.resolve_ssh_identity()
+            print(f"  Pod ssh key: {self._ssh_identity.private_path} "
+                  f"({self._ssh_identity.fingerprint})")
+        return self._ssh_identity
+
     def _ssh_opts(self) -> list[str]:
-        """Common SSH options for all remote commands."""
-        return [
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-        ]
+        """Common SSH options for all remote commands: offer our key only."""
+        return pod_ssh.ssh_options(self.ssh_identity)
+
+    def wait_for_ssh(self) -> None:
+        """Block until the pod's sshd accepts our key.
+
+        Not-ready (refused, timed out, dropped) backs off and retries up to
+        SSH_READY_ATTEMPTS, then raises PodSetupError (a fresh pod may be
+        healthy). A server that answers "Permission denied" rejected our key:
+        confirmed once, then PodSshAuthError, which with_setup_retry does not
+        retry. Either way the pod is terminated first.
+        """
+        if not self.ssh_host:
+            return
+        identity = self.ssh_identity
+        rejections = 0
+        detail = ""
+        for attempt in range(1, SSH_READY_ATTEMPTS + 1):
+            try:
+                r = self.ssh_cmd("true", timeout=SSH_PROBE_TIMEOUT_S)
+                outcome = pod_ssh.classify_ssh_failure(r.returncode, r.stderr)
+                err_lines = (r.stderr or "").strip().splitlines()
+                detail = err_lines[-1] if err_lines else ""
+            except subprocess.TimeoutExpired:
+                outcome, detail = SshOutcome.NOT_READY, "timed out"
+            if outcome is SshOutcome.OK:
+                print(f"  SSH ready (offered {identity.fingerprint}, attempt {attempt}).")
+                return
+            if outcome is SshOutcome.AUTH_REJECTED:
+                rejections += 1
+                if rejections >= SSH_AUTH_REJECTIONS_FATAL:
+                    self.terminate()
+                    raise PodSshAuthError(
+                        f"pod {self.pod_id} rejected ssh key {identity.private_path} "
+                        f"({identity.fingerprint}): {detail}. Not retrying: another pod would "
+                        f"get the same key. Check the key RunPod was given (PUBLIC_KEY) and "
+                        f"{pod_ssh.KEY_ENV}.")
+            else:
+                rejections = 0
+            if attempt < SSH_READY_ATTEMPTS:
+                wait = min(5 * attempt, 20)
+                print(f"  SSH not ready ({detail or outcome.value}); retrying in {wait}s "
+                      f"[{attempt}/{SSH_READY_ATTEMPTS}]")
+                time.sleep(wait)
+        self.terminate()
+        raise PodSetupError(f"sshd on pod did not accept connections after {SSH_READY_ATTEMPTS} "
+                            f"attempts ({detail or 'no answer'})")
 
     def ssh_cmd(self, cmd: str, timeout: int = 60, input: str | None = None) -> subprocess.CompletedProcess:
         """Run a command on the pod via SSH. `input` goes to the command's stdin
@@ -1172,6 +1238,15 @@ class RunPodSession:
             text=True,
             timeout=timeout,
             input=input,
+        )
+
+    def ssh_bytes(self, cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
+        """Like ssh_cmd but stdout is raw bytes (binary file transfer)."""
+        return subprocess.run(
+            ["ssh", *self._ssh_opts(),
+             "-p", str(self.ssh_port), f"root@{self.ssh_host}", cmd],
+            capture_output=True,
+            timeout=timeout,
         )
 
     def ssh_bg(self, cmd: str):
