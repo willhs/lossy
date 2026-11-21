@@ -40,8 +40,10 @@ given, and many come from fal.ai pages or resellers, so recheck before spending.
   motion fell 0.19, inside the rule's 0.3, and photoreal held at 100%. Total spend was ≤$1.04.
   Adopt K for SW4 via a follow-up strategy flag with two fixes: sheet wardrobe leak and
   look-alike sheets. See "Trial results".
-- **Arm I (Ingredients) is wired and dry-run checked, not run.** One command once Will accepts
-  the HF gate and sets `HF_TOKEN`: see "Arm I is wired; what Will must do to run it".
+- **Arm I (Ingredients) is wired and dry-run checked, not run.** The gate and token are done.
+  Two jobs tried (21 Nov): the first lost its pods to ssh, the second priced T + I at about
+  $0.85-1.20 against a $0.85 cap and skipped. It needs about $1.3 and a watched first boot: see
+  "Arm I rerun".
 - **Most of the drift is not solvable by text.** Today a shot's first frame comes from text
   alone. The identity block is byte-identical across shots (0020), but the same 260 characters
   of description can be drawn as many different faces. [Direct: `strategies_video.py`
@@ -1046,6 +1048,53 @@ Will's follow-up gave arm I the bake-off's last ~$1.3 (hard cap $1.30, all provi
   (see "Arm I: what Will must do"). Budget about $1.2-1.5 for T and I together; the $1.30 is not
   enough margin after this attempt's loss, so it needs a fresh approval.
 
+### Arm I rerun (21 Nov, job `7acf878b`): priced, does not fit the $0.85 cap, not run
+
+Will approved a rerun after the pod ssh fix with a hard cap of $0.85 new spend, all providers, and
+"price first; skip and say so if it won't fit". **It does not fit, so nothing was spent and there is
+no verdict. K stays the recommendation.** [Direct for the checks and the balance; the price is Inferred
+from measured per-clip times plus one Speculative number]
+
+**Premise check**
+
+- The ssh fix is on main (`13cbaf1`: one explicit key, `IdentitiesOnly`, sshd probe with backoff,
+  fail fast on a rejected key) but is **mock-tested only**. No pod has been booted with it. The
+  earlier SW4 check lost about 50 of 55 pods to ssh before the fix (`ec8e131`), so a live boot is
+  still the unproven step. [Direct: `git log`, commit messages]
+- Access is fine: `op read` resolves `HF_TOKEN` in the job, `pod_ssh.resolve_ssh_identity()` finds
+  `~/.ssh/id_ed25519`, and RunPod shows balance $1.685 with no pods running. [Direct]
+- T's clips and the four sheets from the earlier jobs are not reachable (other jobs' workspaces), so
+  the `--arms T,I` pair needs T rendered again, as in the last two attempts.
+
+**Price against the $0.85 cap**
+
+| Line | USD | Basis |
+|---|---|---|
+| Four klein sheets (fal) | 0.02 | logged, 21 Nov |
+| T, 16 clips, one boot | about 0.30 | 93 s per clip measured (about 25 min), plus boot and downloads; the KQ session cost 0.20 for 7 clips |
+| I, 16 clips, one boot | about 0.45-0.80 | one boot plus the 1.3 GB adapter, then 16 clips at 1.5-3x a T clip [Speculative: never timed] |
+| Judge, `score.py --arms T,I` | 0.06 | logged, same as the two earlier scoring runs |
+| **Total** | **about 0.85-1.20** | |
+
+- The low end only just equals the cap with no margin, and the high end is about 40% over it. The
+  last attempt lost $0.43 to boots alone, and `capped_run` stops a run at its cap, so a failed boot
+  or a slow I clip leaves a half-rendered arm that cannot be scored.
+- **Cheaper variants I rejected.** Running I alone and comparing it with the quoted T numbers (cosine
+  0.234/0.266, "same person" 3.50/3.75) is unpaired, and the decision rule needs the paired score;
+  the last job refused this for the same reason. Rendering fewer than the 16 shots changes the
+  protocol the task says to keep, and at n = 8 a 0.3 gap on the judge is inside the noise.
+- **A live ssh probe alone** (one pod boot, about $0.05-0.10) would prove the fix, but it would take
+  from a budget that is already short, and it answers the ssh question, not the Ingredients one.
+
+**What it would take.** About $1.3 for T and I together (this note's high end plus margin),
+rendered in a terminal where the first boot can be watched. Run `run_arm_i.sh RUN_DIR 0.8` after
+the T render, then `score.py RUN_DIR MODELS_DIR --arms T,I`. A cheaper way to buy the pair is to keep
+the T clips: this job's cost came mostly from re-rendering T three times because no run directory
+survived. Whoever runs it should keep `RUN_DIR` outside a job workspace. That needs a fresh approval
+at about $1.3, or a decision that the K recommendation is good enough and arm I is dropped.
+
+**Spend this job: $0.** No pod, fal, or Gemini call. The cap was not touched.
+
 ### Can klein and Qwen run on the LTX RunPod pod?
 
 **Yes in principle, probably with no custom nodes. Nobody has run either on the pod, so it is not
@@ -1105,7 +1154,7 @@ proven.** [Direct from sources; Inferred where marked]
   adherence and motion in this sample, and costs 4-9 times more per frame on fal.
 - **Wan VACE-14B reference-to-video: no.** No identity gain over text, about 20 times the cost, and
   it leaves LTX-2.5.
-- **Open:** Ingredients (I) has still never run (a 21 Nov attempt failed at pod ssh setup, see "Arm I attempt"), and Kling (R) is unmeasured.
+- **Open:** Ingredients (I) has still never run (a 21 Nov attempt failed at pod ssh setup, see "Arm I attempt"; a second job skipped it on price, see "Arm I rerun"), and Kling (R) is unmeasured.
 
 ### Bake-off files
 
