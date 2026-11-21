@@ -882,6 +882,71 @@ a new approval. The K run resumes from the 12 clips on disk and fal is already p
 `score.py`. The K arm will be judged on at most 13 keyframe shots; if that is too thin, redraw Han with
 a more distinct description first.
 
+### SW4 paid check, finish (21 Nov 2026): K vs T scored on 10 shots, face rule passes, judge lines not run
+
+Steady task `236284e2`, job `2ed396f1`. Will approved a total cap of $4.20 (this job < $1.50 new).
+**Verdict: provisional GO. Use keyframe-first (K) for the keyframe-eligible shots of the 30 Nov SW4 run,
+with text as the fallback it already has.** Provisional because the blind judge could not run (below), so
+two of the three decision-rule lines are unmeasured. The 30 Nov schedule is not changed by this note.
+
+**What was run.** Window 684-710 (the earlier job's 12 K clips sit in another job's workspace, which this job
+may not read, so K was re-rendered). K: `runpod-ltx25-keyframe`, 27 clips, sheets and 13 keyframes redrawn on
+fal. T: `runpod-ltx25`, 25 clips (684-708; the $0.45 cap stopped it). No style prefix on either arm (same for both).
+Both under `capped_run`. Pod SSH worked first time on every pod: 0 refusals in 2 pods, against ~50 of 55 before the
+fix (`13cbaf1`). That run was not the fix alone, though: this job's HOME had no ssh key, so the first start died
+at once with `SshKeyError` (spend $0, the fail-fast works), and I pointed `LOSSY_RUNPOD_SSH_KEY` at a throwaway
+passphrase-less key made for the job.
+
+**Scored shots: 10** (those where K started from a drawn keyframe and both arms have a clip, characters Luke,
+Obi-Wan, Uncle Owen; shots 684, 686, 687, 688, 689, 692, 694, 696, 703, 707). 703 and 707 are new against the
+earlier job's list because the redraw differed. Han's sheet was dropped by the look-alike gate again (cosine to
+Luke 0.5+), so every Han shot was text in both arms and is not scored. Keyframe shots 708 (T clip missing), 710 and 711 were
+not scored.
+
+| Measure | T (text) | K (keyframe) | Rule | |
+|---|---|---|---|---|
+| Face cosine, mean pairwise across a character's shots | 0.329 | **0.482** | K >= T + 0.10 | pass (+0.15) |
+| ...Luke / Obi-Wan | 0.364 / 0.293 | 0.404 / 0.560 | | |
+| ...single-character shots only | 0.345 | 0.546 | | |
+| Blind grid "same person" (Gemini) | not run | not run | K >= T + 1.0 | **unmeasured** |
+| Adherence (Gemini clip judge) | not run | not run | >= T - 0.3 | **unmeasured** |
+| Motion, mean abs frame diff / frozen-step share | 1.55 / 14.7% | 1.88 / 3.8% | no freezing | pass (proxy only) |
+| Photoreal rate | not run | not run | K >= T | unmeasured (all frames look photoreal) |
+
+[Direct: `trial/results_sw4.json`, `score.py --no-judge`. 10 shots and 2 characters with a score: thin.]
+
+**The judge did not run.** The Gemini key was rate-limited for every model I tried (429 on `gemini-2.5-flash`, `-flash-lite`,
+`3.1-flash-lite-preview`, `2.5-pro`, minutes apart, no run of mine left running), and the Vertex route has no
+credentials in a job. $0 spent on Gemini. To close the gap: rerun
+`score.py SCORE_DIR models/face` (without `--no-judge`) on the same inputs when the key is free; it is cents.
+
+**By eye** (face grids, not blind: I knew the arm key; `evidence/grids/` in the job workspace).
+K's Luke is one recognisable young man with short fair hair in all 7 tiles, bar one wrong
+face crop (a blurred crowd face, tile 4). T's Luke changes hair colour, jaw and age from shot to shot.
+Obi-Wan: K is consistent (white beard, same robe); T is roughly the same type but the faces differ. The 13 keyframes
+look like one Luke and one Obi-Wan, each in the scene's own wardrobe, no droids.
+
+**Caveats the number hides.**
+- K's cross-character cosine is high (0.424 against T's 0.243), and K's Luke (0.404) is barely above it. Luke and
+  Obi-Wan share the same sheet model and look, so K makes different people a little more alike to the embedder. The
+  Han gate drop is the same effect seen from the other side. The gate is working; it just costs coverage.
+- Luke decays within a shot: face cosine to the sheet 0.67 at the keyframe, 0.65 first frame, 0.54 middle, 0.53 last.
+  Within-shot first-vs-last cosine is lower for K (0.71) than T (0.77), the keyframe-then-drift pattern.
+- Coverage is the 38% of the film with a keyframe route (795 of 2070 shot entries), and of those the look-alike
+  gate will drop some pairs. Design-character shots stay text.
+- Cost on fal: this check drew 4 sheets and 13 keyframes for $0.31 (about $0.024 a keyframe with sheets), so
+  795 shots come to roughly **$15-19** on fal. That is a budget call for Will against the $50-60 ceiling.
+
+**Recommendation for 30 Nov.** Use keyframe-first for the eligible shots: the one line that could be measured clears
+its threshold with margin, the fallback is the text path that already runs, and nothing regressed on the
+motion proxy. Before the full run, or in parallel, (1) rerun the judge on these inputs to confirm adherence did
+not fall by more than 0.3, and (2) decide the ~$15-19 fal spend. If the judge shows adherence down more than 0.3,
+fall back to text as scheduled. Not tested: shots over ~3 s, split shots, wide shots with small faces.
+
+**Spend this job**: fal $0.31, RunPod about $0.86 by balance (1.685 to 0.829; K $0.455, T $0.40, both under `capped_run`),
+Gemini $0, so about **$1.17 new**; with the earlier ~$2.7 the check totals about **$3.9 of the $4.20 cap**. No pods left
+running (both exit sweeps confirmed clean). Logs: `evidence/capped_run_K.log`, `capped_run_T.log`, `score*.log`.
+
 ### Trial files
 
 - `trial/make_trial_manifest.py`, `trial/make_refs.py`, `trial/score.py`: the builder, the

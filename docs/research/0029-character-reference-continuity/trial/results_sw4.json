@@ -1,0 +1,229 @@
+{
+ "shots": [
+  684,
+  686,
+  687,
+  688,
+  689,
+  692,
+  694,
+  696,
+  703,
+  707
+ ],
+ "metrics": {
+  "identity_cosine": {
+   "T": {
+    "luke_skywalker": 0.3639,
+    "obi_wan_ben_kenobi": 0.2932,
+    "uncle_owen": null,
+    "mean": 0.3286
+   },
+   "K": {
+    "luke_skywalker": 0.4036,
+    "obi_wan_ben_kenobi": 0.56,
+    "uncle_owen": null,
+    "mean": 0.4818
+   }
+  },
+  "identity_cosine_singles": {
+   "T": {
+    "luke_skywalker": 0.3314,
+    "obi_wan_ben_kenobi": 0.3595,
+    "uncle_owen": null,
+    "mean": 0.3454
+   },
+   "K": {
+    "luke_skywalker": 0.4014,
+    "obi_wan_ben_kenobi": 0.6904,
+    "uncle_owen": null,
+    "mean": 0.5459
+   }
+  },
+  "within_shot_first_last": {
+   "T": {
+    "luke_skywalker": 0.746,
+    "obi_wan_ben_kenobi": 0.7983,
+    "uncle_owen": null,
+    "mean": 0.7722
+   },
+   "K": {
+    "luke_skywalker": 0.6564,
+    "obi_wan_ben_kenobi": 0.7668,
+    "uncle_owen": null,
+    "mean": 0.7116
+   }
+  },
+  "cross_character": {
+   "T": 0.2429,
+   "K": 0.424
+  },
+  "k_decay_vs_sheet": {
+   "luke_skywalker": {
+    "keyframe": 0.6742,
+    "first": 0.6484,
+    "mid": 0.5404,
+    "last": 0.5329
+   },
+   "obi_wan_ben_kenobi": {
+    "keyframe": 0.6433,
+    "first": 0.6152,
+    "mid": 0.6461,
+    "last": 0.6007
+   },
+   "uncle_owen": {
+    "keyframe": 0.7679,
+    "first": null,
+    "mid": null,
+    "last": null
+   }
+  },
+  "t_vs_sheet": {
+   "luke_skywalker": {
+    "first": 0.3874,
+    "mid": 0.3842,
+    "last": 0.366
+   },
+   "obi_wan_ben_kenobi": {
+    "first": 0.4163,
+    "mid": 0.3779,
+    "last": 0.3516
+   },
+   "uncle_owen": {
+    "first": null,
+    "mid": null,
+    "last": null
+   }
+  },
+  "face_found": {
+   "T": {
+    "luke_skywalker": "5/7",
+    "obi_wan_ben_kenobi": "4/4",
+    "uncle_owen": "0/1"
+   },
+   "K": {
+    "luke_skywalker": "6/7",
+    "obi_wan_ben_kenobi": "4/4",
+    "uncle_owen": "0/1"
+   }
+  },
+  "source_identity_cosine_singles": {
+   "luke_skywalker": 0.3106,
+   "obi_wan_ben_kenobi": null,
+   "uncle_owen": null,
+   "mean": 0.3106
+  },
+  "motion": {
+   "T": {
+    "mean_abs_diff": 1.554,
+    "frozen_share": 0.147
+   },
+   "K": {
+    "mean_abs_diff": 1.883,
+    "frozen_share": 0.038
+   }
+  },
+  "motion_per_clip": {
+   "T/684": {
+    "mean_abs_diff": 1.081,
+    "frozen_share": 0.0,
+    "n_frames": 33
+   },
+   "K/684": {
+    "mean_abs_diff": 1.123,
+    "frozen_share": 0.031,
+    "n_frames": 33
+   },
+   "T/686": {
+    "mean_abs_diff": 2.094,
+    "frozen_share": 0.0,
+    "n_frames": 25
+   },
+   "K/686": {
+    "mean_abs_diff": 1.305,
+    "frozen_share": 0.0,
+    "n_frames": 25
+   },
+   "T/687": {
+    "mean_abs_diff": 0.645,
+    "frozen_share": 0.483,
+    "n_frames": 146
+   },
+   "K/687": {
+    "mean_abs_diff": 0.855,
+    "frozen_share": 0.221,
+    "n_frames": 146
+   },
+   "T/688": {
+    "mean_abs_diff": 0.489,
+    "frozen_share": 0.6,
+    "n_frames": 41
+   },
+   "K/688": {
+    "mean_abs_diff": 0.696,
+    "frozen_share": 0.05,
+    "n_frames": 41
+   },
+   "T/689": {
+    "mean_abs_diff": 0.863,
+    "frozen_share": 0.045,
+    "n_frames": 89
+   },
+   "K/689": {
+    "mean_abs_diff": 2.765,
+    "frozen_share": 0.034,
+    "n_frames": 89
+   },
+   "T/692": {
+    "mean_abs_diff": 2.714,
+    "frozen_share": 0.159,
+    "n_frames": 89
+   },
+   "K/692": {
+    "mean_abs_diff": 5.672,
+    "frozen_share": 0.023,
+    "n_frames": 89
+   },
+   "T/694": {
+    "mean_abs_diff": 1.478,
+    "frozen_share": 0.083,
+    "n_frames": 49
+   },
+   "K/694": {
+    "mean_abs_diff": 1.982,
+    "frozen_share": 0.0,
+    "n_frames": 49
+   },
+   "T/696": {
+    "mean_abs_diff": 1.358,
+    "frozen_share": 0.042,
+    "n_frames": 49
+   },
+   "K/696": {
+    "mean_abs_diff": 0.783,
+    "frozen_share": 0.021,
+    "n_frames": 49
+   },
+   "T/703": {
+    "mean_abs_diff": 2.025,
+    "frozen_share": 0.0,
+    "n_frames": 33
+   },
+   "K/703": {
+    "mean_abs_diff": 2.031,
+    "frozen_share": 0.0,
+    "n_frames": 33
+   },
+   "T/707": {
+    "mean_abs_diff": 2.788,
+    "frozen_share": 0.062,
+    "n_frames": 65
+   },
+   "K/707": {
+    "mean_abs_diff": 1.617,
+    "frozen_share": 0.0,
+    "n_frames": 65
+   }
+  }
+ }
+}
