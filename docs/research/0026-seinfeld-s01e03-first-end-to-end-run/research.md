@@ -308,3 +308,67 @@ Dispatcher: file under goal `b33ea4e0`; do not dispatch automatically.
   paid-run authorization and credentials in a separate job. Estimate **$0.50-$1.25**
   including boot/deadline time; use the planned **$1.25** keyframe cap. Do not
   infer these guarantees from mocks or proceed directly to the full film.
+
+## Review, 21 Nov 2026: the pod journal, exit sweep and ssh changes before the 30 Nov run
+
+**Scope.** `b7f7977` (ownership journal, ADR 0010), `d61666c` (refuse to rent, confirmed
+retrying exit sweep, state-write tolerance) and `13cbaf1` (one verified ssh key,
+sshd probing). The Star Wars IV run (job 08db840b, 2,069 shots, $27 cap) is on 30 Nov.
+Mocks and reading only: no keys, pods or spend. Premise check: all three commits are on
+main as the task says; the task's "pod SSH reliability lands just before this" is `13cbaf1`,
+and it is **mock-tested only** (its commit says so).
+
+**Verdict: GO for the journal and exit sweep as designed, with two items that must land
+first (F5, F6).** No scenario produced a pod that two runs would leave billing *when the
+RunPod API behaves as the fake account does*. The defects are at the edges where the
+real API may not (F2), around the supervisor (F1, fixed), and in operability (F5, F6).
+
+Confidence labels: **observed/mock** = run against `_FleetRunpod`; **source** = read in code;
+**unproved/live** = needs a real account. All runs are in `tests/test_pod_review_scenarios.py`.
+
+### What was sound (observed/mock)
+
+| Scenario asked about | Result | Evidence |
+|---|---|---|
+| Hundreds of replacements, journal growing | 300 `forget_pod` + `create_pod` cycles: exactly one pod live at every step, journal constant at 224 bytes (one claim, no windows), 300 terminate calls; `_owned_pod_ids` grows to 301 ints in memory (harmless). Claims are dropped on confirmed terminate, so the file only grows while terminates fail, and then create refuses. | `test_300_replacements_keep_the_journal_constant_and_one_pod_live` |
+| Crash mid-replacement | Process killed at each of the first 12 journal writes / API calls of `forget_pod` + `create_pod` (the sequence has 9; later points are the finished case): the next run rents exactly one pod and ends with none, every time. | `test_a_crash_at_any_point_of_a_replacement_is_settled_by_the_next_run[1-12]` |
+| RunPod terminate outage, "can refuse-to-rent stall the run" | Never rents across 7 restarted processes (capped_run `--retries 6`), carries one journal (not one per process), recovers on the first process after the outage. The stall is real, see F5. | `test_a_terminate_outage_never_rents_across_a_restart_storm_and_recovers` |
+| Journal on a full disk | Terminate still happens, nothing stays live; `create_pod` refuses (fail closed) until space returns, then rents. | `test_a_full_disk_never_stops_a_terminate_and_only_blocks_renting` |
+| `get_pod` raising "not found" for a gone pod (instead of returning None) | A terminate that landed but timed out does not block the replacement and the exit confirms. | `test_get_pod_raising_for_a_gone_pod_does_not_block_or_unconfirm` |
+| Two runs at once, different output dirs | Journals are per dir and sweeps match by name or id: neither touches the other (existing `test_journals_of_a_different_output_dir_are_not_this_runs_business`). Different dirs are still unsafe under `capped_run`, see F7. | existing tests, source |
+| Concurrent audio | Not a second session: audio runs over ssh on the video pod from a thread (`strategies_video.py` `_generate_audio_ssh`), so there is one journal and no signal-handler-in-thread problem. | source |
+
+### Findings
+
+Severity: **High** can lose money unattended; **Medium** breaks the run or a stated guarantee;
+**Low** edge or cosmetic. "Before 30 Nov" = must land (or be worked around) before the paid run.
+
+| # | Finding | Sev. | Confidence | Before 30 Nov | Status |
+|---|---|---|---|---|---|
+| F1 | **Exit cleanup outlasts the supervisor's grace.** `terminate` (3 attempts + 9 s backoff) runs before the exit sweep, and `CLEANUP_BUDGET_S` (90 s) is only checked between sweep passes. With every request costing the SDK's 30 s timeout, a total outage measured **199 s** of cleanup against `CHILD_GRACE_S = 120`, so `capped_run` SIGKILLed the child mid-cleanup. The existing test only compared two constants. The claim stays journaled, so nothing leaks, but the "confirmed exit" never completes. | Medium | observed/mock | yes | **Fixed:** `CHILD_GRACE_S = 240`; the new test measures cleanup time against the grace. Slow-connect hosts can still exceed any grace (requests may take 60 s per call), so the journal remains the real guarantee. |
+| F2 | **"Not found" on a pod we just created is taken as proof it is gone.** If the API cannot see a new pod for longer than `POD_READY_TIMEOUT` (600 s), `terminate()` gets "not found", `_release` drops the claim, and the exit sweep reports "confirmed" while the pod appears later and bills with no claim and no window (the window was closed once the id was journaled). | Medium-low | observed/mock; how often RunPod does this is unproved/live | no | Task `c34bad53`; strict xfail test. |
+| F3 | **Reconcile runs once per session.** A same-dir peer that dies after we reconciled is not reaped while we run, and our exit only prints "not this session's". Needs two decode processes in one output dir (operator error; the code does not forbid it). | Low | observed/mock | no (rule: one decode process per output dir) | Task `c34bad53`; strict xfail test. |
+| F4 | **Ambiguity is sticky.** One timed-out create keeps the late-create window open after a later success, so a confirmed-clean run leaves a journal for up to 1 h; the next process then needs a pod listing, and a listing outage at that moment makes it refuse to rent although nothing is owed. | Low | observed/mock | no | Task `c34bad53`; strict xfail test. |
+| F5 | **"Refuse to rent" stalls an unattended run with no escape hatch.** Each process refuses after ~290 s (4 setup attempts, 30+60+90 s backoff); 7 processes ~37 min, then `capped_run` exits 4. If a pod's terminate fails for a reason the code does not recognise (error text without "not found" while `get_pod` also errors), the stall is permanent, and the only cure is deleting `<output>/runpod_journal/` by hand, which nothing tells you. `generate()` calls `_ensure_pod()` unguarded, so the refusal ends `run_decode` with a traceback (progress is saved only every 5 clips; clips on disk are re-adopted, so no re-spend). Never double-rents, which is the design trade. | Medium | observed/mock + source; permanence unproved/live | **yes** | Runbook added to ADR 0010 now; CLI task `4189b5dc`. |
+| F6 | **`13cbaf1` is unproved on a real pod, and a rejected key is fatal after 2 probes.** Research 0029 saw ~50 of 55 pods refuse ssh. RunPod writes `PUBLIC_KEY` into `authorized_keys` at boot, so sshd can plausibly answer "Permission denied (publickey)" briefly on a good pod; two rejections 5-10 s apart raise `PodSshAuthError`, which `with_setup_retry` does not retry, so one unlucky replacement pod kills the process (`capped_run` restarts it, up to 6 times). Worst-case a refused pod is probed ~4 min (15 probes) before `PodSetupError`. | Medium | source; boot race unproved/live | **yes** | Task `fa27c947`. The live proof of the key fix is task `236284e2`. |
+| F7 | **`capped_run` sweeps every pod not present at its start**, including another run's. Running a second paid job on the account during the 30 Nov run (e.g. the Better Call Saul control, any research 0029 arm) can have its pod killed by the first run's sweep. Pre-existing; follow-up 3. | Medium | source (`tools/capped_run.py` `sweep`) | **yes, as a rule** | Existing task `29a4bc50`. Until then: nothing else touches the RunPod account while the run is live. |
+| F8 | **Durability on power loss is best effort.** `_write_atomic` uses `os.fsync`, which on macOS does not flush the drive cache (`F_FULLFSYNC`), and does not fsync the directory. SIGKILL and crashes are unaffected (the kernel keeps the page cache); a power cut may lose the last claim. | Low | source | no | Task `c34bad53`. |
+| F9 | **Edges:** an unreadable journal does not block renting (inconsistent with fail-closed on a listing failure); an `OSError` from `scan_peers` escapes `create_pod` as a non-`PodSetupError`; `scan_peers` can leave an empty `.lock` file when it races a closing peer; `_pod_status` treats only `EXITED` as gone, so a `TERMINATED` status (if RunPod reports one) reads as running and the exit stays unconfirmed until the listing drops it. | Low | source | no | Task `c34bad53`. |
+
+Looked for and not found: a path where `create_pod` renders a second pod while a claim is
+unconfirmed; journal growth with replacement count; a crash point in the replacement
+sequence that leaves an unjournaled pod; a fatal `get_pod` error shape (`get_pod` returning
+None and raising "not found" both converge).
+
+**Not proved live (carry into task `d69e5f75`, follow-up 7):** what `get_pod` and
+`podTerminate` return for a pod that was terminated minutes ago; whether a new pod is ever
+invisible to the API; how long the listing lags; how fast sshd accepts the registered key
+after boot (count rejected probes in the first real pod's log).
+
+### Operator runbook if the run stalls on "not renting a replacement"
+
+1. Open https://www.runpod.io/console/pods and terminate any `lossy-comfyui-*` pod that is
+   not part of a run you know is live.
+2. Confirm the console is empty of them. Then delete `<output_dir>/runpod_journal/`
+   (both `.json` and `.lock` files) and resume the run command. Skipping step 2 makes the
+   next run adopt nothing and can leave a billing pod with no record.

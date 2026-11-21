@@ -66,11 +66,14 @@ def terminate(pod_ids: list[str]) -> None:
 
 SWEEP_ATTEMPTS = 5
 SWEEP_DELAY_S = 5
-# After SIGTERM the child's handler terminates its pod and runs a confirmed exit
-# sweep (runpod_pod.CLEANUP_BUDGET_S = 90 s between passes, plus one request's
-# own timeout). 20 s used to SIGKILL it mid-cleanup; the account sweep below is
-# still the backstop, but the child's journaled cleanup should get to finish.
-CHILD_GRACE_S = 120
+# After SIGTERM the child's handler terminates its pod (three attempts plus
+# backoff) and THEN runs a confirmed exit sweep (CLEANUP_BUDGET_S = 90 s, checked
+# only between passes). Against a dead API every request costs the SDK's 30 s
+# timeout, which measured ~200 s end to end (research 0026 review, 21 Nov): the
+# old 120 s grace SIGKILLed the child mid-cleanup. 240 s covers that with margin;
+# a longer wait only costs time on a path that is already failing. The account
+# sweep below is still the backstop.
+CHILD_GRACE_S = 240
 
 
 def sweep(pods0: list[str], attempts: int = SWEEP_ATTEMPTS, delay: float = SWEEP_DELAY_S) -> list[str]:

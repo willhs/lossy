@@ -150,3 +150,13 @@ before a create fails closed.
 **Not proved live:** how long RunPod's listing really lags after a terminate;
 the delay/attempt constants are guesses sized by the mock outage. That is the
 paid observation task (follow-up 7).
+
+# Addendum: operator runbook for a stalled run (review of 21 Nov 2026)
+
+If a run keeps ending with "not renting a replacement" (a claim the API will not
+let us confirm gone), `create_pod` is refusing by design and will keep refusing.
+Terminate any unaccounted `lossy-comfyui-*` pod in the RunPod console, confirm the
+console is clear of them, then delete `<output_dir>/runpod_journal/` and resume.
+Findings, measurements and the reasoning: research 0026, "Review, 21 Nov 2026".
+`capped_run.CHILD_GRACE_S` was raised from 120 s to 240 s: cleanup in a total API outage measured
+~200 s (terminate retries precede the sweep budget).
