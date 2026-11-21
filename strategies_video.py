@@ -13,9 +13,10 @@ import time
 
 import manifest
 from clip_types import AudioClipResult, ClipResult
-from keyframes import (SHEET_ATTEMPTS, DiskCache, FaceEmbedder, Fallback, FalKleinGenerator,
-                       KeyframeGenerator, KeyframeJob, OpenCVFaceEmbedder, ShotRoute,
-                       keyframe_prompt, make_keyframes, make_sheets, plan_route)
+from keyframes import (KLEIN_TEXT_ENCODER, KLEIN_UNET, KLEIN_VAE, SHEET_ATTEMPTS, DiskCache, FaceEmbedder,
+                       Fallback, FalKleinGenerator, KeyframeGenerator, KeyframeJob, OpenCVFaceEmbedder,
+                       PodKleinGenerator, ShotRoute, keyframe_prompt, make_keyframes, make_sheets,
+                       plan_route)
 from runpod_pod import PinnedModel, check_gated_access
 from prompt_format import (_format_prompt_wan, _format_prompt_seedance, format_prompt,
                            strip_character_names, vary_prompt_for_part)
@@ -1808,6 +1809,36 @@ class RunPodLtx25IngredientsStrategy(RunPodLtx25Strategy):
         return wf
 
 
+class _PodComfyRunner:
+    """``keyframes.ComfyRunner`` over a RunPod strategy's pod: boots it the way
+    ``generate`` would (with setup retry), uploads by scp, runs a graph, fetches the image."""
+
+    IMAGE_TIMEOUT_S = 600   # the first image also loads ~12 GB of klein weights
+
+    def __init__(self, strategy: "RunPodLtx25Strategy"):
+        self.strategy = strategy
+
+    def ensure_ready(self) -> None:
+        self.strategy._ensure_pod()
+
+    def upload(self, png: bytes) -> str | None:
+        import hashlib
+        local = os.path.join(tempfile.gettempdir(), f"klein_ref_{hashlib.sha256(png).hexdigest()[:16]}.png")
+        with open(local, "wb") as f:
+            f.write(png)
+        return self.strategy._upload_image(local)
+
+    def run(self, graph: dict) -> bytes | None:
+        session = self.strategy._session
+        hist = session.submit_workflow(graph, timeout=self.IMAGE_TIMEOUT_S)
+        if not hist:
+            return None
+        for out in hist.get("outputs", {}).values():
+            for img in out.get("images", []):
+                return session.download_output(img)
+        return None
+
+
 class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
     """LTX-2.5 that starts each human-character shot from a drawn first frame (research 0029, arm K).
 
@@ -1831,10 +1862,35 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
     name = "runpod-ltx25-keyframe"
 
     FAL_CAP_USD = 1.0      # estimated fal spend this run may make; RunPod has its own cap
+    GENERATORS = ("fal", "pod")
+    DEFAULT_GENERATOR = "fal"
+    POD_SECONDS_PER_IMAGE = 5.0   # estimate (research 0029); replaced by the pod measurement
+
+    # FLUX.2 klein 4B for --keyframe-generator pod: the official ComfyUI template's files,
+    # pinned by revision and sha256 (HF API, 22 Nov 2026). Ungated, Apache-2.0. ~12.5 GB.
+    _KLEIN_BFL = ("https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/"
+                  "5b4408e59397a4a37ccb46afe426d8ed86379441")
+    _KLEIN_COMFY = ("https://huggingface.co/Comfy-Org/Flux-2-Klein-4B/resolve/"
+                    "5b3abca5c0dc1ecd4eaf3340868d09063fc1c965/split_files")
+    KLEIN_MODELS = [
+        PinnedModel(f"diffusion_models/{KLEIN_UNET}", f"{_KLEIN_BFL}/{KLEIN_UNET}",
+                    "97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6"),
+        PinnedModel(f"text_encoders/{KLEIN_TEXT_ENCODER}", f"{_KLEIN_COMFY}/text_encoders/{KLEIN_TEXT_ENCODER}",
+                    "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a"),
+        PinnedModel(f"vae/{KLEIN_VAE}", f"{_KLEIN_COMFY}/vae/{KLEIN_VAE}",
+                    "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3"),
+    ]
 
     def __init__(self, output_dir: str = "", *args, generator: KeyframeGenerator | None = None,
-                 embedder: FaceEmbedder | None = None, fal_cap_usd: float = FAL_CAP_USD, **kwargs):
+                 embedder: FaceEmbedder | None = None, fal_cap_usd: float = FAL_CAP_USD,
+                 keyframe_generator: str = DEFAULT_GENERATOR, **kwargs):
         super().__init__(output_dir, *args, **kwargs)
+        if keyframe_generator not in self.GENERATORS:
+            raise ValueError(f"keyframe_generator must be one of {self.GENERATORS}, got {keyframe_generator!r}")
+        self._generator_kind = keyframe_generator
+        if keyframe_generator == "pod":
+            # The pod boot downloads klein beside LTX; _setup_pod_once reads self.PINNED_MODELS.
+            self.PINNED_MODELS = RunPodLtx25Strategy.PINNED_MODELS + self.KLEIN_MODELS
         self._output_dir = output_dir
         self._generator = generator
         self._embedder = embedder
@@ -1844,9 +1900,13 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
 
     def _get_generator(self) -> KeyframeGenerator:
         if self._generator is None:
-            self._generator = FalKleinGenerator(
-                self._fal_cap_usd,
-                cost_log=os.path.join(manifest.keyframes_dir(self._output_dir), "cost.jsonl"))
+            kf_dir = manifest.keyframes_dir(self._output_dir)
+            if self._generator_kind == "pod":
+                self._generator = PodKleinGenerator(_PodComfyRunner(self),
+                                                    timing_log=os.path.join(kf_dir, "timing.jsonl"))
+            else:
+                self._generator = FalKleinGenerator(self._fal_cap_usd,
+                                                    cost_log=os.path.join(kf_dir, "cost.jsonl"))
         return self._generator
 
     def _get_embedder(self) -> FaceEmbedder:
@@ -1885,13 +1945,19 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
         generator.preflight()
         embedder.preflight()
         names = self._sheet_order(routes)
-        sheets = make_sheets(names, {n: self._characters_by_name[n]["description"] for n in names},
-                             generator, embedder, DiskCache(manifest.character_sheets_dir(self._output_dir)))
-        by_shot = {e["index"]: e for e in entries}
-        jobs = [KeyframeJob(r.shot, r.characters, self._editor_prompt(by_shot[r.shot], r)) for r in todo]
-        self._keyframes, failed = make_keyframes(
-            jobs, sheets, generator, DiskCache(manifest.keyframes_dir(self._output_dir)),
-            (self.WIDTH, self.HEIGHT))
+        try:
+            sheets = make_sheets(names, {n: self._characters_by_name[n]["description"] for n in names},
+                                 generator, embedder, DiskCache(manifest.character_sheets_dir(self._output_dir)))
+            by_shot = {e["index"]: e for e in entries}
+            jobs = [KeyframeJob(r.shot, r.characters, self._editor_prompt(by_shot[r.shot], r)) for r in todo]
+            self._keyframes, failed = make_keyframes(
+                jobs, sheets, generator, DiskCache(manifest.keyframes_dir(self._output_dir)),
+                (self.WIDTH, self.HEIGHT))
+        finally:
+            if getattr(generator, "used_pod", False):
+                # klein shares the card with LTX-2.5, which needs most of it: unload
+                # klein before the first video graph loads LTX.
+                self._session.unload_models()
         self.fallbacks.update(failed)
         if failed:
             print(f"Keyframes: {len(failed)} shots fall back to text "
@@ -1933,9 +1999,15 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
         if todo:
             lines.append(f"First keyframe prompt (shot {todo[0].shot}): "
                          f"{self._editor_prompt(by_shot[todo[0].shot], todo[0])}")
-        lines.append(f"fal estimate, upper bound: sheets <= ${sheet_usd:.2f} "
-                     f"({SHEET_ATTEMPTS} draws each), keyframes <= ${frame_usd:.2f}; "
-                     f"capped at ${self._fal_cap_usd:.2f}. RunPod cost is the same as runpod-ltx25.")
+        if getattr(self, "_generator_kind", self.DEFAULT_GENERATOR) == "pod":
+            images = len(names) * SHEET_ATTEMPTS + len(todo)
+            lines.append(f"Pod klein: <= {images} images ({SHEET_ATTEMPTS} draws per sheet) at about "
+                         f"{self.POD_SECONDS_PER_IMAGE:.0f} s each (~{images * self.POD_SECONDS_PER_IMAGE / 60:.0f} "
+                         "min of pod time) plus the klein download at boot; no fal spend.")
+        else:
+            lines.append(f"fal estimate, upper bound: sheets <= ${sheet_usd:.2f} "
+                         f"({SHEET_ATTEMPTS} draws each), keyframes <= ${frame_usd:.2f}; "
+                         f"capped at ${self._fal_cap_usd:.2f}. RunPod cost is the same as runpod-ltx25.")
         return lines
 
 

@@ -53,6 +53,7 @@ def main() -> None:
     s._generator = None
     s._embedder = None
     s._fal_cap_usd = args.keyframe_fal_cap
+    s._generator_kind = "fal"   # this script draws on fal, before any pod
     s._keyframes = {}
     s.fallbacks = {}
     s.prepare(prompts)

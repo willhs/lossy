@@ -28,8 +28,9 @@ The two fixes the trial asked for (research 0029 "Problems found"):
    accepted sheet; one that is too close is reseeded, and if it stays too close
    it is dropped (that character's shots use the text path) rather than shipped.
 
-Nothing here touches RunPod. ``FalKleinGenerator`` is the only part that makes a
-paid call, and only when asked to.
+Nothing here touches RunPod directly. ``FalKleinGenerator`` makes paid fal calls;
+``PodKleinGenerator`` runs the same model in ComfyUI through a ``ComfyRunner`` the
+strategy builds over its pod session (research 0029, "Self-hosted klein on the pod").
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ import tempfile
 import time
 import zlib
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Sequence
 
 import numpy as np
 
@@ -413,6 +414,128 @@ class FalKleinGenerator:
                 err = e
                 time.sleep(5 * (attempt + 1))
         raise KeyframeError(f"{model} failed after {self.ATTEMPTS} tries: {err}")
+
+
+# ------------------------------------------------------- klein on the pod
+
+# The three files the official ComfyUI "FLUX.2 Klein 4B Distilled" edit template loads
+# (Comfy-Org/workflow_templates, read 2026-11-22). Pinned by sha256 in strategies_video.
+KLEIN_UNET = "flux-2-klein-4b-fp8.safetensors"
+KLEIN_TEXT_ENCODER = "qwen_3_4b.safetensors"
+KLEIN_VAE = "flux2-vae.safetensors"
+KLEIN_STEPS = 4      # the distilled model's schedule (the template's Flux2Scheduler)
+
+
+def klein_graph(prompt: str, seed: int, size: tuple[int, int], refs: Sequence[str] = ()) -> dict:
+    """ComfyUI API graph for FLUX.2 klein 4B. No ``refs``: text-to-image (a sheet).
+    One or two ``refs`` (filenames in the pod's ComfyUI input dir): a reference edit
+    (a keyframe), each image VAE-encoded and attached with ``ReferenceLatent``.
+
+    Node and input names are ComfyUI v0.39.2's (the version the pod upgrades to). CFG
+    is 1 in the template, so ``BasicGuider`` (no negative) samples the same thing.
+    """
+    w, h = size
+    if w % 16 or h % 16:
+        raise ValueError(f"klein latents need sides divisible by 16, got {w}x{h}")
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KLEIN_UNET, "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": KLEIN_TEXT_ENCODER, "type": "flux2", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": KLEIN_VAE}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "5": {"class_type": "EmptyFlux2LatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "6": {"class_type": "Flux2Scheduler", "inputs": {"steps": KLEIN_STEPS, "width": w, "height": h}},
+        "7": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "8": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+    }
+    cond = ["4", 0]
+    for i, name in enumerate(refs):
+        load, enc, ref = f"2{i}0", f"2{i}1", f"2{i}2"
+        g[load] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        g[enc] = {"class_type": "VAEEncode", "inputs": {"pixels": [load, 0], "vae": ["3", 0]}}
+        g[ref] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": cond, "latent": [enc, 0]}}
+        cond = [ref, 0]
+    g["9"] = {"class_type": "BasicGuider", "inputs": {"model": ["1", 0], "conditioning": cond}}
+    g["10"] = {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["8", 0], "guider": ["9", 0], "sampler": ["7", 0],
+                          "sigmas": ["6", 0], "latent_image": ["5", 0]}}
+    g["11"] = {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}}
+    g["12"] = {"class_type": "SaveImage", "inputs": {"images": ["11", 0], "filename_prefix": "klein"}}
+    return g
+
+
+class ComfyRunner(Protocol):
+    """What the pod generator needs from a pod. The strategy adapts its RunPodSession."""
+
+    def ensure_ready(self) -> None:
+        """Boot the pod and load the weights if not done yet. Raises if it cannot."""
+
+    def upload(self, png: bytes) -> str | None:
+        """Put an image in ComfyUI's input dir; its filename, or None on failure."""
+
+    def run(self, graph: dict) -> bytes | None:
+        """Run a graph to completion; the first saved image's bytes, or None on failure."""
+
+
+class PodKleinGenerator:
+    """FLUX.2 klein 4B in ComfyUI on the same RunPod pod that then runs LTX-2.5.
+
+    The pod is brought up on the first call, not on construction, so a run whose
+    sheets and keyframes are all cached boots nothing here. ``used_pod`` tells the
+    strategy to unload klein before LTX loads. Every image's wall time goes to
+    ``timing_log`` (the pod bills by the second; there is no per-call price).
+    """
+
+    id = "pod-flux2-klein-4b-fp8"
+
+    def __init__(self, runner: ComfyRunner, timing_log: str | None = None):
+        self.runner = runner
+        self.timing_log = timing_log
+        self.used_pod = False
+        self._uploads: dict[str, str] = {}
+
+    def preflight(self) -> None:
+        if not os.environ.get("RUNPOD_API_KEY"):
+            raise KeyframeSetupError("RUNPOD_API_KEY is not set (the keyframe editor runs on the pod).")
+
+    def _ready(self) -> None:
+        if not self.used_pod:
+            self.runner.ensure_ready()
+            self.used_pod = True
+
+    def make_sheet(self, prompt: str, seed: int, size: tuple[int, int]) -> bytes:
+        self._ready()
+        return self._run(klein_graph(prompt, seed, size), "sheet", seed)
+
+    def make_keyframe(self, prompt: str, sheets: list[bytes], seed: int,
+                      size: tuple[int, int]) -> bytes:
+        self._ready()
+        return self._run(klein_graph(prompt, seed, size, [self._upload(s) for s in sheets]),
+                         "keyframe", seed)
+
+    def _upload(self, png: bytes) -> str:
+        digest = hashlib.sha256(png).hexdigest()
+        if digest not in self._uploads:
+            name = self.runner.upload(png)
+            if not name:
+                raise KeyframeError("sheet upload to the pod failed")
+            self._uploads[digest] = name
+        return self._uploads[digest]
+
+    def _run(self, graph: dict, kind: str, seed: int) -> bytes:
+        t0 = time.time()
+        try:
+            png = self.runner.run(graph)
+        except Exception as e:   # a dropped connection to the pod: this image only
+            raise KeyframeError(f"klein on the pod failed: {e}") from e
+        if not png:
+            raise KeyframeError("klein on the pod returned no image")
+        if self.timing_log:
+            os.makedirs(os.path.dirname(self.timing_log) or ".", exist_ok=True)
+            with open(self.timing_log, "a") as f:
+                f.write(json.dumps({"kind": kind, "seed": seed,
+                                    "seconds": round(time.time() - t0, 2)}) + "\n")
+        return png
 
 
 # ---------------------------------------------------- face embedder (the gate)

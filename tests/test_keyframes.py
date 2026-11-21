@@ -19,10 +19,11 @@ import decode
 import keyframes
 import manifest
 from clip_types import ClipResult
-from keyframes import (DiskCache, FalKleinGenerator, Fallback, KeyframeBudgetExceeded, KeyframeError,
+from keyframes import (DiskCache, FalKleinGenerator, PodKleinGenerator, klein_graph, Fallback, KeyframeBudgetExceeded, KeyframeError,
                        KeyframeJob, KeyframeSetupError, OpenCVFaceEmbedder, SHEET_ATTEMPTS, ShotRoute,
                        keyframe_prompt, make_keyframes, make_sheets, plan_route, sheet_prompt, sheet_seed)
-from strategies_video import RunPodLtx25KeyframeStrategy, RunPodLtx25Strategy, RunPodWanStrategy
+from strategies_video import (RunPodLtx25KeyframeStrategy, RunPodLtx25Strategy, RunPodWanStrategy,
+                              _PodComfyRunner)
 
 JERRY = "A real man in his mid 30s with short dark wavy hair and a lean build."
 ELAINE = "A real woman in her early 30s with dark, voluminous curly hair."
@@ -580,7 +581,8 @@ def _write_output_dir(path):
 class TestDryRun:
     def args(self, path, **kw):
         return types.SimpleNamespace(output_dir=str(path), start_index=None, limit=None,
-                                     keyframe_fal_cap=1.0, style_prefix=None, **kw)
+                                     keyframe_fal_cap=1.0, style_prefix=None,
+                                     **{"keyframe_generator": "fal", **kw})
 
     def test_prints_the_plan_with_no_network_and_writes_nothing(self, tmp_path, capsys, monkeypatch):
         _write_output_dir(tmp_path)
@@ -622,3 +624,185 @@ class TestDryRun:
         monkeypatch.setattr(sys, "argv", ["decode.py", str(tmp_path), "--strategy", "runpod-wan", "--dry-run"])
         with pytest.raises(SystemExit, match="--dry-run needs"):
             decode.main()
+
+
+# ------------------------------------------------------------ klein on the pod
+
+def _refs_ok(graph):
+    """Every [node, slot] input points at a node in the graph."""
+    for node in graph.values():
+        for v in node["inputs"].values():
+            if isinstance(v, list):
+                assert v[0] in graph, f"dangling link {v}"
+
+
+class TestKleinGraph:
+    def test_a_sheet_is_plain_text_to_image(self):
+        g = klein_graph("a face", 7, (1024, 1024))
+        types_ = {n["class_type"] for n in g.values()}
+        assert "LoadImage" not in types_ and "ReferenceLatent" not in types_
+        assert g["9"]["inputs"]["conditioning"] == ["4", 0]
+        assert g["8"]["inputs"]["noise_seed"] == 7
+        assert g["5"]["inputs"] == {"width": 1024, "height": 1024, "batch_size": 1}
+        assert g["2"]["inputs"]["type"] == "flux2"
+        _refs_ok(g)
+
+    def test_a_keyframe_chains_one_reference_latent_per_sheet(self):
+        g = klein_graph("scene", 3, (1280, 704), ["a.png", "b.png"])
+        loads = [n["inputs"]["image"] for n in g.values() if n["class_type"] == "LoadImage"]
+        assert loads == ["a.png", "b.png"]
+        refs = [k for k, n in g.items() if n["class_type"] == "ReferenceLatent"]
+        assert len(refs) == 2
+        assert g[refs[0]]["inputs"]["conditioning"] == ["4", 0]
+        assert g[refs[1]]["inputs"]["conditioning"] == [refs[0], 0]
+        assert g["9"]["inputs"]["conditioning"] == [refs[1], 0], "the guider sees both sheets"
+        assert g["6"]["inputs"] == {"steps": 4, "width": 1280, "height": 704}
+        _refs_ok(g)
+
+    def test_a_size_the_latent_cannot_take_is_refused(self):
+        with pytest.raises(ValueError, match="16"):
+            klein_graph("x", 1, (1000, 704))
+
+
+class FakeRunner:
+    def __init__(self, images=None, upload_ok=True, boom=False):
+        self.ready_calls, self.uploads, self.graphs = 0, [], []
+        self.images, self.upload_ok, self.boom = images, upload_ok, boom
+
+    def ensure_ready(self):
+        self.ready_calls += 1
+
+    def upload(self, png):
+        self.uploads.append(png)
+        return f"ref{len(self.uploads)}.png" if self.upload_ok else None
+
+    def run(self, graph):
+        self.graphs.append(graph)
+        if self.boom:
+            raise ConnectionError("pod went away")
+        return b"PNG%d" % len(self.graphs) if self.images is None else self.images
+
+
+class TestPodKleinGenerator:
+    def test_boots_the_pod_once_on_first_use_and_logs_each_images_time(self, tmp_path):
+        r = FakeRunner()
+        g = PodKleinGenerator(r, timing_log=str(tmp_path / "kf" / "timing.jsonl"))
+        assert r.ready_calls == 0 and not g.used_pod, "constructing it boots nothing"
+        assert g.make_sheet("S", 1, (1024, 1024)) == b"PNG1"
+        assert g.make_keyframe("K", [b"s1"], 9, (1280, 704)) == b"PNG2"
+        assert r.ready_calls == 1 and g.used_pod
+        rows = [json.loads(l) for l in open(tmp_path / "kf" / "timing.jsonl")]
+        assert [x["kind"] for x in rows] == ["sheet", "keyframe"] and all(x["seconds"] >= 0 for x in rows)
+
+    def test_a_sheet_is_uploaded_once_and_reused_by_name(self):
+        r = FakeRunner()
+        g = PodKleinGenerator(r)
+        g.make_keyframe("K", [b"s1", b"s2"], 1, (1280, 704))
+        g.make_keyframe("K", [b"s1"], 2, (1280, 704))
+        assert r.uploads == [b"s1", b"s2"]
+        loads = [n["inputs"]["image"] for n in r.graphs[1].values() if n["class_type"] == "LoadImage"]
+        assert loads == ["ref1.png"]
+
+    @pytest.mark.parametrize("runner", [FakeRunner(images=b""), FakeRunner(boom=True),
+                                        FakeRunner(upload_ok=False)])
+    def test_a_failed_image_is_a_keyframe_error_so_the_shot_falls_back(self, runner):
+        with pytest.raises(KeyframeError):
+            PodKleinGenerator(runner).make_keyframe("K", [b"s1"], 1, (1280, 704))
+
+    def test_id_differs_from_fal_so_caches_never_mix(self):
+        assert PodKleinGenerator.id != FalKleinGenerator.id
+
+    def test_preflight_needs_the_runpod_key(self, monkeypatch):
+        monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+        with pytest.raises(KeyframeSetupError, match="RUNPOD_API_KEY"):
+            PodKleinGenerator(FakeRunner()).preflight()
+
+
+class TestPodKeyframePass:
+    def _pod(self, tmp_path, monkeypatch, **kw):
+        monkeypatch.setenv("RUNPOD_API_KEY", "x")
+        s = _make(tmp_path, None, _embedder(), keyframe_generator="pod", **kw)
+        order = []
+        s._ensure_pod = MagicMock(side_effect=lambda: order.append("boot"))
+        s._session.unload_models.side_effect = lambda: order.append("unload")
+        return s, order
+
+    def _fake_pod_images(self, s, order):
+        """Answer klein graphs as the pod would: a sheet's face key from its prompt."""
+        def submit(graph, timeout):
+            text = graph["4"]["inputs"]["text"]
+            order.append("image")
+            if "reference sheet" in text and "Character" in text:
+                who = "elaine" if "woman" in text else "kramer" if "tall and slim" in text else "jerry"
+                return {"outputs": {"12": {"images": [{"filename": f"face:{who}"}]}}}
+            return {"outputs": {"12": {"images": [{"filename": "kf"}]}}}
+        s._session.submit_workflow.side_effect = submit
+        s._session.download_output.side_effect = lambda img: (
+            img["filename"].encode() if img["filename"].startswith("face:") else b"\x89PNG-kf")
+        s._upload_image = MagicMock(side_effect=os.path.basename)
+
+    def test_pod_option_downloads_klein_beside_ltx_and_fal_option_does_not(self, tmp_path, monkeypatch):
+        s, _ = self._pod(tmp_path, monkeypatch)
+        klein = {m.dest for m in RunPodLtx25KeyframeStrategy.KLEIN_MODELS}
+        assert klein <= {m.dest for m in s.PINNED_MODELS}
+        assert {m.dest for m in RunPodLtx25Strategy.PINNED_MODELS} <= {m.dest for m in s.PINNED_MODELS}
+        fal_s = _make(tmp_path, FakeGenerator(), _embedder())
+        assert klein.isdisjoint({m.dest for m in fal_s.PINNED_MODELS})
+        assert all(len(m.sha256) == 64 and "/resolve/" in m.url and not m.gate_url
+                   for m in RunPodLtx25KeyframeStrategy.KLEIN_MODELS)
+
+    def test_keyframes_are_drawn_after_boot_then_klein_is_unloaded_before_any_video(self, tmp_path, monkeypatch):
+        s, order = self._pod(tmp_path, monkeypatch)
+        self._fake_pod_images(s, order)
+        s.prepare(SHOTS)
+        assert order[0] == "boot" and order[-1] == "unload"
+        assert order.count("boot") == 1 and order.count("unload") == 1
+        assert set(s._keyframes) == {1, 2, 3, 4, 7}
+        assert isinstance(s._get_generator(), PodKleinGenerator)
+        assert os.path.exists(os.path.join(str(tmp_path), "keyframes", "timing.jsonl"))
+
+    def test_a_fully_cached_run_boots_nothing_in_prepare(self, tmp_path, monkeypatch):
+        s, order = self._pod(tmp_path, monkeypatch)
+        self._fake_pod_images(s, order)
+        s.prepare(SHOTS)
+        again, order2 = self._pod(tmp_path, monkeypatch)
+        again.prepare(SHOTS)
+        assert order2 == [], "no boot, no unload: every sheet and frame came from the cache"
+        assert set(again._keyframes) == {1, 2, 3, 4, 7}
+
+    def test_klein_is_unloaded_even_when_the_pass_raises(self, tmp_path, monkeypatch):
+        s, order = self._pod(tmp_path, monkeypatch)
+        self._fake_pod_images(s, order)
+        s._get_embedder().faces = MagicMock(side_effect=[[np.array([1.0, 0, 0])], RuntimeError("cv2")])
+        with pytest.raises(RuntimeError):
+            s.prepare(SHOTS)
+        assert order[-1] == "unload"
+
+    def test_an_unknown_generator_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="keyframe_generator"):
+            _make(tmp_path, keyframe_generator="replicate")
+
+    def test_runner_returns_the_first_saved_image(self):
+        st = MagicMock()
+        st._session.submit_workflow.return_value = {"outputs": {"3": {}, "12": {"images": [{"filename": "k.png"}]}}}
+        st._session.download_output.return_value = b"IMG"
+        assert _PodComfyRunner(st).run({}) == b"IMG"
+        st._session.submit_workflow.return_value = None
+        assert _PodComfyRunner(st).run({}) is None
+
+    def test_cli_flag_reaches_the_strategy_and_defaults_to_fal(self, tmp_path, monkeypatch):
+        _write_output_dir(tmp_path)
+        made = []
+        monkeypatch.setattr(decode, "_create_ltx2_strategy", lambda args, cls, **kw: made.append(kw))
+        args = types.SimpleNamespace(keyframe_fal_cap=1.0, keyframe_generator="pod")
+        decode._create_keyframe_strategy(args)
+        assert made[-1]["keyframe_generator"] == "pod"
+        monkeypatch.setattr(sys, "argv", ["decode.py", str(tmp_path), "--strategy", "runpod-ltx25-keyframe",
+                                          "--keyframe-generator", "pod", "--dry-run"])
+        decode.main()
+
+    def test_dry_run_prints_pod_time_not_fal_dollars_for_the_pod_option(self, tmp_path, capsys):
+        _write_output_dir(tmp_path)
+        decode.dry_run_keyframes(TestDryRun().args(tmp_path, keyframe_generator="pod"))
+        out = capsys.readouterr().out
+        assert "Pod klein:" in out and "fal estimate" not in out

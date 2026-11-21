@@ -769,6 +769,13 @@ def main():
                              "keyframes) in one run; shots past it decode from text (default: %(default)s). "
                              "tools/capped_run.py caps RunPod only, so this is the fal cap. Spend "
                              "already in <output_dir>/keyframes/cost.jsonl counts against it.")
+    parser.add_argument("--keyframe-generator", choices=RunPodLtx25KeyframeStrategy.GENERATORS,
+                        default=RunPodLtx25KeyframeStrategy.DEFAULT_GENERATOR,
+                        help="runpod-ltx25-keyframe: where FLUX.2 klein draws the sheets and keyframes. "
+                             "'fal': fal's API, before any pod (paid per image, capped by "
+                             "--keyframe-fal-cap). 'pod': ComfyUI on the LTX pod itself, after boot and "
+                             "before the first clip, then unloaded (RunPod time only, so capped_run sees "
+                             "it). Images from one are not reused by the other. (default: %(default)s)")
     args = parser.parse_args()
 
     load_env()
@@ -899,6 +906,7 @@ def dry_run_keyframes(args) -> None:
         build_character_shot_map(characters_data), characters_data,
         getattr(args, "style_prefix", None) or manifest.load_style_prefix(args.output_dir))
     probe._fal_cap_usd = args.keyframe_fal_cap
+    probe._generator_kind = args.keyframe_generator
     print(f"Keyframe plan for {len(prompts)} shots of {args.output_dir} (dry run):")
     print("\n".join(probe.describe_plan(prompts)))
     print("Dry run OK. No network call was made and nothing was written.")
@@ -945,7 +953,8 @@ def _create_wan_enriched_strategy(args):
 
 def _create_keyframe_strategy(args):
     return _create_ltx2_strategy(args, RunPodLtx25KeyframeStrategy,
-                                 fal_cap_usd=args.keyframe_fal_cap)
+                                 fal_cap_usd=args.keyframe_fal_cap,
+                                 keyframe_generator=args.keyframe_generator)
 
 
 def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):

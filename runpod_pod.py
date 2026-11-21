@@ -1563,6 +1563,19 @@ class RunPodSession:
             print(f"  Error downloading output: {e}")
             return None
 
+    def unload_models(self) -> bool:
+        """Unload every model from VRAM (``/free`` with ``unload_models``), so the
+        next graph's models get the whole card. True if ComfyUI accepted it."""
+        try:
+            r = self.http.post(f"{self.base_url}/free",
+                               json={"unload_models": True, "free_memory": True}, timeout=30)
+            ok = r.status_code == 200
+        except Exception as e:
+            print(f"  Could not unload models: {e}")
+            return False
+        print(f"  Models unloaded{'' if ok else f' (HTTP {r.status_code})'}")
+        return ok
+
     def free_vram(self):
         """Free cached VRAM from last generation (keep models loaded)."""
         try:
