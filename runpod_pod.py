@@ -702,7 +702,8 @@ class RunPodSession:
         if unsettled:
             raise UnsafeToAllocateError(
                 f"not renting a replacement: pod(s) {', '.join(unsettled)} could not be "
-                f"confirmed terminated. Check https://www.runpod.io/console/pods")
+                f"confirmed terminated. Check https://www.runpod.io/console/pods. "
+                + pod_journal.stall_hint(self._journal.directory))
 
         # Write-ahead: if the process dies mid-request, or the request lands
         # server-side after we gave up, a later run finds this name in the
@@ -880,6 +881,8 @@ class RunPodSession:
                           f"[attempt {attempt + 1}/{attempts}]...")
                     time.sleep(wait)
         print(f"Error: pod setup failed {attempts} times; giving up.")
+        if isinstance(last, UnsafeToAllocateError):
+            print(f"  Stalled on a pod claim: {pod_journal.stall_hint(self._journal.directory)}")
         raise last if last else PodSetupError("pod setup failed")
 
     def _drop_failed_pod(self) -> None:

@@ -300,3 +300,141 @@ def scan_peers(directory: str, exclude_run_id: str) -> list[Peer]:
             snap = None
         peers.append(Peer(snap, json_path, lock_path, live=fd is None, _fd=fd))
     return peers
+
+
+# -- operator escape hatch ------------------------------------------------------
+# `python -m pod_journal list|forget <output_dir> [pod_id]`: for a run stalled on
+# "not renting a replacement" (ADR 0010, operator runbook).
+
+def stall_hint(journal_directory: str) -> str:
+    """The one-line pointer printed wherever a run refuses to rent."""
+    out = os.path.dirname(os.path.abspath(journal_directory))
+    return (f"If the RunPod console shows no such pod, clear the claim: "
+            f"`python -m pod_journal list {out}` then `python -m pod_journal forget {out} <pod_id>` "
+            f"(ADR 0010)")
+
+
+def _api_status(pod_id: str) -> str:
+    """'running' / 'exited' / 'not found' / 'unknown (<why>)' from the RunPod API."""
+    key = os.environ.get("RUNPOD_API_KEY")
+    if not key:
+        return "unknown (RUNPOD_API_KEY not set)"
+    try:
+        import runpod
+        runpod.api_key = key
+        pod = runpod.get_pod(pod_id)
+    except Exception as e:
+        if "not found" in str(e).lower():
+            return "not found"
+        return f"unknown ({e})"
+    if not pod:
+        return "not found"
+    return str(pod.get("desiredStatus", "unknown")).lower()
+
+
+def _read_all(directory: str) -> list[tuple[str, Snapshot | None, bool]]:
+    """(json_path, snapshot, owner_is_live) for every journal file. Read-only."""
+    out = []
+    if not os.path.isdir(directory):
+        return out
+    for fname in sorted(os.listdir(directory)):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(directory, fname)
+        lock = path[:-len(".json")] + ".lock"
+        fd = _lock(lock)
+        live = fd is None
+        _unlock(fd)
+        try:
+            with open(path) as f:
+                snap = Snapshot.from_json(json.load(f))
+        except FileNotFoundError:
+            continue
+        except (ValueError, KeyError, TypeError, AttributeError):
+            snap = None
+        out.append((path, snap, live))
+    return out
+
+
+def cmd_list(directory: str, status=_api_status) -> int:
+    entries = _read_all(directory)
+    if not entries:
+        print(f"no journal claims under {directory}")
+        return 0
+    for path, snap, live in entries:
+        owner = "LIVE session" if live else "dead session"
+        if snap is None:
+            print(f"{path}: UNREADABLE ({owner}); inspect or delete it by hand")
+            continue
+        print(f"{snap.run_id} ({owner}, name {snap.name})")
+        for c in snap.claims.values():
+            print(f"  pod {c.pod_id}  state={c.state}  name={c.name}  api={status(c.pod_id)}")
+        for w in snap.windows:
+            left = w.until - time.time()
+            print(f"  window {w.name}  " + (f"open {left:.0f}s more" if left > 0 else "expired"))
+        if snap.is_empty(time.time()):
+            print("  (nothing owed)")
+    return 0
+
+
+def cmd_forget(directory: str, pod_id: str | None) -> int:
+    """Drop claims (one pod, or all if pod_id is None) from DEAD sessions' journals.
+
+    Only run this after confirming in the RunPod console that the pod is gone:
+    forgetting a live pod's claim leaves it billing with nobody answerable.
+    Windows are dropped with the claims they belong to (whole-journal forget).
+    """
+    entries = _read_all(directory)
+    if not entries:
+        print(f"no journal claims under {directory}")
+        return 0
+    dropped = 0
+    for path, snap, live in entries:
+        if live:
+            print(f"skip {path}: its session is still running (stop it first)")
+            continue
+        lock = path[:-len(".json")] + ".lock"
+        fd = _lock(lock)
+        if fd is None:
+            print(f"skip {path}: its session started meanwhile")
+            continue
+        try:
+            if snap is None or pod_id is None:
+                _remove(path)
+                _remove(lock)
+                dropped += 1
+                print(f"forgot journal {os.path.basename(path)}")
+            elif pod_id in snap.claims:
+                del snap.claims[pod_id]
+                if snap.claims or any(w.until > time.time() for w in snap.windows):
+                    _write_atomic(path, snap.to_json())
+                else:
+                    _remove(path)
+                    _remove(lock)
+                dropped += 1
+                print(f"forgot pod {pod_id} in {snap.run_id}")
+        finally:
+            _unlock(fd)
+    if not dropped:
+        print("nothing forgotten" + (f" (no claim on pod {pod_id})" if pod_id else ""))
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(
+        prog="python -m pod_journal",
+        description="Inspect or clear a stalled run's pod ownership claims (ADR 0010).")
+    ap.add_argument("action", choices=["list", "forget"])
+    ap.add_argument("output_dir", help="the decode output dir (journals live in <dir>/runpod_journal/)")
+    ap.add_argument("pod_id", nargs="?", help="forget: only this pod's claim (default: every dead journal)")
+    a = ap.parse_args(argv)
+    directory = os.path.join(a.output_dir, JOURNAL_DIRNAME)
+    if a.action == "list":
+        return cmd_list(directory)
+    return cmd_forget(directory, a.pod_id)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

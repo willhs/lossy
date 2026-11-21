@@ -156,7 +156,13 @@ paid observation task (follow-up 7).
 If a run keeps ending with "not renting a replacement" (a claim the API will not
 let us confirm gone), `create_pod` is refusing by design and will keep refusing.
 Terminate any unaccounted `lossy-comfyui-*` pod in the RunPod console, confirm the
-console is clear of them, then delete `<output_dir>/runpod_journal/` and resume.
+console is clear of them, then clear the claim with the CLI and resume:
+`python -m pod_journal list <output_dir>` prints each claim with the pod's API
+status; `python -m pod_journal forget <output_dir> [pod_id]` drops one claim (or every
+dead session's journal). It skips journals whose session is still running. The
+message `create_pod` prints and `capped_run`'s exit-4 line both name this command.
+`<output_dir>` should be a persistent absolute path (on budgie,
+`~/lossy-runs/star_wars_iv_v2`), or the journal is lost with the directory.
 Findings, measurements and the reasoning: research 0026, "Review, 21 Nov 2026".
 `capped_run.CHILD_GRACE_S` was raised from 120 s to 240 s: cleanup in a total API outage measured
 ~200 s (terminate retries precede the sweep budget).

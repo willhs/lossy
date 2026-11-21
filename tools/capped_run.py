@@ -481,6 +481,16 @@ def main() -> int:
         leftover = sweep(scope)
         if leftover and rc == 0:
             rc = 5
+    if rc == 4 and a.output_dir:
+        try:
+            own = pod_journal.read_ownership(os.path.join(a.output_dir, pod_journal.JOURNAL_DIRNAME))
+        except pod_journal.JournalUnreadable:
+            own = None
+        if own is None or own.ids:
+            print(f"[capped_run] !!! RUN STALLED (exit 4) with a pod journal claim outstanding: "
+                  f"verify in the RunPod console, then `python -m pod_journal list {a.output_dir}` "
+                  f"and `python -m pod_journal forget {a.output_dir} <pod_id>`, then resume (ADR 0010)",
+                  flush=True)
     try:
         bal, pods = balance_and_pods()
         print(f"[capped_run] FINAL rc={rc} spent ${baseline - bal:.4f}, balance ${bal:.4f}, "
