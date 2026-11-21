@@ -709,6 +709,27 @@ class TestPodKleinGenerator:
         with pytest.raises(KeyframeError):
             PodKleinGenerator(runner).make_keyframe("K", [b"s1"], 1, (1280, 704))
 
+    def test_a_lost_pod_stops_the_pass_instead_of_sending_every_shot_to_text(self):
+        r = FakeRunner(boom=True)
+        g = PodKleinGenerator(r)
+        for seed in range(PodKleinGenerator.MAX_CONSECUTIVE_FAILURES - 1):
+            with pytest.raises(KeyframeError):
+                g.make_keyframe("K", [b"s1"], seed, (1280, 704))
+        with pytest.raises(keyframes.KeyframePodLost):
+            g.make_keyframe("K", [b"s1"], 9, (1280, 704))
+        assert not issubclass(keyframes.KeyframePodLost, KeyframeError), "make_keyframes must not absorb it"
+
+    def test_one_success_resets_the_failure_count(self):
+        r = FakeRunner(boom=True)
+        g = PodKleinGenerator(r)
+        for _ in range(5):
+            r.boom = True
+            for _ in range(PodKleinGenerator.MAX_CONSECUTIVE_FAILURES - 1):
+                with pytest.raises(KeyframeError):
+                    g.make_sheet("S", 1, (1024, 1024))
+            r.boom = False
+            g.make_sheet("S", 1, (1024, 1024))
+
     def test_id_differs_from_fal_so_caches_never_mix(self):
         assert PodKleinGenerator.id != FalKleinGenerator.id
 
@@ -746,7 +767,7 @@ class TestPodKeyframePass:
         klein = {m.dest for m in RunPodLtx25KeyframeStrategy.KLEIN_MODELS}
         assert klein <= {m.dest for m in s.PINNED_MODELS}
         assert {m.dest for m in RunPodLtx25Strategy.PINNED_MODELS} <= {m.dest for m in s.PINNED_MODELS}
-        fal_s = _make(tmp_path, FakeGenerator(), _embedder())
+        fal_s = _make(tmp_path, FakeGenerator(), _embedder(), keyframe_generator="fal")
         assert klein.isdisjoint({m.dest for m in fal_s.PINNED_MODELS})
         assert all(len(m.sha256) == 64 and "/resolve/" in m.url and not m.gate_url
                    for m in RunPodLtx25KeyframeStrategy.KLEIN_MODELS)
@@ -790,7 +811,8 @@ class TestPodKeyframePass:
         st._session.submit_workflow.return_value = None
         assert _PodComfyRunner(st).run({}) is None
 
-    def test_cli_flag_reaches_the_strategy_and_defaults_to_fal(self, tmp_path, monkeypatch):
+    def test_cli_flag_reaches_the_strategy_and_defaults_to_pod(self, tmp_path, monkeypatch):
+        assert RunPodLtx25KeyframeStrategy.DEFAULT_GENERATOR == "pod"   # passed the task 0017 check
         _write_output_dir(tmp_path)
         made = []
         monkeypatch.setattr(decode, "_create_ltx2_strategy", lambda args, cls, **kw: made.append(kw))

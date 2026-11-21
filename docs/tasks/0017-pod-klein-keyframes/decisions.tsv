@@ -3,3 +3,12 @@ phase	decision	why	evidence	result
 0	BFL fp8 klein + bf16 qwen_3_4b encoder + flux2-vae	same files as ComfyUI official klein 4B distilled edit template; fp4 has no native path on Ampere	workflow_templates image_flux2_klein_image_edit_4b_distilled.json; HF API sha256	pinned
 0	Generator takes a runner over the strategy session (option B)	one pod, one boot; A doubles boots, C swaps models per shot and breaks the all-sheets-first gate	plan.md Design options	chosen
 0	Validate sheets+keyframes on full window but render 1 LTX clip	proves unload->LTX path inside $0.50; clip-level K vs T already measured in 0029	budget	planned
+1	One klein_graph for sheet (no refs) and keyframe (1-2 refs); BasicGuider not CFGGuider	same shape both ways; CFG 1 makes the negative unused	ComfyUI v0.39.2 nodes_flux.py, nodes_edit_model.py; template	pod accepted every graph first time
+2	PINNED_MODELS gains klein only with --keyframe-generator pod (instance attr)	fal runs should not download 12.5 GB they never use	test_pod_option_downloads_klein_beside_ltx_and_fal_option_does_not	done
+2	Unload klein in a finally after the pass, only if the pod was used	LTX needs the card; a cached run must not boot a pod	tests TestPodKeyframePass	done
+3	Pod run under capped_run cap 0.38 burn 1.0/h poll 30	default burn 3/h makes the reserve exceed a 0.38 cap	evidence/capped_run_pod.log, final_pods.txt	$0.12 by balance (capped_run read $0.083 before the charges caught up), pod gone
+3	Did not rerun the one LTX clip after a local clips-dir bug in my script	ComfyUI success plus /view of lossy_00001_.mp4 after the unload already proves the path; a rerun would cost ~$0.08 more	capped_run_pod.log	script fixed
+3	Redrew fal on the same window (cap 0.30) instead of using only the published numbers	same shots give a fair comparison; total stays under 0.50	evidence/fal_prepare.log	$0.286; reproduced the published fal figures
+3	Verdict pass: pod 0.685 vs fal 0.656 on the same shots; no leak by eye	within the 0.05 rule	trial/results_pod_klein.json, pod_vs_fal_keyframes.jpg	pass
+4	Default --keyframe-generator flipped to pod	the task makes pod the default only if the check passes, and it passed	research 0029 section	done
+4	Added KeyframePodLost (3 consecutive failures)	a pod lost in a 2 h keyframe pass would send every remaining shot to text without saying so	test_a_lost_pod_stops_the_pass	done

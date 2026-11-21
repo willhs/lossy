@@ -227,8 +227,9 @@ def run_decode(args, strategy: GenerationStrategy) -> list[int]:
 
     print(f"Generating {total} clips via {strategy.name} ({len(completed_set)} already done)...")
 
-    # Inputs a strategy makes ahead of the video pass (keyframes). Runs before any
-    # pod exists, so a missing prerequisite stops the run before anything bills.
+    # Inputs a strategy makes ahead of the video pass (keyframes). Runs before the
+    # first clip; its preflight runs before any pod exists, so a missing prerequisite
+    # stops the run before anything bills (a pod-hosted keyframe pass boots the pod here).
     strategy.prepare([p for p in prompts if p["index"] not in completed_set])
 
     for entry in prompts:
@@ -837,7 +838,7 @@ def main():
         strategy = strategies[args.strategy]()
         try:
             incomplete = run_decode(args, strategy)
-        except KeyframeSetupError as e:   # raised by prepare(), before any pod exists
+        except KeyframeSetupError as e:   # raised by prepare()'s preflight, before any pod exists
             sys.exit(f"Error: {e}")
         if incomplete:
             sys.exit(1)  # shots remain failed/undecoded: not a finished film

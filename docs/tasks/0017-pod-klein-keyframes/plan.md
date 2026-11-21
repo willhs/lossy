@@ -37,14 +37,14 @@
 ## Phases
 
 - [x] Phase 0: spec + plan committed
-- [ ] Phase 1: `klein_graph` + `PodKleinGenerator` + tests (keyframes.py, tests/test_keyframes.py)
-- [ ] Phase 2: strategy: `--keyframe-generator fal|pod`, klein weights pinned and downloaded on the pod
+- [x] Phase 1: `klein_graph` + `PodKleinGenerator` + tests (keyframes.py, tests/test_keyframes.py)
+- [x] Phase 2: strategy: `--keyframe-generator fal|pod`, klein weights pinned and downloaded on the pod
       when `pod` is chosen, `prepare()` boots the pod for a pod generator, unload models after; tests
-- [ ] Phase 3: paid validation under `tools/capped_run.py` (pod) on SW4 684-710: sheets + keyframes on the
+- [x] Phase 3: paid validation under `tools/capped_run.py` (pod) on SW4 684-710: sheets + keyframes on the
       pod, one LTX clip after the unload, timings; then fal on the same window with what budget is left;
       score keyframe cosine-to-sheet with the 0029 scorer's method; contact sheet
-- [ ] Phase 4: research 0029 section, research 0030 cost table, AGENTS.md line; flip default to `pod` if pass
-- [ ] Wrap: full `uv run python -m pytest`, commit
+- [x] Phase 4: research 0029 section, research 0030 cost table, AGENTS.md line; flip default to `pod` if pass
+- [x] Wrap: full `uv run python -m pytest`, commit
 
 ## Assumptions
 
@@ -60,3 +60,6 @@
 6. The fal comparison is redrawn on the same window only with the budget left after the pod run; the
    published SW4 fal keyframe-stage figures (Luke 0.674, Obi-Wan 0.643, Owen 0.768) are the fallback.
 7. Budget: $0.50 covers RunPod + fal together.
+8. (Added in Phase 3) Three pod images failing in a row raise `KeyframePodLost` (not a `KeyframeError`),
+   ending the run so capped_run restarts on a new pod. Without it, a pod lost mid-pass would send
+   every remaining keyframe shot to text without saying so.

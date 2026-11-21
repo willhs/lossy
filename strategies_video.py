@@ -75,9 +75,10 @@ class GenerationStrategy:
         pass
 
     def prepare(self, entries: list[dict]) -> None:
-        """Called once by the decode loop, before the first shot and before any pod
-        exists, with the shot entries that still need generating. No-op default; a
-        strategy that must make inputs ahead of the video pass overrides it."""
+        """Called once by the decode loop, before the first shot, with the shot entries
+        that still need generating. No pod exists yet; an override may boot one (the
+        keyframe strategy's pod generator does). No-op default; a strategy that must
+        make inputs ahead of the video pass overrides it."""
         pass
 
 
@@ -1853,8 +1854,14 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
     ``runpod-ltx25`` would: shots with no character, with a ``keep_name`` design
     character (droid, Vader, trooper), with a person who has no sheet, and any shot
     whose keyframe could not be made or uploaded. A failed keyframe never fails a shot.
-    A missing prerequisite (FAL_KEY, face models) does stop the run, before any pod:
-    silently decoding a whole film from text would hide the misconfiguration.
+    A missing prerequisite (RUNPOD_API_KEY or FAL_KEY, face models) does stop the run,
+    before any pod: silently decoding a whole film from text would hide the misconfiguration.
+
+    Where klein runs (``--keyframe-generator``): ``pod`` (default) draws on the same pod,
+    after boot and before the first clip, then unloads klein so LTX gets the card; ``fal``
+    draws on fal's API before any pod. Task 0017 measured both on SW4 684-710: the pod's
+    keyframe face cosine to the sheet is 0.685 against fal's 0.656 on the same shots, at
+    about 10 s of A40 time per image (research 0029, "Self-hosted klein on the pod").
 
     Opt-in: ``--strategy runpod-ltx25-keyframe``. Nothing else changes.
     """
@@ -1863,8 +1870,8 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
 
     FAL_CAP_USD = 1.0      # estimated fal spend this run may make; RunPod has its own cap
     GENERATORS = ("fal", "pod")
-    DEFAULT_GENERATOR = "fal"
-    POD_SECONDS_PER_IMAGE = 5.0   # estimate (research 0029); replaced by the pod measurement
+    DEFAULT_GENERATOR = "pod"     # passed the task 0017 pod check (research 0029)
+    POD_SECONDS_PER_IMAGE = 10.0  # measured wall time per keyframe on an A40, incl. polling (task 0017)
 
     # FLUX.2 klein 4B for --keyframe-generator pod: the official ComfyUI template's files,
     # pinned by revision and sha256 (HF API, 22 Nov 2026). Ungated, Apache-2.0. ~12.5 GB.

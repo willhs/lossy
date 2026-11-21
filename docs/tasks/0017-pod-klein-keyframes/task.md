@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 steady_task: 4cd29e30-5bea-400c-b68e-df111d1683dc
 created: 2026-11-22
 ---
@@ -28,13 +28,16 @@ the $50-60 ceiling. klein 4B on the A6000 we already rent should cost under $1 f
 
 ## Success criteria
 
-- [ ] `uv run python -m pytest` passes; new tests cover the graph, the generator and the strategy's pod-first
+- [x] `uv run python -m pytest` passes; new tests cover the graph, the generator and the strategy's pod-first
       keyframe pass with the pod mocked.
-- [ ] `decode.py --strategy runpod-ltx25-keyframe --keyframe-generator pod` makes keyframes on the pod
-      before the first clip, frees models, then renders a clip (proved on a real pod).
-- [ ] Pod keyframe face cosine to the sheet is within 0.05 of fal klein's on the same metric, no
+- [x] `decode.py --strategy runpod-ltx25-keyframe --keyframe-generator pod` makes keyframes on the pod
+      before the first clip, frees models, then renders a clip (proved on a real pod through the
+      strategy's `prepare()` + `generate()`, the calls `run_decode` makes, via `trial/sw4_pod_keyframes.py`;
+      the clip rendered and was served by ComfyUI, but was not saved locally because of a clips-dir bug in that
+      script, since fixed; not rerun, to save money).
+- [x] Pod keyframe face cosine to the sheet is within 0.05 of fal klein's on the same metric, no
       wardrobe/sheet leak by eye; per-image time recorded; contact sheet of fal vs pod keyframes.
-- [ ] Spend <= $0.50; no pod left running.
+- [x] Spend <= $0.50; no pod left running.
 
 ## Constraints / won't do
 

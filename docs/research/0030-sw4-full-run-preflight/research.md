@@ -45,6 +45,27 @@ resume) are fixed here with tests.
 Filed under goal `b33ea4e0`: `f91deccb` (B1, copy the encode to budgie, headless, $0) and
 `bdebe712` (B2 + B4, Will's calls).
 
+### SW4 cost with keyframes (updated 22 Nov 2026, task 0017)
+
+Keyframe-first passed its paid check (research 0029, "SW4 paid check, finish"). On fal it added
+$15-19 and took the run over the ceiling. Task 0017 moved klein onto the LTX pod
+(`--keyframe-generator pod`, now the default) and measured it on SW4 684-710: about 10 s of A40 time per
+keyframe, the same face cosine as fal or better (research 0029, "Self-hosted klein on the pod").
+
+| Item | Text only | Keyframe on fal | Keyframe on the pod |
+|---|---|---|---|
+| Video, LTX-2.5 (~60 GPU-h, B2) | $35-41 | $35-41 | $35-41 |
+| Ambience (MMAudio) | ~$8 | ~$8 | ~$8 |
+| Sheets (12 x up to 3 draws) | - | ~$0.19 | ~6 min of pod time, ~$0.06 |
+| Keyframes (795 shots) | - | $15-19 (upper bound $18.55) | ~795 x 10 s = 2.2 GPU-h, **$1.30-1.50** at $0.59-0.69/h |
+| klein download at boot (12.5 GB) | - | - | ~2 min per pod, under $0.03 each |
+| **SW4 total** | **$43-49** | **$58-68** | **$44.5-50.5** |
+
+So keyframe-first on the pod fits the $50-60 ceiling, where fal did not. The fal cap
+(`--keyframe-fal-cap`) and `FAL_KEY` are no longer needed; the pod time is RunPod spend, so
+`capped_run` now sees it. One more pod-time item: a replacement pod re-downloads klein (~2 min)
+even though the keyframes are already cached locally.
+
 Two "MUST LAND BEFORE 30 NOV" tasks from the 0026 review are still in the backlog and not
 dispatched: `fa27c947` (ssh boot-race fatality, F6) and `4189b5dc` (refuse-to-rent escape
 hatch, F5). The run is not safe unattended without F6 (one unlucky replacement pod ends the
@@ -101,10 +122,11 @@ uv run python tools/capped_run.py --cap 27 --margin 0.5 --no-project --output-di
 uv run python decode.py $RUN --strategy runpod-ltx25 --stitch
 ```
 
-Keyframe ON instead: `--strategy runpod-ltx25-keyframe --keyframe-fal-cap <USD>` (about $19 for
-every keyframe shot; fal spend is outside capped_run), `LOSSY_FACE_MODELS=<dir with yunet.onnx and
-sface.onnx>`, `FAL_KEY`, and the progress file `decode_progress_runpod-ltx25-keyframe.json`.
-Run its `--dry-run` first: it prints the routing and the fal estimate.
+Keyframe ON instead: `--strategy runpod-ltx25-keyframe` (klein runs on the pod by default since task
+0017: ~2.2 GPU-h, ~$1.4, inside capped_run; `--keyframe-generator fal --keyframe-fal-cap <USD>` is the
+old fal route, about $19 outside capped_run), `LOSSY_FACE_MODELS=<dir with yunet.onnx and sface.onnx>`,
+and the progress file `decode_progress_runpod-ltx25-keyframe.json`. Pass the matching progress file
+to capped_run's `--progress`. Run its `--dry-run` first: it prints the routing and the pod-time estimate.
 
 Input set to copy (from the Mac, `rsync -a` so mtimes survive):
 `shots.json characters.json characters/ speakers.json voice_map.json scenes.json

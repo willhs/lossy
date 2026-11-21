@@ -1,0 +1,332 @@
+{
+ "pod": {
+  "sheets": [
+   "han_solo",
+   "luke_skywalker",
+   "obi_wan_ben_kenobi"
+  ],
+  "per_character": {
+   "luke_skywalker": 0.6444,
+   "obi_wan_ben_kenobi": 0.6955,
+   "han_solo": 0.612
+  },
+  "n_per_character": {
+   "luke_skywalker": 10,
+   "obi_wan_ben_kenobi": 8,
+   "han_solo": 7
+  },
+  "mean_over_keyframes": 0.6517,
+  "mean_of_characters": 0.6506,
+  "per_shot": {
+   "684": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.7749
+    },
+    "faces": 1
+   },
+   "686": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6868
+    },
+    "faces": 1
+   },
+   "687": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.5454
+    },
+    "faces": 1
+   },
+   "688": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.704
+    },
+    "faces": 1
+   },
+   "689": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.6962
+    },
+    "faces": 1
+   },
+   "692": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6057
+    },
+    "faces": 2
+   },
+   "693": {
+    "characters": [
+     "luke_skywalker",
+     "han_solo"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.489,
+     "han_solo": 0.5562
+    },
+    "faces": 2
+   },
+   "695": {
+    "characters": [
+     "han_solo",
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "han_solo": 0.5508,
+     "obi_wan_ben_kenobi": 0.4283
+    },
+    "faces": 2
+   },
+   "696": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.7369
+    },
+    "faces": 1
+   },
+   "698": {
+    "characters": [
+     "han_solo",
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "han_solo": 0.6085,
+     "obi_wan_ben_kenobi": 0.8021
+    },
+    "faces": 2
+   },
+   "699": {
+    "characters": [
+     "luke_skywalker",
+     "han_solo"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6423,
+     "han_solo": 0.7147
+    },
+    "faces": 2
+   },
+   "700": {
+    "characters": [
+     "luke_skywalker",
+     "han_solo"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6097,
+     "han_solo": 0.7481
+    },
+    "faces": 2
+   },
+   "702": {
+    "characters": [
+     "han_solo",
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "han_solo": 0.5376,
+     "obi_wan_ben_kenobi": 0.816
+    },
+    "faces": 2
+   },
+   "703": {
+    "characters": [
+     "luke_skywalker",
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.5546,
+     "obi_wan_ben_kenobi": 0.656
+    },
+    "faces": 2
+   },
+   "705": {
+    "characters": [
+     "han_solo"
+    ],
+    "cosine": {
+     "han_solo": 0.568
+    },
+    "faces": 2
+   },
+   "707": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.8248
+    },
+    "faces": 2
+   },
+   "708": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6402
+    },
+    "faces": 1
+   },
+   "710": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.7949
+    },
+    "faces": 1
+   }
+  }
+ },
+ "fal": {
+  "sheets": [
+   "luke_skywalker",
+   "obi_wan_ben_kenobi",
+   "uncle_owen"
+  ],
+  "per_character": {
+   "luke_skywalker": 0.676,
+   "obi_wan_ben_kenobi": 0.6446,
+   "uncle_owen": 0.7679
+  },
+  "n_per_character": {
+   "luke_skywalker": 8,
+   "obi_wan_ben_kenobi": 5,
+   "uncle_owen": 1
+  },
+  "mean_over_keyframes": 0.6713,
+  "mean_of_characters": 0.6962,
+  "per_shot": {
+   "684": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6853
+    },
+    "faces": 1
+   },
+   "686": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6573
+    },
+    "faces": 1
+   },
+   "687": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.6967
+    },
+    "faces": 1
+   },
+   "688": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.708
+    },
+    "faces": 1
+   },
+   "689": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.6832
+    },
+    "faces": 1
+   },
+   "692": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6284
+    },
+    "faces": 2
+   },
+   "694": {
+    "characters": [
+     "luke_skywalker",
+     "uncle_owen"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.7611,
+     "uncle_owen": 0.7679
+    },
+    "faces": 2
+   },
+   "696": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.7484
+    },
+    "faces": 1
+   },
+   "703": {
+    "characters": [
+     "luke_skywalker",
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.5309,
+     "obi_wan_ben_kenobi": 0.3887
+    },
+    "faces": 2
+   },
+   "707": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.8046
+    },
+    "faces": 2
+   },
+   "708": {
+    "characters": [
+     "luke_skywalker"
+    ],
+    "cosine": {
+     "luke_skywalker": 0.6884
+    },
+    "faces": 1
+   },
+   "710": {
+    "characters": [
+     "obi_wan_ben_kenobi"
+    ],
+    "cosine": {
+     "obi_wan_ben_kenobi": 0.6499
+    },
+    "faces": 1
+   }
+  }
+ }
+}

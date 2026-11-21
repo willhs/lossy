@@ -949,6 +949,10 @@ running (both exit sweeps confirmed clean). Logs: `evidence/capped_run_K.log`, `
 
 ### Trial files
 
+- `trial/sw4_pod_keyframes.py`, `trial/score_keyframes.py`: the self-hosted klein validation
+  (task 0017) and its keyframe-stage scorer + contact sheet. `trial/results_pod_klein.json`,
+  `trial/pod_klein_timing.jsonl`, `trial/pod_vs_fal_keyframes.jpg`: its results.
+
 - `trial/make_trial_manifest.py`, `trial/make_refs.py`, `trial/score.py`: the builder, the
   reference maker and the scorer (`--arms T,I` for arm I).
 - `trial/make_ingredients_arm.py`, `trial/run_arm_i.sh`: arm I's sheet composer, gate check and
@@ -1228,6 +1232,77 @@ proven.** [Direct from sources; Inferred where marked]
 - `trial/results_T_KQ.json`, `trial/results_T_W.json`, `trial/cost_bakeoff.jsonl`,
   `trial/kq_keyframes.jpg`, `trial/w_contact.jpg`.
 - The clips, frames and grids are in the job workspace under `evidence/run0029/`, outside git.
+
+### Self-hosted klein on the pod (22 Nov 2026): passes, now the default
+
+Steady task `4cd29e30`, task doc `docs/tasks/0017-pod-klein-keyframes/`. Will approved ~$0.30 (cap $0.50).
+**Verdict: pass. klein on the LTX pod matches fal klein on identity (face cosine to the sheet 0.685 vs
+0.656 on the same 11 shots), shows no wardrobe or sheet leak, and costs about 10 s of pod time per
+keyframe. `--keyframe-generator pod` is now the default for `runpod-ltx25-keyframe`; `fal` stays
+available.** This answers "Can klein and Qwen run on the LTX RunPod pod?" above for klein. Qwen not tried.
+
+**What was built.** `keyframes.klein_graph` (ComfyUI API graph: `UNETLoader`, `CLIPLoader` type `flux2`,
+`VAELoader`, `CLIPTextEncode`, one `LoadImage` + `VAEEncode` + `ReferenceLatent` per sheet,
+`EmptyFlux2LatentImage`, `Flux2Scheduler` 4 steps, euler, `BasicGuider`, `SamplerCustomAdvanced`,
+`VAEDecode`). Node inputs are from the v0.39.2 source and the official "Klein 4B Distilled" edit template;
+the pod accepted every graph first time. `PodKleinGenerator` (beside `FalKleinGenerator`) runs it through
+the strategy's pod. Weights, pinned by sha256: BFL `flux-2-klein-4b-fp8.safetensors` (4.07 GB), Comfy-Org
+`qwen_3_4b.safetensors` (8.04 GB, bf16), `flux2-vae.safetensors` (0.34 GB). `prepare()` now boots the
+pod when the generator needs one, draws the sheets and keyframes, and calls ComfyUI `/free` with
+`unload_models` before the first video. A fully cached run boots nothing in `prepare()`. Three pod
+images failing in a row end the run (`KeyframePodLost`), so capped_run restarts it on a new pod.
+Otherwise a dead pod would send every remaining shot to text without saying so.
+
+**What ran.** SW4 window 684-710 (27 shots, the same window as "SW4 paid check, finish"), under
+`capped_run` (cap $0.38): one A40 SECURE pod at $0.63/h (every community 48 GB type was out of stock).
+Boot, ComfyUI upgrade, and LTX plus klein downloads took 6.5 min (klein about 1 min of that). Then 8 sheet draws
+and 18 keyframes. Then klein was unloaded and LTX-2.5 rendered shot 684's clip on the same pod. ComfyUI
+reported success and served `lossy_00001_.mp4`, which proves LTX loads after the unload. The clip was not
+saved locally: my validation script did not create the clips dir, which `run_decode` does. I did not pay
+to render it again. Pod confirmed gone. RunPod spend was **$0.12** by balance (0.511 to 0.388).
+capped_run's final line read $0.083 because RunPod was still charging the pod's last minutes when it
+checked, which is the balance lag research 0030 warns about. fal was then redrawn on the same window for a
+same-day comparison (`sw4_prepare.py`, fal cap $0.30): **$0.286** estimated. **Total about $0.41 of the
+$0.50 cap.**
+
+**Timing** (wall time per image as the client sees it, including 2-3 s of `/history` polling):
+sheets 1024x1024 median 5.9 s (mean 6.8, the first 14.0 s, which includes loading klein); keyframes
+1280x704 with 1-2 references median 9.8 s (7.6-11.6). [Direct: `trial/pod_klein_timing.jsonl`]
+
+**Identity** (`trial/score_keyframes.py`, the same measure as `score.py`'s keyframe column:
+best cosine of the keyframe's two largest faces to the sheet's face centroid):
+
+| | pod klein | fal klein |
+|---|---|---|
+| Same shots and characters (11 shots, 12 pairs) | **0.685** | 0.656 |
+| ...single-character shots (10) | 0.701 | 0.695 |
+| ...Luke / Obi-Wan on shared shots | 0.672 / 0.704 | 0.664 / 0.645 |
+| All of each arm's keyframes, Luke / Obi-Wan / Han / Owen | 0.644 / 0.696 / 0.612 / - | 0.676 / 0.645 / - / 0.768 |
+
+Rule: within 0.05 of fal. **Pass**: the pod is +0.03 on the shared shots and +0.006 on singles.
+The fal redraw reproduced the published fal figures almost exactly (Luke 0.676 vs 0.674, Obi-Wan
+0.645 vs 0.643, Owen 0.768). fal klein with a fixed seed is deterministic, so that row is a fair baseline.
+Pod Luke over all its frames (0.644) is lower than fal's only because the pod also drew Luke+Han pair
+shots (0.49-0.64), which fal never drew. [Direct: `trial/results_pod_klein.json`]
+
+**By eye** (`trial/pod_vs_fal_keyframes.jpg`, sheets on top, pod left, fal right). The pod sheets are
+head-only on grey, with no robe collar on Obi-Wan's (fal's had one). Each keyframe wears its scene's
+wardrobe (dark tops, white tunic, brown and cream robes), with no grey t-shirt or grey-background leak.
+The pod's framing and lighting are close to fal's for the same seed and prompt.
+
+**Coverage changed with the draw, not the host.** The look-alike gate kept Han this time (third draw,
+0.46 to Luke) and dropped Uncle Owen (0.59-0.61 to Han), so the pod keyed **18 of 19** eligible shots
+against fal's **12 of 19** (fal dropped Han again). This is seed luck on near-identical descriptions,
+as noted in the earlier SW4 checks, not a property of the pod.
+
+**Cost for SW4** (795 keyframe shots, 12 sheets): about 795 x 10 s = 2.2 GPU-hours, so **$1.30-1.50**
+at $0.59-0.69/h, against $15-19 on fal. Research 0030 has the updated SW4 total ($44.5-50.5 with
+keyframes on the pod). Not measured: whether an A6000 or L40 is slower than the A40 here, and the
+2-3 s of polling in each figure (a shorter poll would cut about 20% off).
+
+**Open.** (1) The gate's coverage loss on look-alike pairs is still open (Han or Owen get dropped
+depending on the draw). (2) A replacement pod later in the run re-downloads klein (~1-2 min) even though
+the keyframes are cached locally. That is small, so I left it.
 
 ## What we don't know
 

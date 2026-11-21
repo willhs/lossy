@@ -155,6 +155,12 @@ class KeyframeSetupError(Exception):
     """A prerequisite is missing (key, models). Stops the run before any pod exists."""
 
 
+class KeyframePodLost(RuntimeError):
+    """Several pod images failed in a row: the pod is probably gone. Deliberately not a
+    KeyframeError, so it is not absorbed as "this shot uses text": it ends the run, and
+    a restart (capped_run) reuses the cached frames and draws the rest on a new pod."""
+
+
 class KeyframeGenerator(Protocol):
     id: str   # stamped into cache keys, so a changed generator regenerates
 
@@ -487,12 +493,14 @@ class PodKleinGenerator:
     """
 
     id = "pod-flux2-klein-4b-fp8"
+    MAX_CONSECUTIVE_FAILURES = 3
 
     def __init__(self, runner: ComfyRunner, timing_log: str | None = None):
         self.runner = runner
         self.timing_log = timing_log
         self.used_pod = False
         self._uploads: dict[str, str] = {}
+        self._failures_in_a_row = 0
 
     def preflight(self) -> None:
         if not os.environ.get("RUNPOD_API_KEY"):
@@ -518,18 +526,27 @@ class PodKleinGenerator:
         if digest not in self._uploads:
             name = self.runner.upload(png)
             if not name:
-                raise KeyframeError("sheet upload to the pod failed")
+                raise self._fail("sheet upload to the pod failed")
             self._uploads[digest] = name
         return self._uploads[digest]
+
+    def _fail(self, why: str) -> KeyframeError:
+        """One image failed: that shot uses text. Several in a row: the pod is lost."""
+        self._failures_in_a_row += 1
+        if self._failures_in_a_row >= self.MAX_CONSECUTIVE_FAILURES:
+            raise KeyframePodLost(f"{self._failures_in_a_row} klein images in a row failed on the pod "
+                                  f"(last: {why}); stopping so a restart redraws them on a new pod")
+        return KeyframeError(why)
 
     def _run(self, graph: dict, kind: str, seed: int) -> bytes:
         t0 = time.time()
         try:
             png = self.runner.run(graph)
-        except Exception as e:   # a dropped connection to the pod: this image only
-            raise KeyframeError(f"klein on the pod failed: {e}") from e
+        except Exception as e:   # a dropped connection to the pod
+            raise self._fail(f"klein on the pod failed: {e}") from e
         if not png:
-            raise KeyframeError("klein on the pod returned no image")
+            raise self._fail("klein on the pod returned no image")
+        self._failures_in_a_row = 0
         if self.timing_log:
             os.makedirs(os.path.dirname(self.timing_log) or ".", exist_ok=True)
             with open(self.timing_log, "a") as f:
