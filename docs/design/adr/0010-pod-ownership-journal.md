@@ -53,8 +53,7 @@ nothing owed deletes its files.
 
 ## Reconciliation policy
 
-`RunPodSession.reconcile_journals()` runs once per session, before the first
-`create_pod` request and when `reconnect` finds a state file. For every peer
+`RunPodSession.reconcile_journals()` runs before every `create_pod` request (re-scanning peers each time, see the hardening addendum) and when `reconnect` finds a state file. For every peer
 journal in the same output dir:
 
 1. **Live peer** (lock held): never touched. Its claimed ids are protected from
@@ -199,3 +198,29 @@ could start a child after the watcher's stop.
 Not bounded: balance lag itself (RunPod crediting spend late), other providers' spend
 (fal), and whether the account is shared at all. Those are Will's call; this change
 only stops the supervisor from depending on the answer for the sweep.
+
+# Addendum: journal hardening (research 0026 review F2, F3, F4, F8, F9)
+
+- **A fresh pod's "not found" is not proof it is gone (F2).** A claim carries
+  `unseen_until` (creation + `UNSEEN_POD_GRACE_S`, 15 min), cleared the first time the API
+  shows us the pod. While it is set, "not found" from terminate or `get_pod` keeps the
+  claim (`abandoned`): `_release` returns `PodNotVisibleYet`, `_pod_status` answers
+  `unknown`, so the allocation gate refuses to rent past it, and the exit sweep keeps
+  asking (every `UNSEEN_EXIT_POLL_S`, at most `UNSEEN_EXIT_WAIT_S` = 150 s, only while the
+  listing itself works) so a pod that appears is terminated. Past that bound the claim
+  stays in the journal and the next run's reconcile settles it. This replaces the "name
+  window" the review proposed: the claim already carries the id, which is stronger.
+  A pod the API has shown us keeps the old rule.
+- **Peers are re-scanned on every `create_pod` (F3).** `reconcile_journals` no longer has a
+  once-per-session flag: a listdir plus a non-blocking flock per peer; the API is called
+  only when a dead peer exists.
+- **Ambiguity is settled by a listing (F4).** After a create succeeds and is journaled, if
+  an earlier request failed ambiguously the account is listed; with no second pod under
+  our name the window closes. A second pod, or a failed listing, leaves it open.
+- **Durability (F8).** `_write_atomic` uses `F_FULLFSYNC` where the platform defines it
+  (macOS), else `os.fsync`, and fsyncs the directory after the rename (best effort).
+- **Fail closed on the unreadable (F9).** A dead peer journal that cannot be parsed
+  refuses to rent (`UnsafeToAllocateError`, after the readable ones are settled), with the
+  `pod_journal forget` hint; an `OSError` scanning the journals is the same error, not an
+  escaping `OSError`; `scan_peers` removes the empty lock file it created when it races a
+  closing peer.

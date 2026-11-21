@@ -9,7 +9,7 @@ Shape (one file per session, `<dir>/<run_id>.json`):
 
     {"version": 1, "run_id": "ab12cd34", "name": "lossy-comfyui-ab12cd34",
      "pods": {"<pod id>": {"name": ..., "state": "owned"|"kept"|"abandoned",
-                           "kept_until": epoch|null}},
+                           "kept_until": epoch|null, "unseen_until": epoch|null}},
      "windows": [{"name": ..., "until": epoch}]}
 
 * `owned`     a live pod this session answers for.
@@ -17,6 +17,9 @@ Shape (one file per session, `<dir>/<run_id>.json`):
               `kept_until`, terminated after it if the reaper evidently failed.
 * `abandoned` the handle was dropped / a terminate was requested but not yet
               confirmed. Written BEFORE the terminate call.
+* unseen_until  set when a pod is created, cleared once the API has shown it to us.
+              Until then "not found" is not proof the pod is gone (the API can
+              lag a fresh pod by minutes while it bills), so the claim survives it.
 * window      a pod may exist under `name` whose id we never received (a create
               request that timed out, or was in flight when the process died).
               Written BEFORE the create request; expires, since a late create
@@ -49,9 +52,11 @@ class Claim:
     name: str
     state: str = OWNED
     kept_until: float | None = None
+    unseen_until: float | None = None
 
     def to_json(self) -> dict:
-        return {"name": self.name, "state": self.state, "kept_until": self.kept_until}
+        return {"name": self.name, "state": self.state, "kept_until": self.kept_until,
+                "unseen_until": self.unseen_until}
 
 
 @dataclass
@@ -92,7 +97,8 @@ class Snapshot:
             state = c.get("state", OWNED)
             snap.claims[str(pid)] = Claim(
                 str(pid), c.get("name") or snap.name,
-                state if state in STATES else OWNED, c.get("kept_until"))
+                state if state in STATES else OWNED, c.get("kept_until"),
+                c.get("unseen_until"))
         for w in data.get("windows") or []:
             snap.windows.append(Window(str(w["name"]), float(w["until"])))
         return snap
@@ -117,14 +123,41 @@ def _unlock(fd: int | None) -> None:
             os.close(fd)
 
 
+def _fsync(fd: int) -> None:
+    """Flush `fd` to the drive. macOS's os.fsync stops at the drive's cache; F_FULLFSYNC does not."""
+    full = getattr(fcntl, "F_FULLFSYNC", None)
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError:
+            pass                      # filesystem without it: fall back to a plain fsync
+    os.fsync(fd)
+
+
+def _fsync_dir(directory: str) -> None:
+    """Make a rename in `directory` durable. Best effort: not every platform can open a directory."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        _fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _write_atomic(path: str, payload: dict) -> None:
-    """Tmp + fsync + rename: a power cut leaves the old or the new file, never half."""
+    """Tmp + fsync + rename + directory fsync: a power cut leaves the old or the new file, never half."""
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(payload, f, indent=2)
         f.flush()
-        os.fsync(f.fileno())
+        _fsync(f.fileno())
     os.replace(tmp, path)
+    _fsync_dir(os.path.dirname(path) or ".")
 
 
 class PodJournal:
@@ -163,8 +196,8 @@ class PodJournal:
     # -- mutations (each one persists) --
 
     def set_pod(self, pod_id: str, name: str, state: str = OWNED,
-                kept_until: float | None = None) -> None:
-        self.snapshot.claims[pod_id] = Claim(pod_id, name, state, kept_until)
+                kept_until: float | None = None, unseen_until: float | None = None) -> None:
+        self.snapshot.claims[pod_id] = Claim(pod_id, name, state, kept_until, unseen_until)
         self._save()
 
     def drop_pod(self, pod_id: str) -> None:
@@ -186,7 +219,8 @@ class PodJournal:
         """Take over a dead peer's unresolved claims, in one write."""
         for c in claims:
             state = KEPT if c.state == KEPT else ABANDONED
-            self.snapshot.claims[c.pod_id] = Claim(c.pod_id, c.name, state, c.kept_until)
+            self.snapshot.claims[c.pod_id] = Claim(
+                c.pod_id, c.name, state, c.kept_until, c.unseen_until)
         for w in windows:
             self.snapshot.windows = [x for x in self.snapshot.windows if x.name != w.name]
             self.snapshot.windows.append(w)
@@ -294,7 +328,12 @@ def scan_peers(directory: str, exclude_run_id: str) -> list[Peer]:
             with open(json_path) as f:
                 snap = Snapshot.from_json(json.load(f))
         except FileNotFoundError:
-            _unlock(fd)           # discarded under us by a concurrent reconciler
+            # Closed (or discarded by a concurrent reconciler) under us. Taking
+            # the lock created an empty file if the owner had already removed
+            # it; remove that too, or it is left behind for good.
+            if fd is not None:
+                _remove(lock_path)
+            _unlock(fd)
             continue
         except (ValueError, KeyError, TypeError, AttributeError):
             snap = None

@@ -1809,15 +1809,45 @@ class TestPodOwnershipJournal:
         assert dead.pod_id in fleet.live           # documented limit: ADR 0010
         other._cleanup()
 
-    def test_an_unreadable_journal_does_not_block_a_new_pod(self, tmp_path, fleet):
+    def test_an_unreadable_dead_journal_refuses_to_rent_until_forgotten(self, tmp_path, fleet):
+        """What it owns is unknown: same fail-closed rule as a listing outage (F9)."""
         (tmp_path / "runpod_journal").mkdir()
         (tmp_path / "runpod_journal" / "deadbeef.json").write_text("{not json")
 
         s = RunPodSession(str(tmp_path))
+        with pytest.raises(UnsafeToAllocateError, match="cannot be read"):
+            s.create_pod()
+        assert fleet.live == {} and fleet.created == 0
+
+        import pod_journal
+        assert pod_journal.cmd_forget(str(tmp_path / "runpod_journal"), None) == 0
         s.create_pod()
         assert list(fleet.live) == [s.pod_id]
         s._cleanup()
         assert fleet.live == {}
+
+    def test_an_unreadable_journal_does_not_stop_a_readable_one_being_reaped(self, tmp_path, fleet):
+        dead = RunPodSession(str(tmp_path))
+        dead.create_pod()
+        self._dies(dead)
+        (tmp_path / "runpod_journal" / "deadbeef.json").write_text("{not json")
+
+        s = RunPodSession(str(tmp_path))
+        with pytest.raises(UnsafeToAllocateError):
+            s.create_pod()
+        assert dead.pod_id not in fleet.live
+
+    def test_an_oserror_scanning_the_journals_refuses_to_rent_as_a_pod_setup_error(
+            self, tmp_path, fleet, monkeypatch):
+        import pod_journal
+
+        def boom(*_a, **_k):
+            raise PermissionError("denied")
+        monkeypatch.setattr(pod_journal, "scan_peers", boom)
+        s = RunPodSession(str(tmp_path))
+        with pytest.raises(UnsafeToAllocateError, match="denied"):
+            s.create_pod()
+        assert fleet.created == 0
 
     def test_no_api_key_means_no_reconcile_and_the_journal_is_kept(self, tmp_path, fleet, monkeypatch):
         dead = RunPodSession(str(tmp_path))

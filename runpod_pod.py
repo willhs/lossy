@@ -104,6 +104,14 @@ LATE_CREATE_GRACE_S = 3600
 # Slack past a kept pod's armed deadline before a later run concludes the
 # on-pod reaper failed and terminates it.
 KEPT_DEADLINE_SLACK_S = 600
+# The API can fail to show a pod it just created for minutes while it bills
+# (research 0026 review F2). Until it has shown us the pod once, "not found" on
+# it is not proof it is gone: its claim is kept for this long after creation.
+UNSEEN_POD_GRACE_S = 900
+# How long the exit sweep will wait for such a pod to become visible so it can
+# be terminated, and how often it asks meanwhile. Below capped_run.CHILD_GRACE_S.
+UNSEEN_EXIT_WAIT_S = 150
+UNSEEN_EXIT_POLL_S = 10
 JOURNAL_DIRNAME = pod_journal.JOURNAL_DIRNAME
 # Exit sweep (ADR 0010 addendum): list, terminate, and list again until a pass
 # finds nothing of ours and no claim is outstanding. Passes are bounded by count
@@ -151,6 +159,14 @@ class OutOfFundsError(RuntimeError):
 
 class PodSetupError(RuntimeError):
     """A pod could not be provisioned or brought up. Retryable on a new pod."""
+
+
+class PodNotVisibleYet(RuntimeError):
+    """The API says 'not found' for a pod created moments ago: no proof it is gone.
+
+    Returned (never raised) by `_release` in place of the terminate error, so
+    callers that read "not found" as "confirmed gone" do not.
+    """
 
 
 class UnsafeToAllocateError(PodSetupError):
@@ -294,10 +310,13 @@ class RunPodSession:
         # session that never asks for a pod leaves nothing on disk.
         self._journal = pod_journal.PodJournal(
             os.path.join(output_dir, JOURNAL_DIRNAME), self.run_id, self.pod_name)
-        self._reconciled = False
         # A create request has failed in a way that does not prove no pod was
-        # made (timeout, dropped connection). Keeps its late-create window open.
+        # made (timeout, dropped connection). Keeps its late-create window open
+        # until a later success lists the account by name and finds no second pod.
         self._create_ambiguous = False
+        # Whether the last exit-sweep listing worked (a pass that could not list
+        # must not make the sweep wait for a pod to appear).
+        self._listing_ok = False
         # True while _cleanup runs, so a signal landing mid-cleanup neither
         # restarts nor aborts it. None until the exit sweep has run; then
         # whether the account confirmed nothing of ours is left (see _cleanup).
@@ -439,10 +458,33 @@ class RunPodSession:
 
     # -- Ownership journal (ADR 0010) --
 
-    def _own(self, pod_id: str) -> bool:
-        """Record, durably, that this session answers for `pod_id`. False if only in memory."""
+    def _own(self, pod_id: str, *, fresh: bool = False) -> bool:
+        """Record, durably, that this session answers for `pod_id`. False if only in memory.
+
+        `fresh` marks a pod we just created and the API has not shown us yet.
+        """
         self._owned_pod_ids.add(pod_id)
-        return self._journal_write(self._journal.set_pod, pod_id, self.pod_name, pod_journal.OWNED)
+        return self._journal_write(
+            self._journal.set_pod, pod_id, self.pod_name, pod_journal.OWNED, None,
+            time.time() + UNSEEN_POD_GRACE_S if fresh else None)
+
+    def _mark_seen(self, pod_id: str) -> None:
+        """The API showed us `pod_id`: from now on 'not found' means it is gone."""
+        claim = self._journal.snapshot.claims.get(pod_id)
+        if claim is not None and claim.unseen_until is not None:
+            self._journal_write(self._journal.set_pod, pod_id, claim.name, claim.state,
+                                claim.kept_until, None)
+
+    def _unseen(self, pod_id: str, claim: pod_journal.Claim | None = None) -> bool:
+        """Whether 'not found' on `pod_id` is still too early to count as proof."""
+        claim = claim or self._journal.snapshot.claims.get(pod_id)
+        return bool(claim and claim.unseen_until is not None and time.time() < claim.unseen_until)
+
+    def _unseen_wait_s(self, spared: set[str] | frozenset[str]) -> float:
+        """Seconds until the last still-unseen claim stops being excused (0 if none)."""
+        now = time.time()
+        return max((c.unseen_until - now for pid, c in self._journal.snapshot.claims.items()
+                    if c.unseen_until is not None and pid not in spared), default=0.0)
 
     def _claimed_names(self) -> set[str]:
         """Pod names this session answers for: its own plus any it adopted."""
@@ -454,6 +496,24 @@ class RunPodSession:
         return {pid for pid, c in self._journal.snapshot.claims.items()
                 if c.state == pod_journal.KEPT and c.kept_until is not None
                 and now < c.kept_until + KEPT_DEADLINE_SLACK_S}
+
+    def _settle_ambiguity(self, runpod, pod_id: str) -> None:
+        """After a create succeeded: did an earlier ambiguous one leave a second pod?
+
+        With the winner journaled, list the account by our name. Nothing else
+        under it: the earlier failures made nothing, so the window can close.
+        Another pod under it, or no listing: leave the window open (the exit
+        sweep and the next run find the pod by name).
+        """
+        if not self._create_ambiguous:
+            return
+        try:
+            pods = runpod.get_pods() or []
+        except Exception:
+            return
+        if not any(p.get("name") == self.pod_name and p.get("id") != pod_id
+                   and p.get("desiredStatus", "RUNNING") != "EXITED" for p in pods):
+            self._create_ambiguous = False
 
     def _settle_create_window(self) -> None:
         """Close the late-create window if no failed request is still unexplained."""
@@ -467,12 +527,17 @@ class RunPodSession:
         claim; the claim is dropped only once the pod is confirmed gone
         (terminated, or the API says it never/no longer existed).
         """
-        self._journal_write(
-            self._journal.set_pod,
-            pod_id,
-            (self._journal.snapshot.claims.get(pod_id) or pod_journal.Claim(pod_id, self.pod_name)).name,
-            pod_journal.ABANDONED)
+        prior = self._journal.snapshot.claims.get(pod_id) or pod_journal.Claim(pod_id, self.pod_name)
+        self._journal_write(self._journal.set_pod, pod_id, prior.name, pod_journal.ABANDONED,
+                            None, prior.unseen_until)
         err = self._terminate_pod_id(pod_id)
+        if err is not None and _is_not_found(err) and self._unseen(pod_id):
+            # Created minutes ago and never shown by the API: it may exist and
+            # bill. Keep the claim; the gate, the exit sweep and the next run
+            # keep asking by id until it appears or the grace passes.
+            print(f"  Pod {pod_id}: the API says not found, but it has not shown this pod "
+                  f"yet; keeping the claim rather than assuming it is gone.")
+            return PodNotVisibleYet(f"pod {pod_id} is not visible to the API yet")
         if err is None or _is_not_found(err):
             self._journal_write(self._journal.drop_pod, pod_id)
         return err
@@ -496,18 +561,22 @@ class RunPodSession:
                 unsettled.append(pid)
         return unsettled
 
-    def _pod_status(self, runpod, pod_id: str) -> str:
+    def _pod_status(self, runpod, pod_id: str, claim: pod_journal.Claim | None = None) -> str:
         """Ask the account about one pod by id: 'gone', 'running' or 'unknown'.
 
         The listing can lag behind a pod that exists, so absence from it is
-        not proof; an error is not proof either.
+        not proof; an error is not proof either; nor is "not found" for a pod
+        the API has not yet shown us (`_unseen`).
         """
         try:
             status = runpod.get_pod(pod_id)
         except Exception:
             return "unknown"
-        if not status or status.get("desiredStatus") == "EXITED":
+        if status and status.get("desiredStatus") == "EXITED":
             return "gone"
+        if not status:
+            return "unknown" if self._unseen(pod_id, claim) else "gone"
+        self._mark_seen(pod_id)
         return "running"
 
     def reconcile_journals(self, spare: set[str] | frozenset[str] = frozenset()) -> list[str]:
@@ -522,9 +591,15 @@ class RunPodSession:
         it twice, or after a crash halfway, converges to the same account.
         Returns the ids it terminated.
         """
-        if self._reconciled:
-            return []
-        peers = pod_journal.scan_peers(self._journal.directory, self.run_id)
+        # Every call re-scans: a peer can die at any time, and the scan is a
+        # listdir plus one non-blocking flock per peer. The API is only called
+        # when a dead peer is found.
+        try:
+            peers = pod_journal.scan_peers(self._journal.directory, self.run_id)
+        except OSError as e:
+            raise UnsafeToAllocateError(
+                f"cannot read the pod journals in {self._journal.directory} ({e}), "
+                f"so cannot tell whether an earlier run's pod is still billing") from e
         dead = [p for p in peers if not p.live]
         for p in peers:
             if p.live or p.snapshot is None:
@@ -537,12 +612,9 @@ class RunPodSession:
 
     def _reconcile_dead(self, peers, dead, spare) -> list[str]:
         unreadable = [p for p in dead if p.snapshot is None]
-        for p in unreadable:
-            print(f"  Journal {p.json_path} is unreadable; leaving it. Check "
-                  f"https://www.runpod.io/console/pods for stray pods.")
         dead = [p for p in dead if p.snapshot is not None]
         if not dead:
-            self._reconciled = True
+            self._refuse_unreadable(unreadable)
             return []
         if not os.environ.get("RUNPOD_API_KEY"):
             print(f"  {len(dead)} earlier run(s) left a pod journal but RUNPOD_API_KEY is "
@@ -591,7 +663,7 @@ class RunPodSession:
                         and pid not in unsettled:
                     targets[pid] = pod_journal.Claim(pid, pod["name"], pod_journal.ABANDONED)
             for pid, claim in targets.items():
-                status = "running" if pid in running else self._pod_status(runpod, pid)
+                status = "running" if pid in running else self._pod_status(runpod, pid, claim)
                 if status == "running":
                     print(f"  Reconcile: terminating pod {pid} left by an earlier run "
                           f"({claim.name}, {claim.state})")
@@ -613,8 +685,18 @@ class RunPodSession:
             self._journal.adopt(list(unsettled.values()), windows)
         for peer in dead:
             peer.discard()
-        self._reconciled = True
+        self._refuse_unreadable(unreadable)   # after settling the readable ones
         return terminated
+
+    def _refuse_unreadable(self, unreadable) -> None:
+        """What an unreadable journal owns is unknown, like a failed listing: do not rent past it."""
+        if not unreadable:
+            return
+        paths = ", ".join(p.json_path for p in unreadable)
+        print(f"  Journal {paths} is unreadable. Check https://www.runpod.io/console/pods for stray pods.")
+        raise UnsafeToAllocateError(
+            f"not renting: an earlier run's pod journal cannot be read ({paths}), "
+            f"so what it owns is unknown. {pod_journal.stall_hint(self._journal.directory)}")
 
     # -- State file I/O --
 
@@ -767,7 +849,8 @@ class RunPodSession:
         self.pod_id = pod_id
         # If the claim could not be journaled, leave the write-ahead window open:
         # it is then the only durable trace of this pod's name.
-        if self._own(pod_id):
+        if self._own(pod_id, fresh=True):
+            self._settle_ambiguity(runpod, pod_id)
             self._settle_create_window()
         self.gpu_hourly_rate = gpu_rate
         self.pod_start_time = time.time()
@@ -781,6 +864,7 @@ class RunPodSession:
             if status is None:
                 time.sleep(5)
                 continue
+            self._mark_seen(self.pod_id)
             runtime = status.get("runtime")
             if runtime is not None and runtime.get("ports"):
                 break
@@ -988,15 +1072,26 @@ class RunPodSession:
         here raises. A clean pass is one that had nothing to do, so the pass
         after a terminate is the confirmation.
         """
-        deadline = time.time() + CLEANUP_BUDGET_S
-        for attempt in range(1, EXIT_SWEEP_ATTEMPTS + 1):
+        start = time.time()
+        deadline = start + CLEANUP_BUDGET_S
+        attempt = 0
+        while True:
+            attempt += 1
             _, settled = self._sweep_pass(spare)
             if settled:
                 return True
-            if attempt == EXIT_SWEEP_ATTEMPTS or time.time() + EXIT_SWEEP_DELAY_S >= deadline:
-                break
+            if self._listing_ok and self._unseen_wait_s(spare | self._spared_ids()) > 0:
+                # A pod we created that the API has not shown yet may appear
+                # and bill after we leave: keep asking, within a bound, and
+                # give the ordinary passes their full budget once it is dealt with.
+                if time.time() + UNSEEN_EXIT_POLL_S > start + UNSEEN_EXIT_WAIT_S:
+                    return False
+                attempt, deadline = 0, time.time() + CLEANUP_BUDGET_S
+                time.sleep(UNSEEN_EXIT_POLL_S)
+                continue
+            if attempt >= EXIT_SWEEP_ATTEMPTS or time.time() + EXIT_SWEEP_DELAY_S >= deadline:
+                return False
             time.sleep(EXIT_SWEEP_DELAY_S)
-        return False
 
     def _sweep_pass(self, spare: set[str] | frozenset[str]) -> tuple[list[str], bool]:
         """One listing + termination pass. Returns (stray ids found, settled).
@@ -1009,6 +1104,7 @@ class RunPodSession:
         if not os.environ.get("RUNPOD_API_KEY"):
             return [], False
 
+        self._listing_ok = False
         try:
             import runpod
             runpod.api_key = os.environ["RUNPOD_API_KEY"]
@@ -1017,6 +1113,7 @@ class RunPodSession:
             print(f"  Stray-pod check failed ({e}) -- "
                   f"verify at https://www.runpod.io/console/pods")
             return [], False
+        self._listing_ok = True
 
         spared = set(spare) | self._spared_ids()
         strays = [
