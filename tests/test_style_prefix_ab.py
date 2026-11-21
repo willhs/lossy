@@ -6,6 +6,7 @@ drives tools/capped_run.py patches its RunPod balance calls.
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from unittest.mock import MagicMock
@@ -213,6 +214,16 @@ class TestUnderCappedRun:
     decode --dry-run, which builds every workflow but never creates a pod.
     """
 
+    @pytest.fixture(autouse=True)
+    def restore_signal_handlers(self):
+        """capped_run.main() ends with SIGINT/SIGTERM/SIGHUP ignored; undo that,
+        or a later test that sends itself SIGINT is silently swallowed."""
+        sigs = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+        saved = {x: signal.getsignal(x) for x in sigs}
+        yield
+        for x, h in saved.items():
+            signal.signal(x, h)
+
     def test_capped_run_supervises_a_dry_run_and_sees_progress_format(self, tmp_path, monkeypatch, capsys):
         sys.path.insert(0, os.path.join(REPO, "tools"))
         import capped_run
@@ -223,7 +234,8 @@ class TestUnderCappedRun:
         real_sleep = capped_run.time.sleep
         monkeypatch.setattr(capped_run.time, "sleep", lambda s: None if s <= 30 else real_sleep(s))
         monkeypatch.setattr(sys, "argv", [
-            "capped_run", "--cap", "0.50", "--margin", "0.02", "--no-project", "--poll", "3600",
+            "capped_run", "--cap", "0.50", "--margin", "0.02", "--no-project", "--poll", "60",
+            "--output-dir", str(tmp_path),
             "--progress", manifest.ab_progress_path(str(tmp_path), "runpod-ltx25"),
             "--total-shots", "21", "--",
             sys.executable, os.path.join(REPO, "decode.py"), str(tmp_path),

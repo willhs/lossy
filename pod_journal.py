@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass, field
 
 VERSION = 1
+JOURNAL_DIRNAME = "runpod_journal"   # under the run's output dir
 
 OWNED = "owned"
 KEPT = "kept"
@@ -233,6 +234,45 @@ class Peer:
     def release(self) -> None:
         _unlock(self._fd)
         self._fd = None
+
+
+class JournalUnreadable(RuntimeError):
+    """A journal exists but cannot be parsed: what it owns is unknown."""
+
+
+@dataclass
+class Ownership:
+    """Every pod id and pod name the journals in one directory answer for."""
+
+    ids: set[str] = field(default_factory=set)
+    names: set[str] = field(default_factory=set)
+
+
+def read_ownership(directory: str) -> Ownership:
+    """What every journal in `directory` owns, live or dead. Read-only.
+
+    Takes no lock and writes nothing, so a supervisor can call it while the
+    owning session is running (each file is replaced atomically, so a read sees
+    the old or the new content, never half). A journal that cannot be parsed
+    raises `JournalUnreadable`: "owns nothing" would be the unsafe answer.
+    """
+    owned = Ownership()
+    if not os.path.isdir(directory):
+        return owned
+    for fname in sorted(os.listdir(directory)):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(directory, fname)
+        try:
+            with open(path) as f:
+                snap = Snapshot.from_json(json.load(f))
+        except FileNotFoundError:
+            continue                  # closed with nothing owed, between listdir and open
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            raise JournalUnreadable(f"{path}: {e}") from e
+        owned.ids |= set(snap.claims)
+        owned.names |= snap.names
+    return owned
 
 
 def scan_peers(directory: str, exclude_run_id: str) -> list[Peer]:

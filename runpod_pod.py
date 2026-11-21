@@ -100,7 +100,7 @@ LATE_CREATE_GRACE_S = 3600
 # Slack past a kept pod's armed deadline before a later run concludes the
 # on-pod reaper failed and terminates it.
 KEPT_DEADLINE_SLACK_S = 600
-JOURNAL_DIRNAME = "runpod_journal"
+JOURNAL_DIRNAME = pod_journal.JOURNAL_DIRNAME
 # Exit sweep (ADR 0010 addendum): list, terminate, and list again until a pass
 # finds nothing of ours and no claim is outstanding. Passes are bounded by count
 # AND by a wall-clock budget, so a supervisor's grace period can be set above it.

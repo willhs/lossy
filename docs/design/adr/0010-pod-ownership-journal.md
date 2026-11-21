@@ -3,7 +3,7 @@ id: adr-0010-pod-ownership-journal
 type: decision
 purpose: "Record who answers for a RunPod pod, how that survives a dead process, and when a later run may terminate what an earlier one left."
 scope: ["design", "runpod", "decode", "cost-safety"]
-non_goals: ["cap enforcement", "other output dirs' journals"]
+non_goals: ["cap policy (see the capped_run addendum for how the supervisor uses the journal)", "other output dirs' journals"]
 tags: ["adr", "runpod", "leak", "journal"]
 related: ["research/0026-seinfeld-s01e03-first-end-to-end-run/research.md", "design/adr/008-runpod-self-hosted-wan-strategy.md"]
 ---
@@ -160,3 +160,36 @@ console is clear of them, then delete `<output_dir>/runpod_journal/` and resume.
 Findings, measurements and the reasoning: research 0026, "Review, 21 Nov 2026".
 `capped_run.CHILD_GRACE_S` was raised from 120 s to 240 s: cleanup in a total API outage measured
 ~200 s (terminate retries precede the sweep budget).
+
+# Addendum: capped_run sweeps by ownership and fails closed (research 0026 follow-up 3, 21 Nov 2026)
+
+**Decision: the supervisor terminates only pods the journals claim.** `tools/capped_run.py`
+used to end a run by terminating every account pod that was not there at start, which
+also killed a concurrent run's pod. It now takes `--output-dir` and treats a pod as
+the run's iff a journal under `<output-dir>/runpod_journal/` claims its id, or a name
+it spoke for (windows cover creates whose id was lost). `pod_journal.read_ownership`
+reads every journal in the dir, live or dead (a SIGKILLed child's leftover is exactly
+what the sweep is for), taking no lock and writing nothing: each session still writes
+only its own file. A journal that cannot be parsed makes ownership unknown, so the
+sweep terminates nothing on a guess and reports itself unconfirmed (exit 5). The old
+rule survives as `--sweep-account`; passing neither flag is a usage error, so the
+account-exclusivity assumption is always a visible choice.
+
+Residual: a pod in no journal (the child died before journaling, with no window) is
+not swept. The write-ahead window before every create makes that case narrow, but it
+is the price of not shooting other runs' pods. `--attach-pid` no longer assumes the
+attached run owns every existing pod unless `--sweep-account` is given.
+
+**Fail closed.** The supervisor tracks when it last read the balance (`SpendGuard`).
+While reads fail, spend is the last reading plus `--burn-per-hr` (default $3/h, two
+overlapping SECURE pods) for the time since, and a reading older than `--max-stale`
+(default 600 s) stops the run regardless (exit 6). The stop line is the cap minus a
+reserve: at least `--margin`, and more if the assumed burn over one poll interval +
+the child's grace + the sweep is larger (`reserve_usd`). A watcher exception in the
+progress report is contained; an exception that ends the watcher stops the child
+(exit 6). Launch and stop share a lock (`Run`), closing the window in which a retry
+could start a child after the watcher's stop.
+
+Not bounded: balance lag itself (RunPod crediting spend late), other providers' spend
+(fal), and whether the account is shared at all. Those are Will's call; this change
+only stops the supervisor from depending on the answer for the sweep.
