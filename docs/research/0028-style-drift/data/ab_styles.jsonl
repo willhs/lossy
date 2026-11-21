@@ -1,0 +1,21 @@
+{"clip": "A_prefix__0079", "style": "3d_animation", "confidence": 1.0, "reason": "Exaggerated facial features and stylized textures indicate a 3D animated character.", "lookalike": "The Adventures of Tintin"}
+{"clip": "A_prefix__0098", "style": "3d_animation", "confidence": 1.0, "reason": "The character features stylized, exaggerated proportions typical of 3D computer animation.", "lookalike": "Ratatouille"}
+{"clip": "A_prefix__0106", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action scene from the television show Friends.", "lookalike": "Friends"}
+{"clip": "A_prefix__0125", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action frame from the television show Seinfeld.", "lookalike": "Seinfeld"}
+{"clip": "A_prefix__0152", "style": "photoreal", "confidence": 0.95, "reason": "This is a live-action shot of a person with exaggerated makeup.", "lookalike": "Men in Black"}
+{"clip": "A_prefix__0221", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action frame from the television show Seinfeld.", "lookalike": "Seinfeld"}
+{"clip": "A_prefix__0246", "style": "3d_animation", "confidence": 1.0, "reason": "The character features stylized, exaggerated proportions typical of 3D computer animation.", "lookalike": "Hotel Transylvania"}
+{"clip": "A_prefix__0256", "style": "3d_animation", "confidence": 1.0, "reason": "The character features exaggerated proportions and smooth, stylized 3D rendering.", "lookalike": "Ratatouille"}
+{"clip": "B_photo_block__0079", "style": "photoreal", "confidence": 1.0, "reason": "The image is a high-quality live-action frame from a film.", "lookalike": "The Big Bang Theory"}
+{"clip": "B_photo_block__0098", "style": "photoreal", "confidence": 1.0, "reason": "The image is a high-quality live-action frame from a film.", "lookalike": ""}
+{"clip": "B_photo_block__0106", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action frame from the television show Friends.", "lookalike": "Friends"}
+{"clip": "B_photo_block__0152", "style": "photoreal", "confidence": 1.0, "reason": "The image is a high-quality live-action shot of a real person.", "lookalike": "The White Lotus"}
+{"clip": "B_photo_block__0246", "style": "photoreal", "confidence": 1.0, "reason": "The image is a standard live-action video recording of a person.", "lookalike": ""}
+{"clip": "B_photo_block__0256", "style": "photoreal", "confidence": 1, "reason": "The image is a high-quality live-action photograph of a person.", "lookalike": ""}
+{"clip": "C_prefix_and_block__0079", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action frame from a television show.", "lookalike": "Seinfeld"}
+{"clip": "C_prefix_and_block__0098", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action frame from the television show Friends.", "lookalike": "Friends"}
+{"clip": "C_prefix_and_block__0106", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action scene from the television show Friends.", "lookalike": "Friends"}
+{"clip": "C_prefix_and_block__0152", "style": "photoreal", "confidence": 1.0, "reason": "The image is a high-quality live-action film frame.", "lookalike": "Money Heist"}
+{"clip": "C_prefix_and_block__0246", "style": "photoreal", "confidence": 1.0, "reason": "This is a live-action frame from the television show Friends.", "lookalike": "Friends"}
+{"clip": "C_prefix_and_block__0256", "style": "photoreal", "confidence": 1.0, "reason": "The image shows a realistic human face with natural skin textures.", "lookalike": ""}
+{"clip": "control_rerender__0098", "style": "3d_animation", "confidence": 1, "reason": "The character features exaggerated proportions and stylized 3D computer-generated textures.", "lookalike": "Tangled"}
