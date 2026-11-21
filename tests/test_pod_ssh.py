@@ -221,6 +221,41 @@ class TestWaitForSsh:
         s.wait_for_ssh()
 
 
+class TestBootRaceRejection:
+    def _race(self, fake_ssh, tmp_path, key, rejects):
+        # pod rejects the key for the first `rejects` probes, then accepts
+        fake_ssh.set(authorized=key)
+        scn = fake_ssh.calls  # noqa: F841
+        s = _session(tmp_path)
+        n = {"i": 0}
+        real = s.ssh_cmd
+
+        def ssh_cmd(cmd, timeout=60, input=None):
+            n["i"] += 1
+            if n["i"] <= rejects:
+                return subprocess.CompletedProcess([], 255, "", "root@1.2.3.4: Permission denied (publickey).")
+            return real(cmd, timeout=timeout, input=input)
+        s.ssh_cmd = ssh_cmd
+        return s
+
+    def test_brief_boot_rejection_is_survived(self, tmp_path, fake_ssh, key):
+        s = self._race(fake_ssh, tmp_path, key, rejects=3)
+        s.wait_for_ssh()   # would have been fatal at 2 rejections
+
+    def test_persistent_rejection_after_a_working_pod_is_retryable(self, tmp_path, fake_ssh, key, monkeypatch):
+        s = self._race(fake_ssh, tmp_path, key, rejects=10_000)
+        s._ssh_ever_worked = True
+        monkeypatch.setattr(s, "terminate", lambda: None)
+        with pytest.raises(PodSetupError, match="earlier pod"):
+            s.wait_for_ssh()
+
+    def test_persistent_rejection_on_first_pod_is_fatal(self, tmp_path, fake_ssh, key, monkeypatch):
+        s = self._race(fake_ssh, tmp_path, key, rejects=10_000)
+        monkeypatch.setattr(s, "terminate", lambda: None)
+        with pytest.raises(PodSshAuthError):
+            s.wait_for_ssh()
+
+
 class TestWrongKeyFailsFast:
     @pytest.fixture
     def fleet(self, monkeypatch):
@@ -254,7 +289,8 @@ class TestWrongKeyFailsFast:
         assert fleet.created == 1                  # no re-provisioning onto a fresh pod
         assert fleet.live == {}                    # and the one pod is gone, via the normal path
         assert [e for e, _ in fleet.events] == ["create", "terminate"]
-        assert len(fake_ssh.calls) == runpod_pod.SSH_AUTH_REJECTIONS_FATAL
+        assert len(fake_ssh.calls) >= runpod_pod.SSH_AUTH_REJECTIONS_FATAL
+        assert sum(fake_ssh.slept) >= runpod_pod.SSH_AUTH_REJECTION_MIN_S
 
     def test_unusable_key_fails_before_any_pod_is_rented(self, tmp_path, fleet, monkeypatch):
         monkeypatch.setenv(pod_ssh.KEY_ENV, str(tmp_path / "missing"))

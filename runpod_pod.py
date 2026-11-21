@@ -85,7 +85,11 @@ POD_SETUP_BACKOFF_S = 30
 # cannot fix that, so it is confirmed once and then fatal.
 SSH_READY_ATTEMPTS = 15
 SSH_PROBE_TIMEOUT_S = 30
-SSH_AUTH_REJECTIONS_FATAL = 2
+# RunPod writes PUBLIC_KEY into authorized_keys at boot, so a good pod can answer
+# "Permission denied" briefly. A rejection is only believed once it has persisted
+# this many consecutive probes AND this many seconds of waiting.
+SSH_AUTH_REJECTIONS_FATAL = 4
+SSH_AUTH_REJECTION_MIN_S = 60
 # After /interrupt, how many 2 s polls of /queue before declaring the pod wedged.
 CANCEL_CONFIRM_POLLS = 5
 # A terminate call that errors is retried: it is the only thing standing between
@@ -1196,6 +1200,7 @@ class RunPodSession:
             return
         identity = self.ssh_identity
         rejections = 0
+        rejected_for_s = 0.0   # time slept since the streak began
         detail = ""
         for attempt in range(1, SSH_READY_ATTEMPTS + 1):
             try:
@@ -1206,12 +1211,21 @@ class RunPodSession:
             except subprocess.TimeoutExpired:
                 outcome, detail = SshOutcome.NOT_READY, "timed out"
             if outcome is SshOutcome.OK:
-                print(f"  SSH ready (offered {identity.fingerprint}, attempt {attempt}).")
+                print(f"  SSH ready (offered {identity.fingerprint}, attempt {attempt}, "
+                      f"{rejections} auth rejection(s) just before).")
+                self._ssh_ever_worked = True
                 return
             if outcome is SshOutcome.AUTH_REJECTED:
                 rejections += 1
-                if rejections >= SSH_AUTH_REJECTIONS_FATAL:
+                if (rejections >= SSH_AUTH_REJECTIONS_FATAL
+                        and rejected_for_s >= SSH_AUTH_REJECTION_MIN_S):
                     self.terminate()
+                    if getattr(self, "_ssh_ever_worked", False):
+                        # The key worked on an earlier pod this session: this
+                        # pod's boot is bad, not the key. Try a fresh pod.
+                        raise PodSetupError(
+                            f"pod {self.pod_id} kept rejecting a key that worked on an "
+                            f"earlier pod ({detail})")
                     raise PodSshAuthError(
                         f"pod {self.pod_id} rejected ssh key {identity.private_path} "
                         f"({identity.fingerprint}): {detail}. Not retrying: another pod would "
@@ -1219,8 +1233,11 @@ class RunPodSession:
                         f"{pod_ssh.KEY_ENV}.")
             else:
                 rejections = 0
+                rejected_for_s = 0.0
             if attempt < SSH_READY_ATTEMPTS:
                 wait = min(5 * attempt, 20)
+                if rejections:
+                    rejected_for_s += wait
                 print(f"  SSH not ready ({detail or outcome.value}); retrying in {wait}s "
                       f"[{attempt}/{SSH_READY_ATTEMPTS}]")
                 time.sleep(wait)
