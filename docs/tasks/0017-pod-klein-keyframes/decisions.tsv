@@ -1,0 +1,5 @@
+phase	decision	why	evidence	result
+0	Size L, playbook feature	new user-visible generator option + paid validation	task.md	plan committed
+0	BFL fp8 klein + bf16 qwen_3_4b encoder + flux2-vae	same files as ComfyUI official klein 4B distilled edit template; fp4 has no native path on Ampere	workflow_templates image_flux2_klein_image_edit_4b_distilled.json; HF API sha256	pinned
+0	Generator takes a runner over the strategy session (option B)	one pod, one boot; A doubles boots, C swaps models per shot and breaks the all-sheets-first gate	plan.md Design options	chosen
+0	Validate sheets+keyframes on full window but render 1 LTX clip	proves unload->LTX path inside $0.50; clip-level K vs T already measured in 0029	budget	planned
