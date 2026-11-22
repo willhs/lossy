@@ -35,7 +35,24 @@ CURATED_VOICE_BANK = {
     "Matilda": "young adult female, warm, friendly",
     "Laura": "adult female, upbeat, expressive",
     "Charlotte": "adult female, sultry, low",
+    # Widened Nov 2026 (SW4 recast, research 0030): more ElevenLabs premade
+    # voices, so no two leads share a voice. Premade only, no cloning.
+    "Liam": "young adult male, American, articulate",
+    "Will": "young adult male, American, friendly, relaxed",
+    "Chris": "adult male, American, casual, natural",
+    "Eric": "middle-aged male, American, smooth, steady",
+    "Brian": "middle-aged male, American, deep, resonant",
+    "Daniel": "middle-aged male, British, precise, formal",
+    "Bill": "older male, American, weathered, plain-spoken",
+    "Lily": "adult female, British, warm",
+    "Jessica": "young adult female, American, expressive",
 }
+
+# In a hand-edited voice_map.json, a character mapped to null does not speak a
+# human language (a droid that beeps, a Wookiee, Jawas). Subtitled lines
+# attributed to one are misattributions; speech voices them with the fallback
+# voice rather than dropping real dialogue. Their own sounds come from the
+# ambience track (the shot's "sound" description), not from TTS.
 
 VOICE_CASTING_SYSTEM_PROMPT = """You are a casting director for an audiobook/film dub. You are given a curated bank of available TTS voices (with a short tone/age/gender description each) and a character registry (with each character's canonical visual description).
 

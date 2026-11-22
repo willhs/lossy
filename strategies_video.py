@@ -1628,6 +1628,11 @@ class RunPodLtx25Strategy(RunPodLtx2Strategy):
     # conditioned first frame.
     REAPPLY_START_IMAGE_STAGE2 = True
 
+    # Research 0025's "cheapest acceptable" config (--ltx-one-stage): stage 1 only,
+    # decoded at half size (640x352), no latent upsample or refine; ~11.8 vs ~20.5
+    # GPU-s per output second. Upscale at stitch (decode.py --stitch --scale).
+    one_stage = False
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._session.disk_gb = self.DISK_GB
@@ -1724,11 +1729,17 @@ class RunPodLtx25Strategy(RunPodLtx2Strategy):
             wf["7"]["inputs"]["positive"] = ["41", 0]
             wf["7"]["inputs"]["negative"] = ["41", 1]
             wf["10"]["inputs"]["video_latent"] = ["41", 2]
-            if self.REAPPLY_START_IMAGE_STAGE2:
+            if self.REAPPLY_START_IMAGE_STAGE2 and not self.one_stage:
                 wf["42"] = {"class_type": "LTXVImgToVideoInplace",
                             "inputs": {"vae": ["3", 0], "image": ["40", 0], "latent": ["21", 0],
                                        "strength": 1.0, "bypass": False}}
                 wf["22"]["inputs"]["video_latent"] = ["42", 0]
+        if self.one_stage:
+            # tools/model_pilot/run_ltx25.py --variant onestage: decode stage 1's output.
+            for node in ("20", "21", "22", "23", "24", "25", "26"):
+                del wf[node]
+            wf["30"]["inputs"]["samples"] = ["16", 0]
+            wf["31"]["inputs"]["samples"] = ["16", 1]
         return wf
 
 

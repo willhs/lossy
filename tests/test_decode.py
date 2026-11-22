@@ -1752,6 +1752,28 @@ class TestRunSpeechVoiceMapping:
 
         assert calls == ["Roger"]
 
+    def test_non_speaking_character_line_keeps_its_words_in_fallback_voice(self, tmp_path, monkeypatch):
+        """null in voice_map = never speaks (R2-D2); a line attributed to it is still voiced."""
+        dialog = [{"text": "Misattributed to the droid", "start_s": 1.0, "end_s": 2.0}]
+        shots = [{"index": 0, "start_s": 0.0, "end_s": 5.0, "duration_s": 5.0}]
+        (tmp_path / "shots.json").write_text(json.dumps(self._make_prompts_v2(shots, dialog)))
+        (tmp_path / "speakers.json").write_text(json.dumps({
+            "format": "v1", "assignments": {"0": {"character": "r2_d2", "confidence": 1.0}}}))
+        (tmp_path / "voice_map.json").write_text(json.dumps({"r2_d2": None, "luke": "Liam"}))
+        (tmp_path / "speech").mkdir()
+
+        calls = []
+
+        def fake_generate(self, text, speech_dir, shot_index, line_index, offset_s):
+            calls.append((self.voice, text))
+            path = os.path.join(speech_dir, f"{shot_index:04d}-{line_index:02d}.mp3")
+            return SpeechClipResult(path=path, duration_s=1.0, offset_s=offset_s, cost=0.001)
+
+        monkeypatch.setattr(SpeechStrategy, "generate", fake_generate)
+        run_speech(self._make_args(str(tmp_path)), SpeechStrategy(voice="Roger"))
+
+        assert calls == [("Roger", "Misattributed to the droid")]
+
 
 class TestRunSpeechWindowing:
     """--start-index/--limit restrict which dialog lines get generated."""

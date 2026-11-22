@@ -7,7 +7,9 @@ subprocess calls.
 
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 
 import manifest
@@ -617,12 +619,73 @@ def _retime_shot_clips(clip_paths: list[str], original_duration: float,
     return adjusted_paths
 
 
+NATIVE_AUDIO = "native"
+
+
+def _scale_filter(scale: str) -> str:
+    """ffmpeg -vf for --scale WxH: Lanczos, as research 0025 upscaled its one-stage clips."""
+    m = re.fullmatch(r"(\d+)x(\d+)", scale)
+    if not m:
+        raise ValueError(f"--scale must be WxH, e.g. 1280x704; got {scale!r}")
+    return f"scale={m.group(1)}:{m.group(2)}:flags=lanczos"
+
+
+def extract_native_audio(output_dir: str, shot_groups: list[tuple[dict, list[str]]]) -> int:
+    """Pull each video clip's own soundtrack out as the ``native`` audio strategy.
+
+    LTX-2.5 generates synced audio with every clip, but stitching retimes clips
+    with ``-an``, so that sound never reaches the film. This writes it to
+    ``audio/native/`` with an ``audio_progress_native.json`` in the same shape an
+    audio strategy writes, so ``_stitch_audio`` places, crossfades and pads it
+    exactly as it does MMAudio. Clips with no audio stream get no entry (the
+    stitch fills silence). Idempotent: a part already extracted and newer than
+    its clip is kept. Returns the number of shots with native audio.
+    """
+    audio_dir = manifest.audio_dir(output_dir, NATIVE_AUDIO)
+    os.makedirs(audio_dir, exist_ok=True)
+    progress_path = manifest.audio_progress_path(output_dir, NATIVE_AUDIO)
+    clips: dict[str, list[dict]] = {}
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            clips = json.load(f).get("clips", {})
+
+    for entry, clip_paths in shot_groups:
+        idx = entry["index"]
+        parts = []
+        for part_idx, clip_path in enumerate(clip_paths):
+            part = None if len(clip_paths) == 1 else part_idx + 1
+            name = manifest.audio_clip_filename(idx, part, ".flac")
+            out = os.path.join(audio_dir, name)
+            if not (os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(clip_path)):
+                if not _has_audio_stream(clip_path):
+                    parts = []
+                    break
+                _run_ffmpeg(["ffmpeg", "-y", "-i", clip_path, "-vn", "-c:a", "flac", out],
+                            f"native audio extract for {os.path.basename(clip_path)}")
+            parts.append({"path": name, "duration_s": _probe_duration(out)})
+        if parts:
+            clips[str(idx)] = parts
+        else:
+            clips.pop(str(idx), None)
+
+    manifest.write_json_atomic(progress_path, {
+        "clips": clips, "encode_fingerprint": manifest.encode_fingerprint(output_dir)})
+    return sum(1 for entry, _ in shot_groups if str(entry["index"]) in clips)
+
+
+def _has_audio_stream(path: str) -> bool:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+         "-of", "csv=p=0", path], capture_output=True, text=True)
+    return bool(probe.stdout.strip())
+
+
 def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
                   clips_meta: dict, clips_dir: str, adjusted_dir: str,
                   start_index: int | None, end_index: int | None,
                   output_path: str, audio_strategy: str | None,
                   speech_voice: str | None, music_strategy: str | None = None,
-                  label: str = "film") -> str | None:
+                  label: str = "film", scale: str | None = None) -> str | None:
     """Stitch a range of clips into a single video with optional audio.
 
     Filters prompts to start_index <= index <= end_index, collects and
@@ -723,6 +786,7 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
             "-i", concat_file,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-r", str(XFADE_FPS),
+            *(["-vf", _scale_filter(scale)] if scale else []),
             "-fps_mode", "cfr", "-y", output_path,
         ],
         f"video concat for {label}",
@@ -734,6 +798,10 @@ def _stitch_range(output_dir: str, strategy_name: str, prompts_full: list[dict],
     total_original = sum(entry["duration_s"] for entry, _ in shot_groups)
     print(f"  Original duration: {total_original:.1f}s ({total_original / 60:.1f}min)")
     print(f"  Clips used: {total_clips}")
+
+    if audio_strategy == NATIVE_AUDIO:
+        n = extract_native_audio(output_dir, shot_groups)
+        print(f"  Native clip audio: {n} of {len(shot_groups)} shots")
 
     # Mux audio (auto-discovers all available audio strategies if none specified)
     _mux_audio(output_dir, output_path, concat_list, prompts_full,
@@ -869,9 +937,11 @@ def _mux_audio(output_dir: str, video_path: str, concat_list: list[str],
         # Auto-discover all audio strategy directories
         audio_root = os.path.join(output_dir, "audio")
         if os.path.isdir(audio_root):
+            # native is an alternative to the generated ambience, never mixed
+            # in with it unasked (--audio-strategy native selects it).
             strategies = sorted(
                 d for d in os.listdir(audio_root)
-                if os.path.isdir(os.path.join(audio_root, d))
+                if os.path.isdir(os.path.join(audio_root, d)) and d != NATIVE_AUDIO
             )
         else:
             strategies = []
@@ -1042,6 +1112,7 @@ def stitch_clips(args):
         output_dir, strategy_name, prompts_full, clips_meta, clips_dir,
         adjusted_dir, start_index, end_index, output_path,
         audio_strategy, speech_voice, music_strategy, label="full reconstruction",
+        scale=getattr(args, "scale", None),
     )
     if result is None:
         print("No clips found to stitch.")
@@ -1072,6 +1143,7 @@ def stitch_clips(args):
                 adjusted_dir, scene_start, scene_end, scene_output,
                 audio_strategy, speech_voice, music_strategy,
                 label=f"scene '{name}' (#{scene_start}-#{scene_end})",
+                scale=getattr(args, "scale", None),
             )
             if scene_result:
                 scene_outputs.append((name, scene_result))

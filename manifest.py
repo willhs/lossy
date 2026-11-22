@@ -389,8 +389,10 @@ def load_speakers(output_dir: str) -> dict[int, str | None]:
     }
 
 
-def load_voice_map(output_dir: str) -> dict[str, str]:
+def load_voice_map(output_dir: str) -> dict[str, str | None]:
     """Read voice_map.json (voice_casting.py output) as ``{character: voice}``.
+
+    A ``None`` voice marks a character who does not speak a human language.
 
     Returns ``{}`` if the file doesn't exist.
     """

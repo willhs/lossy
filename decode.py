@@ -620,9 +620,17 @@ def run_speech(args, strategy: "SpeechStrategy | KokoroSpeechStrategy"):
     voice_map = manifest.load_voice_map(output_dir)
     strategies_by_voice: dict[str, "SpeechStrategy | KokoroSpeechStrategy"] = {strategy.voice: strategy}
 
+    # A character mapped to null never speaks a human language (voice_casting.py):
+    # a subtitle attributed to one is a misattribution, voiced with the fallback.
+    silent = sorted(c for c, v in voice_map.items() if v is None)
+    if silent:
+        n = sum(1 for i in line_indices if speakers.get(i) in silent)
+        print(f"Non-speaking characters ({', '.join(silent)}): {n} attributed lines "
+              f"use the fallback voice {strategy.voice}")
+
     def strategy_for_line(line_idx: int) -> "SpeechStrategy | KokoroSpeechStrategy":
         character = speakers.get(line_idx)
-        voice = voice_map.get(character, strategy.voice) if character else strategy.voice
+        voice = (voice_map.get(character) or strategy.voice) if character else strategy.voice
         if voice not in strategies_by_voice:
             strategies_by_voice[voice] = type(strategy)(voice=voice)
         return strategies_by_voice[voice]
@@ -720,9 +728,11 @@ def main():
     parser.add_argument("--audio", action="store_true",
                         help="Generate audio clips (instead of video)")
     parser.add_argument("--audio-strategy",
-                        choices=DECODE_AUDIO_STRATEGIES,
+                        choices=DECODE_AUDIO_STRATEGIES + ["native"],
                         default=None,
-                        help="Audio generation backend (default: auto-detect all for stitch, elevenlabs for generate)")
+                        help="Audio generation backend (default: auto-detect all for stitch, elevenlabs for generate). "
+                             "'native' (stitch only): use each clip's own soundtrack (LTX-2.5 generates one) "
+                             "as the ambience track instead of a generated one")
     parser.add_argument("--keep-pod", nargs="?", type=int, const=True, default=False,
                         metavar="MINUTES",
                         help="Keep the RunPod pod alive after decode, for a subsequent audio "
@@ -764,6 +774,13 @@ def main():
                              "then exit. With --strategy runpod-ltx25-keyframe: print which shots "
                              "get a keyframe and which fall back to text. No pod is created, no "
                              "network call is made and nothing is spent.")
+    parser.add_argument("--ltx-one-stage", action="store_true",
+                        help="LTX-2.5 strategies: stage 1 only at 640x352, no latent upsample or refine "
+                             "(research 0025's cheapest acceptable config). Use a separate output dir: "
+                             "clips are keyed by strategy name, not resolution.")
+    parser.add_argument("--scale", default=None, metavar="WxH",
+                        help="With --stitch: Lanczos-scale every clip to WxH (e.g. 1280x704 for "
+                             "--ltx-one-stage clips).")
     parser.add_argument("--keyframe-fal-cap", type=float, default=RunPodLtx25KeyframeStrategy.FAL_CAP_USD,
                         metavar="USD",
                         help="runpod-ltx25-keyframe: hard cap on the estimated fal spend (sheets and "
@@ -792,6 +809,8 @@ def main():
             "runpod-musicgen": lambda: RunPodMusicGenStrategy(output_dir=args.output_dir),
         }
         audio_name = args.audio_strategy or "elevenlabs"
+        if audio_name not in audio_strategies:
+            sys.exit(f"--audio-strategy {audio_name} is stitch-only: it reuses the clips' own audio.")
         audio_strategy = audio_strategies[audio_name]()
         run_audio(args, audio_strategy)
     elif args.speech:
@@ -868,6 +887,10 @@ def dry_run_shot_plan(args) -> None:
     style = getattr(args, "style_prefix", None) or manifest.load_style_prefix(args.output_dir)
     probe = object.__new__(strategy_cls)   # skip __init__: it creates a RunPod session
     probe._init_character_identity(build_character_shot_map(characters_data), characters_data, style)
+    if getattr(args, "ltx_one_stage", False):
+        if not issubclass(strategy_cls, RunPodLtx25Strategy):
+            sys.exit("--ltx-one-stage needs an LTX-2.5 strategy (runpod-ltx25*).")
+        probe.one_stage = True
     todo = [p for p in prompts if p["index"] not in done]
     parts = frames = 0
     for entry in todo:
@@ -878,7 +901,8 @@ def dry_run_shot_plan(args) -> None:
                                   entry["index"] + i, length=n, start_image="chain.png" if i else None)
         parts += len(counts)
         frames += sum(counts)
-    print(f"Shot plan for {args.output_dir} via {strategy_cls.name} (dry run):")
+    print(f"Shot plan for {args.output_dir} via {strategy_cls.name}"
+          f"{' one-stage 640x352' if getattr(probe, 'one_stage', False) else ''} (dry run):")
     print(f"  {len(prompts)} shots in scope, {len(prompts) - len(todo)} already done, "
           f"{len(todo)} to generate as {parts} clips ({frames / probe.FPS / 60:.1f} min of video).")
     print(f"  Style prefix: {style or '(none)'}; characters: "
@@ -976,7 +1000,7 @@ def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):
     if style_prefix:
         print(f"Style prefix: {style_prefix}")
 
-    return strategy_cls(
+    strategy = strategy_cls(
         output_dir=output_dir,
         keep_pod=getattr(args, "keep_pod", False),
         character_shot_map=character_shot_map,
@@ -984,6 +1008,12 @@ def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):
         style_prefix=style_prefix,
         **extra,
     )
+    if getattr(args, "ltx_one_stage", False):
+        if not issubclass(strategy_cls, RunPodLtx25Strategy):
+            sys.exit("--ltx-one-stage needs an LTX-2.5 strategy (runpod-ltx25*).")
+        strategy.one_stage = True
+        print("LTX-2.5 one-stage: 640x352, no upsample/refine (upscale at stitch with --scale)")
+    return strategy
 
 
 def _create_wan22_strategy(args):

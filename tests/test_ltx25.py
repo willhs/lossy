@@ -144,6 +144,19 @@ class TestWorkflow:
         assert wf["42"]["inputs"]["bypass"] is False
         assert wf["22"]["inputs"]["video_latent"] == ["42", 0]
 
+    @pytest.mark.parametrize("start_image", [None, "chain_0846_00.png"])
+    def test_one_stage_decodes_stage1_at_half_size_with_audio(self, monkeypatch, start_image):
+        """--ltx-one-stage: research 0025's 640x352 config, no upsample or refine."""
+        monkeypatch.setattr(RunPodLtx25Strategy, "one_stage", True)
+        wf = self._wf(start_image=start_image)
+        _inputs_ref_exist(wf)
+        assert (wf["8"]["inputs"]["width"], wf["8"]["inputs"]["height"]) == (640, 352)
+        types = {n["class_type"] for n in wf.values()}
+        assert "LTXVLatentUpsampler" not in types and "LTXVImgToVideoInplace" not in types
+        assert sum(n["class_type"] == "SamplerCustomAdvanced" for n in wf.values()) == 1
+        assert wf["30"]["inputs"]["samples"] == ["16", 0]
+        assert wf["31"]["inputs"]["samples"] == ["16", 1]   # native audio still decoded
+
     def test_stage2_repin_can_be_disabled(self, monkeypatch):
         monkeypatch.setattr(RunPodLtx25Strategy, "REAPPLY_START_IMAGE_STAGE2", False)
         wf = self._wf(start_image="chain_0846_00.png")

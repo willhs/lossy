@@ -1,0 +1,29 @@
+{
+  "_note": "Hand fixes to speakers.json, checked line by line against the film, for two windows: the test window (shots 1284-1321, dialog lines 959-986) and the rejected candidate (shots 1040-1056, lines 797-824). Keys are dialog-line indices (encode fingerprint 8855b97c449f). A subtitle holding two speakers ('- A. - B.') gets the speaker of most of its words. Apply: research.md, 'Recast and 2-minute test'.",
+  "fixes": {
+    "800": "luke_skywalker",
+    "802": "luke_skywalker",
+    "803": "han_solo",
+    "809": "han_solo",
+    "814": "luke_skywalker",
+    "816": "luke_skywalker",
+    "824": "luke_skywalker",
+
+    "959": "han_solo",
+    "964": "princess_leia_organa",
+    "965": "princess_leia_organa",
+    "970": "stormtrooper",
+    "971": "stormtrooper",
+    "972": "stormtrooper",
+    "973": "stormtrooper",
+    "974": "stormtrooper",
+    "975": "luke_skywalker",
+    "976": "c_3po",
+    "977": "c_3po",
+    "979": "luke_skywalker",
+    "981": "han_solo",
+    "984": "princess_leia_organa",
+    "985": "luke_skywalker",
+    "986": "han_solo"
+  }
+}

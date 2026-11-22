@@ -1557,6 +1557,7 @@ Rules:
 - Use the surrounding lines to track turn-taking in a conversation (speakers usually alternate).
 - If a line has exactly one candidate, that candidate is almost certainly the speaker (high confidence) unless the content clearly contradicts it.
 - If a line has no candidates at all, use "narrator".
+- A character who never speaks a human language in the film (a droid that only beeps or whistles, a creature that only growls or roars, aliens speaking an untranslated language) is never the speaker of a subtitle line, even when on screen. Pick the most plausible other candidate, or "narrator".
 
 Output ONLY valid JSON."""
 
