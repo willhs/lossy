@@ -239,3 +239,164 @@ cp docs/research/0030-sw4-full-run-preflight/data/sw4_characters_photographic.js
 ```
 
 Run it from the repo root. No clips, audio or progress files are touched.
+
+## 23 Nov 2026: recast voices and a 2-minute mid-film test (task 462c92a3)
+
+**Verdict: GO for 30 Nov on the planned look, with five changes first (below). The render is
+photoreal and on-model for troopers and droids. The weak parts are not the video settings: speaker
+attribution is wrong on a quarter to half of the lines, the character registry puts Uncle Owen and
+Aunt Beru in ~100 shots after they die, and Chewbacca renders as an ape.** Spend: **$1.63 RunPod**
+(balance $30.39 -> $28.76) **+ $0.05 fal speech + cents of Vertex**, under the $5 cap. **0 pods
+left, both ownership journals empty** (`hygiene.txt`). Everything ran from a scratch copy of the
+encode in the job workspace; the primary checkout was only read.
+
+### Premise check (what the task assumed vs what is true)
+
+- **R2-D2 and Chewbacca do not "speak English" because of casting; they speak because of
+  misattribution.** Neither has a single subtitle line in the film. All 25 lines attributed to
+  `r2_d2` and all 10 to `chewbacca` in `speakers.json` are other characters' lines (C-3PO's "At
+  last. Where have you been?", Han's "Not a bad bit of rescuing, huh?", Dodonna's briefing).
+  Giving them beeps or growls would have replaced real dialogue with noise. [Direct: every line read]
+- **Arm A: LTX-2.5 already keeps its audio; the stitch threw it away.** `runpod-ltx25` decodes the
+  audio latent into every clip (`strategies_video.py`, node 31), but `stitch._retime_clip` re-encodes
+  each clip with `-an`, so the film never heard it. Fixed: `--audio-strategy native` (below).
+  [Direct]
+- **The first window I picked (1040-1056, the detention-block plan) could not test keyframes:**
+  every shot holds a design character (troopers, droids, Chewbacca), so all 17 route to text
+  (`--dry-run`). Moved to 1284-1321. [Direct: `dryrun_*.txt`]
+- The encode has **2,070 shots**, not 2,012 (`shots.json`; fingerprint 8855b97c449f unchanged).
+
+### The window: shots 1284-1321 (86:00-88:02, 122 s, 38 shots, 46 clips)
+
+Chosen by scoring every 2-minute window between 30% and 70% of the film (skipping 684-707) for: a
+C-3PO/R2 presence, a human two-hander, a design character, speaker count, and keyframe shots (by
+dry-run). This one has the Han/Leia "walking carpet" argument, C-3PO on the comlink with R2 on
+screen, Obi-Wan at the tractor beam, stormtroopers in most shots and Chewbacca. 14 keyframe shots
+(Luke, Han, Leia, Obi-Wan sheets), 24 text shots (all design-character).
+
+### Voices: old -> new
+
+| Character | Old | New | Why |
+|---|---|---|---|
+| C-3PO | Sarah (woman) | **Daniel** (British male, precise, formal) | fussy, precise male |
+| R2-D2 | Matilda | **null: non-speaking** | no subtitle lines exist; see below |
+| Chewbacca | Callum | **null: non-speaking** | same |
+| Chief Jawa | Charlotte | **null: non-speaking** | Jawas speak untranslated Jawaese |
+| Luke | Charlie (shared with Red Leader, Red Two) | **Liam** (young American male) | split from Red Leader |
+| Red Leader | Charlie | **Eric** (middle-aged American male) | split from Luke |
+| Red Two | Charlie | **Will** (young American male) | split from Luke |
+| Han | George (shared with Tarkin, Owen) | **Chris** (American male, casual) | split from Tarkin |
+| Uncle Owen | George | **Bill** (older American male) | split from Tarkin |
+| General Dodonna | Roger (shared with Obi-Wan) | **Brian** (deep American male) | split from Obi-Wan |
+| General Willard | Adam (shared with Vader) | **Charlie** | split from Vader |
+| Leia, Vader, Obi-Wan, Tarkin, Stormtrooper, Beru, narrator | Alice, Adam, Roger, George, Callum, Laura, Roger | unchanged | |
+
+`voice_map.json` now allows `null` for a character who never speaks a human language. A line
+attributed to one is voiced with the fallback voice (`--speech-voice`, Roger), never dropped.
+R2-D2's and Chewbacca's own sounds come from the ambience track: the describe pass's `sound` field
+mentions R2's beeps/whistles in **132 of his 269 shots**, but Chewbacca's roars/growls in only
+**21 of 163**. So **R2 beeps in about half his shots (MMAudio or LTX audio); Chewbacca is mostly
+silent**. In this window neither is asked for, so both are silent here. All voices are ElevenLabs
+premade (bank widened in `voice_casting.py`), with no cloning and no plan change. The file is
+`data/sw4_voice_map_recast.json`. Old map and `speech_progress.json` are backed up in the scratch
+copy (`backup/`).
+
+**Speech regenerated:** the window's 28 lines, 27 made ($0.05). **Line 982, "It's them. Blast
+them.", was refused by fal's content checker** (`content_policy_violation`, category violence).
+The full film will lose a few such lines unless they are retried with a reworded prompt.
+**Full regeneration needed before 30 Nov: 728 of 1,298 lines** (every line of Luke 276, Han 187,
+C-3PO 179, R2 25, Red Leader 20, Dodonna 12, Chewbacca 10, Willard 8, Owen 5, Red Two 5, Jawa 1).
+That is about $1.50 of fal, and only after the attribution fix below, or the new voices land on
+the wrong lines.
+
+### Two encode defects found on the way (both fixed for the window, data committed)
+
+1. **Speaker attribution is wrong on 25-57% of lines.** Hand-checked against the film: lines
+   797-824 **21/28 right (75%)**, lines 959-986 **12/28 right (43%)**. Typical errors are swapped
+   turns in a two-hander and troopers' banter given to Obi-Wan. A recast cannot fix this: Han's
+   new voice still says Leia's lines. Fixes for both windows: `data/sw4_speaker_fixes.json`.
+   Stage 4 now has a rule against attributing subtitles to non-speaking characters; a full fix
+   needs a re-run of stage 4 (cents) and a spot-check of accuracy before the speech pass.
+2. **The registry puts dead characters in later shots.** Uncle Owen is tagged in 75 shots after
+   his last living appearance (shot 402, 25.5 min), and Aunt Beru in 32. In this window that
+   includes Han's shots 1285, 1307 and 1314. Keyframe-first would draw them as an extra person.
+   Tarkin was tagged at the tractor-beam panel (1291, Obi-Wan's shot). Removed via
+   `data/sw4_character_shot_fixes.json`; apply it to the full-run copy.
+
+### Measured (planned arm unless noted)
+
+| Measure | Result |
+|---|---|
+| Pod | **secure A40 @ $0.63/h** for both video arms; secure 4090 @ $0.61/h for MMAudio. **No community A6000/A40/L40 was free** on any of 3 rents. |
+| GPU time per clip | full res **91.8 s**; one-stage 640x352 **47.0 s (0.51x)**; klein 7.3 s per image |
+| $/shot (this window, incl. pod boot + 40 GB download) | full res **$0.023**; low res ~$0.016 (2 boots); MMAudio $0.004 |
+| min/shot | full res **1.85 GPU-min** (2.2 wall-min with boot); low res 0.97 GPU-min |
+| Photoreal (0028 `classify_style.py`, 1 frame/clip) | full res **43/45** (1 unparsed); low res **43/46**. Every miss is a Chewbacca shot ("3d_animation", lookalike "Smallfoot") |
+| Cartoon drift | none on humans, troopers or droids. Chewbacca only |
+| Face cosine across shots / to sheet (`window_faces.py`, single-person shots) | Han 0.20 / 0.36 (5 shots), Obi-Wan 0.17 / 0.26 (6), Leia 0.26 / 0.44 (3). Low res: same within 0.04 across shots, 0.04-0.06 lower to sheet. Below 0029's Seinfeld 0.55 because most Obi-Wan/Han shots here share the frame with troopers and route to text |
+| Wardrobe | **Leia bare-shouldered in her close-up (1286)** and in a different outfit in most shots (white, black dress, dark jacket). Han's vest mostly right. Troopers correct |
+| Droids / creatures | Troopers excellent; C-3PO gold with a grille "mouth"; R2-D2 right. **Chewbacca is a shaggy ape with a human-ish face** |
+| Low res vs full | same composition (same seed); softer at full size after Lanczos; near-indistinguishable at thumbnail (`res_compare.jpg`) |
+| Audio | all four versions carry audio: native -14.8/-15.1 LUFS, MMAudio -16.0 LUFS. Not judged by ear |
+
+### Cost options for the full film (2,070 shots, 2,687 clips)
+
+Extrapolated from this window's GPU seconds per clip (clip length here 2.74 s; film 2.78 s), plus
+klein for 795 keyframe shots. MMAudio is $8.0 from this window's $0.147 for 38 shots. Secure A40
+at $0.63/h, measured; community A40 at $0.35/h in brackets, never available today.
+
+| Setup | $/shot | Full film | Notes |
+|---|---|---|---|
+| Planned (full res + MMAudio) | $0.025 ($0.014) | **$52** ($29) | video $43 (68.5 GPU-h) + klein $1 + MMAudio $8. Does not fit the $28.76 balance on secure |
+| Native audio (full res, no MMAudio) | $0.021 ($0.012) | **$44** ($25) | saves MMAudio's $8 and ~13 pod-hours |
+| Low res + MMAudio | $0.015 ($0.008) | **$31** ($17.5) | video $22 (35 GPU-h) |
+| Low res + native audio | $0.011 ($0.006) | **$23** ($13) | cheapest; same photoreal rate |
+
+### What should change before 30 Nov
+
+1. **Re-run stage 4 and spot-check it** (cents), then regenerate the 728 recast lines (~$1.50).
+   Without it the recast is wasted on misattributed lines.
+2. **Apply `sw4_character_shot_fixes.json`** to the run's `characters.json` (Owen/Beru/Tarkin).
+3. **Pick the money option: the planned setup does not fit the balance on secure cloud.** Low res +
+   native audio (~$23) or low res + MMAudio (~$31) fit; full res fits only on community cloud,
+   which was never available today. Will's call; both versions of the window are there to compare.
+4. **Chewbacca:** his block reads as "ape" to LTX. Rewrite it toward "a 7-foot Wookiee, tall
+   upright fur-covered alien, long brown hair over the whole body, blue eyes, bandolier" with no
+   ape words, or accept it.
+5. **Leia's wardrobe:** her block or her shots' prompts need "white high-necked long-sleeved gown"
+   so the close-up is not bare-shouldered.
+
+### To put the new casting and fixes in place (Will, on the Mac, from the repo root)
+
+```
+D=/Users/will/projects/lossy/output/star_wars_iv_v2; R=docs/research/0030-sw4-full-run-preflight/data
+mkdir -p $D/backup-20261123 && cp $D/voice_map.json $D/speakers.json $D/characters.json $D/speech_progress.json $D/backup-20261123/
+cp $R/sw4_voice_map_recast.json $D/voice_map.json
+uv run python -c "
+import json; s=json.load(open('$D/speakers.json')); f=json.load(open('$R/sw4_speaker_fixes.json'))['fixes']
+for k,v in f.items(): s['assignments'][k]={'character':v,'confidence':1.0,'source':'hand'}
+json.dump(s,open('$D/speakers.json','w'),indent=2)
+c=json.load(open('$D/characters.json')); r=json.load(open('$R/sw4_character_shot_fixes.json'))['remove']
+for ch in c['characters']:
+    ch['shots']=[x for x in ch.get('shots',[]) if x not in set(r.get(ch['name'],[]))]
+json.dump(c,open('$D/characters.json','w'),indent=2)"
+```
+
+Then drop the recast characters' lines from `speech_progress.json` (or move `speech/` aside) so the
+next speech pass regenerates them.
+
+### Where things are (job workspace, outside git)
+
+- Test clip (planned): `evidence/test_clips/star_wars_iv_v2_reconstructed_runpod-ltx25-keyframe+runpod-mmaudio.mp4`
+- Arm A (LTX audio + recast speech): `...+native.mp4`; Arm B: `star_wars_iv_v2_lowres_...` (both audios)
+- Side-by-side with the source: `evidence/side_by_side.mp4`; contact sheet `evidence/contact_sheet.jpg`;
+  resolution stills `evidence/res_compare.jpg`; logs, `faces.txt`, `style_*.jsonl`, `hygiene.txt`
+
+### Code added (tested, `tests/test_stitch_native_audio.py`, `test_ltx25.py`, `test_decode.py`)
+
+- `decode.py --stitch --audio-strategy native`: each clip's LTX soundtrack becomes the ambience track
+  (`stitch.extract_native_audio`, idempotent, never auto-mixed into a plain stitch).
+- `--ltx-one-stage` (0025's 640x352 graph, dry-run aware) and `--stitch --scale WxH` (Lanczos).
+- `voice_map.json` `null` = non-speaking; wider voice bank; stage 4 non-speaker rule.
+- `window_test.sh` runs the whole test (balance gate, speech, both arms, MMAudio, four stitches,
+  comparisons, hygiene) under one cap and resumes after a stop; `window_faces.py` measures faces.

@@ -72,7 +72,8 @@ capped "$LO" "$LO/decode_progress_$KF.json" -- --strategy "$KF" --keyframe-gener
 for dir in "$RUN" "$LO"; do
   scale=(); [ "$dir" = "$LO" ] && scale=(--scale 1280x704)
   for audio in runpod-mmaudio native; do
-    "${PY[@]}" decode.py "$dir" --strategy "$KF" --stitch "${WINDOW[@]}" --audio-strategy "$audio" "${scale[@]}"
+    # ${a[@]+...}: macOS bash 3.2 treats an empty array as unbound under set -u.
+    "${PY[@]}" decode.py "$dir" --strategy "$KF" --stitch "${WINDOW[@]}" --audio-strategy "$audio" ${scale[@]+"${scale[@]}"}
   done
 done 2>&1 | tee "$EV/stitch.log"
 

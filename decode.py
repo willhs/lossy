@@ -887,7 +887,7 @@ def dry_run_shot_plan(args) -> None:
     style = getattr(args, "style_prefix", None) or manifest.load_style_prefix(args.output_dir)
     probe = object.__new__(strategy_cls)   # skip __init__: it creates a RunPod session
     probe._init_character_identity(build_character_shot_map(characters_data), characters_data, style)
-    if getattr(args, "ltx_one_stage", False):
+    if getattr(args, "ltx_one_stage", False) is True:
         if not issubclass(strategy_cls, RunPodLtx25Strategy):
             sys.exit("--ltx-one-stage needs an LTX-2.5 strategy (runpod-ltx25*).")
         probe.one_stage = True
@@ -1008,7 +1008,7 @@ def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):
         style_prefix=style_prefix,
         **extra,
     )
-    if getattr(args, "ltx_one_stage", False):
+    if getattr(args, "ltx_one_stage", False) is True:
         if not issubclass(strategy_cls, RunPodLtx25Strategy):
             sys.exit("--ltx-one-stage needs an LTX-2.5 strategy (runpod-ltx25*).")
         strategy.one_stage = True
