@@ -64,3 +64,28 @@ for name in ("red_two", "red_three", "red_four", "red_six", "gold_leader", "gold
 
 json.dump(data, open(path, "w"), indent=2)
 print("ok")
+
+# 23 Nov: the 2-minute test drew Chewbacca as a shaggy ape and Leia bare-shouldered
+# (research 0030). Both blocks get explicit wardrobe/creature wording and no ape words.
+CHEWBACCA = (
+    "A seven-foot-tall Wookiee, an upright fur-covered alien who stands on two legs far taller "
+    "than any human. Long, straight brown hair covers his whole body, from his head to his "
+    "feet, and hangs down in loose strands. His face is mostly hair-covered, with a "
+    "dark leathery nose, a wide mouth with a few visible teeth, and deep-set, warm blue eyes "
+    "under a heavy brow, set in the same long brown hair. A dark leather bandolier crosses his "
+    "chest from shoulder to hip, and he wears a small leather belt at his waist. His arms are "
+    "long and thick and his hands are large."
+)
+LEIA = (
+    "A real woman in her early twenties with a fair complexion and natural skin texture. She "
+    "has a heart-shaped face, a small straight nose, and a defined jawline. Her dark brown "
+    "hair is styled into two symmetrical, coiled buns positioned over each ear, with a center "
+    "part. She has dark brown eyes, arched eyebrows, and a small, neutral mouth. Her build is "
+    "slender, and her features are balanced with subtle, realistic asymmetries. She wears a "
+    "plain white, floor-length, long-sleeved gown with a high rounded neckline and "
+    "wide sleeves, with a narrow white fabric belt at the waist. Her neck, shoulders and arms "
+    "are fully covered by the white fabric."
+)
+by["chewbacca"]["description"] = CHEWBACCA
+by["princess_leia_organa"]["description"] = LEIA
+json.dump(data, open(path, "w"), indent=2)

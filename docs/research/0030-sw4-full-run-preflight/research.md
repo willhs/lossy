@@ -418,3 +418,14 @@ next speech pass regenerates them.
 - `decode.py --strategy runpod-ltx25 --dry-run` on the staged copy: 2070 shots, 2687 clips, 26
   characters. Run from this branch's code: budgie's checkout (`dd4cd9d`, 6 behind main) was not
   updated, since only `~/lossy-runs` was approved for writes. Pull it before the run.
+
+## 23 Nov 2026: Chewbacca and Leia identity blocks rewritten (task 12b72ad4)
+
+Items 4 and 5 of "What should change before 30 Nov" are done in `data/sw4_characters_photographic.json`
+(and reapplied by `data/sw4_hand_fixes.py`). Chewbacca: "seven-foot-tall Wookiee, an upright
+fur-covered alien", long brown hair over the whole body, blue eyes, bandolier; the old "primate-like",
+"mane", "clawed" and "prominent teeth" wording is gone. Leia: the block now says a plain white,
+floor-length, long-sleeved gown with a high rounded neckline, neck, shoulders and arms covered.
+Guarded by `tests/test_sw4_identity_blocks.py` (word checks only). **Not rendered**: whether LTX now
+draws them right needs a pod; the run dir on budgie still carries the old blocks until the spec is
+copied over its `characters.json`. [Direct: text only]
