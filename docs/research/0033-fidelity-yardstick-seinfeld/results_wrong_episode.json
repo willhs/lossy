@@ -1,0 +1,191 @@
+{
+ "model": "hf-hub:timm/ViT-SO400M-14-SigLIP2",
+ "shots": 341,
+ "map": [
+  1.0427083333333333,
+  0.2658333333333758
+ ],
+ "chance": 0.1,
+ "other_frames": 396,
+ "levels": {
+  "shot": {
+   "top1": 0.097,
+   "ci95": [
+    0.07,
+    0.133
+   ],
+   "ceiling": 0.777
+  },
+  "scene": {
+   "top1": 0.117,
+   "ci95": [
+    0.087,
+    0.155
+   ],
+   "ceiling": 0.963
+  },
+  "film": {
+   "top1": 0.34,
+   "ci95": [
+    0.292,
+    0.392
+   ],
+   "ceiling": 0.99
+  }
+ },
+ "all_shots": {
+  "top1": 0.012,
+  "top5": 0.015,
+  "median_rank": 170,
+  "ceiling_top1": 0.724
+ },
+ "cosine": {
+  "recon_vs_source": 0.653,
+  "ceiling": 0.963,
+  "recon_vs_other_films": 0.577
+ },
+ "best": [
+  {
+   "shot": 337,
+   "src_s": 1318.24,
+   "rec_s": 1374.81,
+   "rank_of_all": 0,
+   "margin": 0.149
+  },
+  {
+   "shot": 338,
+   "src_s": 1320.16,
+   "rec_s": 1376.81,
+   "rank_of_all": 0,
+   "margin": 0.121
+  },
+  {
+   "shot": 298,
+   "src_s": 1146.12,
+   "rec_s": 1195.33,
+   "rank_of_all": 14,
+   "margin": 0.072
+  },
+  {
+   "shot": 0,
+   "src_s": 0.0,
+   "rec_s": 0.27,
+   "rank_of_all": 0,
+   "margin": 0.046
+  },
+  {
+   "shot": 131,
+   "src_s": 539.56,
+   "rec_s": 562.87,
+   "rank_of_all": 14,
+   "margin": 0.035
+  },
+  {
+   "shot": 340,
+   "src_s": 1323.56,
+   "rec_s": 1380.35,
+   "rank_of_all": 1,
+   "margin": 0.035
+  },
+  {
+   "shot": 38,
+   "src_s": 194.44,
+   "rec_s": 203.01,
+   "rank_of_all": 158,
+   "margin": 0.032
+  },
+  {
+   "shot": 199,
+   "src_s": 773.6,
+   "rec_s": 806.91,
+   "rank_of_all": 0,
+   "margin": 0.032
+  },
+  {
+   "shot": 23,
+   "src_s": 150.96,
+   "rec_s": 157.67,
+   "rank_of_all": 35,
+   "margin": 0.026
+  },
+  {
+   "shot": 31,
+   "src_s": 175.4,
+   "rec_s": 183.16,
+   "rank_of_all": 195,
+   "margin": 0.022
+  }
+ ],
+ "worst": [
+  {
+   "shot": 117,
+   "src_s": 492.64,
+   "rec_s": 513.95,
+   "rank_of_all": 307,
+   "margin": -0.227
+  },
+  {
+   "shot": 209,
+   "src_s": 813.28,
+   "rec_s": 848.28,
+   "rank_of_all": 315,
+   "margin": -0.211
+  },
+  {
+   "shot": 118,
+   "src_s": 503.4,
+   "rec_s": 525.17,
+   "rank_of_all": 313,
+   "margin": -0.205
+  },
+  {
+   "shot": 339,
+   "src_s": 1321.12,
+   "rec_s": 1377.81,
+   "rank_of_all": 6,
+   "margin": -0.195
+  },
+  {
+   "shot": 179,
+   "src_s": 693.0,
+   "rec_s": 722.86,
+   "rank_of_all": 227,
+   "margin": -0.18
+  },
+  {
+   "shot": 178,
+   "src_s": 683.4,
+   "rec_s": 712.85,
+   "rank_of_all": 337,
+   "margin": -0.177
+  },
+  {
+   "shot": 98,
+   "src_s": 391.08,
+   "rec_s": 408.05,
+   "rank_of_all": 333,
+   "margin": -0.168
+  },
+  {
+   "shot": 120,
+   "src_s": 508.84,
+   "rec_s": 530.84,
+   "rank_of_all": 295,
+   "margin": -0.155
+  },
+  {
+   "shot": 274,
+   "src_s": 1049.2,
+   "rec_s": 1094.28,
+   "rank_of_all": 274,
+   "margin": -0.148
+  },
+  {
+   "shot": 226,
+   "src_s": 879.4,
+   "rec_s": 917.22,
+   "rank_of_all": 303,
+   "margin": -0.147
+  }
+ ]
+}

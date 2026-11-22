@@ -18,6 +18,12 @@ dependencies = [
     "setuptools<81",
 ]
 
+[project.optional-dependencies]
+fidelity = [
+    "open-clip-torch>=4.2.2",
+    "torch>=2.15.0",
+]
+
 [tool.uv]
 override-dependencies = ["tf-keras>=2.16"]
 
