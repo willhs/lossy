@@ -400,3 +400,21 @@ next speech pass regenerates them.
 - `voice_map.json` `null` = non-speaking; wider voice bank; stage 4 non-speaker rule.
 - `window_test.sh` runs the whole test (balance gate, speech, both arms, MMAudio, four stitches,
   comparisons, hygiene) under one cap and resumes after a stop; `window_faces.py` measures faces.
+
+## 23 Nov 2026: SW4 run dir on budgie (task f91deccb, blocker B1 closed)
+
+`budgie:~/lossy-runs/star_wars_iv_v2/` now holds `shots.json`, `characters.json`, `characters/`,
+`speakers.json`, `voice_map.json`, `scenes.json`, `speech/` (530 files), `speech_progress.json`
+(rsync -a, mtimes kept; contents byte-identical to the staged copy). Face models are at
+`budgie:~/lossy-runs/face_models/` (`yunet.onnx`, `sface.onnx`, from opencv_zoo): set
+`LOSSY_FACE_MODELS=$HOME/lossy-runs/face_models` for the run. [Direct]
+
+- `characters.json` is the **photographic** one (`data/sw4_characters_photographic.json`) with
+  `sw4_character_shot_fixes.json` applied (108 stale shot tags removed: Owen, Beru, Tarkin). The Mac
+  primary still has the old one (Aug 8). Not applied: the recast `voice_map.json`, the speaker fixes
+  and the speech regeneration, so `voice_map.json` / `speakers.json` / `speech*` are the old Mac
+  copies. The "To put the new casting..." recipe above still has to run on the run dir before speech.
+- Fingerprint on budgie (`manifest.encode_fingerprint`): **8855b97c449f**, as expected.
+- `decode.py --strategy runpod-ltx25 --dry-run` on the staged copy: 2070 shots, 2687 clips, 26
+  characters. Run from this branch's code: budgie's checkout (`dd4cd9d`, 6 behind main) was not
+  updated, since only `~/lossy-runs` was approved for writes. Pull it before the run.
