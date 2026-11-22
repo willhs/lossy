@@ -170,3 +170,38 @@ Each new test fails on main (except the fingerprint guard, which pins the old va
 - A 60-hour run inside one Manager job phase (Seinfeld's 11 h is the longest so far).
 - Stitch on the full 2,070 shots (the rehearsal stitched 460; the fixed defect is per-position,
   and the full-film case follows from the same code path).
+
+## 22 Nov 2026: photographic identity blocks for SW4 (not finished)
+
+Will's decision: the SW4 run uses the style prefix and identity blocks regenerated with the
+photographic `IDENTITY_DESCRIPTION_SPEC` (research 0028).
+
+**Premise check.** The spec is in the encoder (`encode.py`, `IDENTITY_DESCRIPTION_SPEC`, commits
+e54fa16 / 8ed62c1: "A real man/woman", caricature intensifiers banned, droids as machines). The
+SW4 `characters.json` on disk is dated 8 Aug, so it was written before that spec. [Direct]
+
+**Why not re-run stage 3.** `encode.py stage3` rewrites the whole registry: roster, names and
+shot lists, not only descriptions. The unsupervised path caps at 5 characters. SW4 has 26
+hand-merged characters (`keep_name`, `red_two_wedge_antilles`, and so on). Re-running it would
+change who is in which shot, not just how they read. So the job added
+`tools/regen_identity.py`: it rewrites only `description`, with the same prompt shape stage 3
+uses for stubs and the same spec. Roster, names, shot lists and `keep_name` stay as they are
+(tests: `tests/test_regen_identity.py`). [Direct]
+
+**Fingerprint.** `manifest.encode_fingerprint` hashes only the shot boundaries in `shots.json`,
+and the tool only reads `shots.json`, so it stays **8855b97c449f**. Computed on a copy of the
+current `shots.json`. [Direct]
+
+**Blocked: no Gemini quota.** From the job, every Gemini model (`gemini-2.5-flash-lite`,
+`gemini-3.1-flash-lite-preview`, `gemini-2.5-flash`, `gemini-2.0-flash`) returns 429
+RESOURCE_EXHAUSTED with `quota_limit_value: 0` (`asia-southeast1`). The key is present in `.env`
+but this project has no quota from the job's network location. The regeneration, the
+before/after diff of six characters and the droid/creature/armour check have therefore not been
+done. To finish, from the Mac:
+
+```
+uv run python tools/regen_identity.py /Users/will/projects/lossy/output/star_wars_iv_v2
+```
+
+It backs up `characters.json` to `characters.pre-photo-YYYYMMDD/` first. `--dry-run` prints the
+prompts without calling Gemini. Cost is about 26 flash-lite calls (cents).
