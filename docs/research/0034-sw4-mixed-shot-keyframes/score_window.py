@@ -152,15 +152,35 @@ def score(a):
                 "to_sheet": mean([float(v @ sheet) for v in vecs]) if sheet is not None else float("nan"),
                 "per_shot_to_sheet": {s: round(float(v @ sheet), 3) for s, v in got} if sheet is not None else {},
             }
+        # Pooled (added before the after-run was scored, once the middle frame alone proved
+        # thin): each shot's video frames averaged into one face, then compared across shots;
+        # and within a shot, first frame vs last frame (how far the clip drifts).
+        per_shot: dict = {}
+        for (name, pos), got in picks.items():
+            if pos == "keyframe":
+                continue
+            for shot, v in got:
+                per_shot.setdefault(name, {}).setdefault(shot, {})[pos] = v
+        for name, shots_ in per_shot.items():
+            pooled = [sum(d.values()) / np.linalg.norm(sum(d.values())) for d in shots_.values()]
+            within = [float(d["first"] @ d["last"]) for d in shots_.values() if "first" in d and "last" in d]
+            out.setdefault(name, {})["pooled"] = {
+                "faces": len(pooled),
+                "across": mean([float(x @ y) for x, y in itertools.combinations(pooled, 2)]),
+                "to_sheet": mean([float(v @ sheets[name]) for v in pooled])
+                if sheets.get(name) is not None else float("nan"),
+                "first_vs_last": mean(within)}
         result[mode] = out
     result["labelled_frames"] = len(labels)
     json.dump(result, open(os.path.join(a.out, "score.json"), "w"), indent=1)
     for mode in ("auto", "labelled"):
         print(f"[{data['label']} {mode}] character: faces/across/to-sheet at " + ", ".join(
-            p for p in POSITIONS + ("keyframe",)))
+            p for p in POSITIONS + ("keyframe", "pooled")))
         for name, by_pos in result[mode].items():
             cells = "  ".join(f"{p[0]}:{v['faces']}/{v['across']:.2f}/{v['to_sheet']:.2f}"
-                              for p in POSITIONS + ("keyframe",) if (v := by_pos.get(p)))
+                              for p in POSITIONS + ("keyframe", "pooled") if (v := by_pos.get(p)))
+            if "pooled" in by_pos:
+                cells += f"  first-vs-last {by_pos['pooled']['first_vs_last']:.2f}"
             print(f"[{data['label']} {mode}] {name:<22} {cells}")
 
 

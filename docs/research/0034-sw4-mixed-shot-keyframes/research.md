@@ -60,3 +60,13 @@ under 60 px or turned away, dropped. The automatic "largest face" number is repo
 
 Spend cap for the whole task: **$6 RunPod**, via `tools/capped_run.py` with this run's ownership
 journal; 0 pods at the end.
+
+**Addendum, still before the new window was scored (render in progress).** The source and old
+window were labelled (`labels.json` beside each `candidates.json`, evidence dir) and scored. The
+middle frame alone leaves the source with 3 Han, 3 Obi-Wan and 1 Leia face, too thin for a
+ceiling, so a **pooled** view is added as a second headline: each shot's labelled frames averaged
+into one face, then compared across shots, plus first-vs-last frame within a shot (drift). It
+sits beside M; M stays the pre-registered primary. Because SFace may not separate real from
+reconstructed faces at this size at all, a **visual identity grid** (each character's labelled
+middle-frame face per shot: source, old, new) is also made and read by eye; where it and the
+cosine disagree, both are reported.
