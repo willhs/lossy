@@ -9,8 +9,9 @@ in ``strategies_video.py``) only wires it to the pod.
 The data shape:
 
 * ``ShotRoute``: per shot, either a keyframe shot (``characters`` are the people
-  whose sheets the editor sees) or a text shot with the reason it falls back. A
-  keyframe route always names at least one character, a text route always a reason.
+  whose sheets the editor sees, ``designs`` the design characters it draws from
+  text in a mixed shot) or a text shot with the reason it falls back. A keyframe
+  route always names at least one character, a text route always a reason.
 * ``Sheet``: one accepted character sheet (image + a face signature).
 * ``KeyframeGenerator`` / ``FaceEmbedder``: the two things this needs from outside
   the process. The generator is an interface so the trial's fal klein call
@@ -82,11 +83,17 @@ class ShotRoute:
     shot: int
     characters: tuple[str, ...]
     fallback: Fallback | None
+    # Design characters (keep_name: droid, trooper, Wookiee) in a keyframe shot. The
+    # editor draws them from their text blocks; only ``characters`` get a sheet.
+    # Only a mixed-shot route (research 0034) has any; a text route never does.
+    designs: tuple[str, ...] = ()
 
     def __post_init__(self):
         if (self.fallback is None) != bool(self.characters):
             raise ValueError("a keyframe route needs characters and a text route needs a reason "
                              f"(shot {self.shot}: {self.characters!r}, {self.fallback!r})")
+        if self.designs and self.fallback is not None:
+            raise ValueError(f"shot {self.shot}: a text route has no designs to draw ({self.designs!r})")
 
     @property
     def keyframe(self) -> bool:
@@ -94,13 +101,16 @@ class ShotRoute:
 
 
 def plan_route(shot: int, names: list[str], chars_by_name: dict,
-               cap: Callable[[list[str]], list[str]]) -> ShotRoute:
+               cap: Callable[[list[str]], list[str]], mixed: bool = False) -> ShotRoute:
     """Decide one shot. ``names`` is every character the shot map puts in it.
 
-    A shot is a keyframe shot only if every character in it is a person we can draw
-    a sheet for. A design character anywhere in the shot sends the whole shot to
-    text: the editor has no sheet for a droid, would invent one from words, and the
-    video model would then be locked to that invention for the whole clip.
+    By default a shot is a keyframe shot only if every character in it is a person we
+    can draw a sheet for: a design character anywhere sends the whole shot to text.
+
+    ``mixed`` (research 0034, ``--keyframe-mixed-shots``): a shot with people AND design
+    characters still gets a keyframe. The editor sees the people's sheets and draws
+    the design characters from their text blocks (``designs``), which is how they
+    render on the text path anyway. Only a shot with no person left falls back.
     ``cap`` picks the people whose sheets are shown, the same ones whose identity
     blocks the text prompt carries.
     """
@@ -109,12 +119,14 @@ def plan_route(shot: int, names: list[str], chars_by_name: dict,
     chars = [chars_by_name.get(n) for n in names]
     if any(c is None for c in chars):
         return ShotRoute(shot, (), Fallback.NO_DESCRIPTION)
-    if any(c.get("keep_name") for c in chars):
+    designs = tuple(n for n in names if chars_by_name[n].get("keep_name"))
+    people = [n for n in names if n not in designs]
+    if designs and (not mixed or not people):
         return ShotRoute(shot, (), Fallback.DESIGN_CHARACTER)
-    shown = tuple(cap(list(names)))[:CAP_PER_SHOT]
+    shown = tuple(cap(people))[:CAP_PER_SHOT]
     if any(not (chars_by_name[n].get("description") or "").strip() for n in shown):
         return ShotRoute(shot, (), Fallback.NO_DESCRIPTION)
-    return ShotRoute(shot, shown, None)
+    return ShotRoute(shot, shown, None, designs)
 
 
 def sheet_prompt(description: str) -> str:
@@ -122,12 +134,14 @@ def sheet_prompt(description: str) -> str:
     return SHEET_PROMPT.format(block=description.strip())
 
 
-def keyframe_prompt(video_prompt: str, n_sheets: int) -> str:
+def keyframe_prompt(video_prompt: str, n_sheets: int, others: Sequence[str] = ()) -> str:
     """The editor prompt for a shot's first frame.
 
     The scene comes first, because it names the shot's wardrobe, and the sheets are
     reduced to "face, hair, skin, age and build". The trial put the clothes
     instruction last and many frames kept the sheet's grey t-shirt anyway.
+    ``others`` are the text blocks of design characters in a mixed shot (research
+    0034): they are drawn from words, and told apart from the sheeted people.
     """
     if n_sheets == 1:
         who = "The person in this frame is the person in the reference sheet (image 1)."
@@ -136,6 +150,11 @@ def keyframe_prompt(video_prompt: str, n_sheets: int) -> str:
                "in reference sheet 2; keep each one distinct.")
     else:
         raise ValueError(f"the editor is shown 1 or 2 sheets, got {n_sheets}")
+    if others:
+        who += (" Also in the frame, with no reference sheet, drawn only from these descriptions: "
+                + " ".join(o.strip() for o in others)
+                + " The reference sheets show only the unmasked people; no one else takes a face "
+                  "from a sheet.")
     return (f"A single film frame, not a grid. Clothing, props, setting and lighting come only from "
             f"this scene: {video_prompt} {who} From the sheet take ONLY the face, hair, skin, age and "
             "build. Do not copy any clothing, background or layout from the sheet.")

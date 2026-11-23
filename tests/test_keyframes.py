@@ -158,6 +158,77 @@ class TestRouting:
         with pytest.raises(ValueError):
             ShotRoute(1, ("jerry",), Fallback.NO_CHARACTERS)
 
+    def test_a_text_route_cannot_carry_designs(self):
+        with pytest.raises(ValueError):
+            ShotRoute(1, (), Fallback.DESIGN_CHARACTER, ("c3po",))
+
+
+class TestMixedShotRouting:
+    """Research 0034: --keyframe-mixed-shots keyframes people who share a shot with a design."""
+
+    def route(self, names, chars=None, mixed=True):
+        chars = {c["name"]: c for c in (chars or _chars())["characters"]}
+        return plan_route(1, names, chars, lambda n: n[:2], mixed)
+
+    def test_person_with_a_design_gets_a_keyframe_and_the_design_is_drawn_from_text(self):
+        r = self.route(["jerry", "c3po"])
+        assert r.keyframe and r.characters == ("jerry",) and r.designs == ("c3po",)
+
+    def test_a_design_never_takes_one_of_the_two_sheet_slots(self):
+        r = self.route(["c3po", "jerry", "elaine"])
+        assert r.characters == ("jerry", "elaine") and r.designs == ("c3po",)
+
+    def test_a_shot_of_designs_only_still_falls_back(self):
+        assert self.route(["c3po"]).fallback is Fallback.DESIGN_CHARACTER
+
+    def test_off_by_default(self):
+        assert self.route(["jerry", "c3po"], mixed=False).fallback is Fallback.DESIGN_CHARACTER
+
+    def test_people_only_shots_route_the_same_either_way(self):
+        for names in (["jerry"], ["jerry", "elaine"], [], ["nodesc"]):
+            assert self.route(names, mixed=True) == self.route(names, mixed=False)
+
+    def test_strategy_plan_keyframes_the_mixed_shot_only_with_the_flag(self, tmp_path):
+        off = {r.shot: r for r in _make(tmp_path).plan(SHOTS)}
+        on = {r.shot: r for r in _make(tmp_path, mixed_shots=True).plan(SHOTS)}
+        assert off[6].fallback is Fallback.DESIGN_CHARACTER
+        assert on[6].characters == ("jerry",) and on[6].designs == ("c3po",)
+        assert on[5].fallback is Fallback.DESIGN_CHARACTER
+        assert {s for s, r in on.items() if r.keyframe} == {1, 2, 3, 4, 6, 7}
+
+    def test_editor_prompt_names_the_design_from_its_block_and_shows_one_sheet(self, tmp_path):
+        s = _make(tmp_path, mixed_shots=True)
+        route = s.plan([SHOTS[5]])[0]
+        p = s._editor_prompt(SHOTS[5], route)
+        assert "A gold humanoid droid." in p
+        assert "reference sheet (image 1)" in p and "no reference sheet" in p
+
+    def test_editor_prompt_adds_a_design_block_the_identity_cap_left_out(self, tmp_path):
+        chars = _chars()
+        chars["characters"][3]["shots"] = [6]           # c3po least prominent: capped out of the text
+        chars["characters"].append({"name": "kenny", "description": "A real boy.", "shots": [6, 1, 2]})
+        s = RunPodLtx25KeyframeStrategy(
+            output_dir=str(tmp_path), character_shot_map=decode.build_character_shot_map(chars),
+            characters_data=chars, style_prefix=STYLE, mixed_shots=True)
+        s._session = MagicMock()
+        route = s.plan([SHOTS[5]])[0]
+        assert route.characters == ("jerry", "kenny") and route.designs == ("c3po",)
+        text = s._part_prompt(s.format_prompt(SHOTS[5]), SHOTS[5], 0, 1)
+        assert "A gold humanoid droid." not in text
+        assert "C3Po: A gold humanoid droid." in s._editor_prompt(SHOTS[5], route)
+
+    def test_cli_flag_reaches_the_strategy_and_the_dry_run(self, tmp_path, monkeypatch, capsys):
+        _write_output_dir(tmp_path)
+        made = []
+        monkeypatch.setattr(decode, "_create_ltx2_strategy", lambda args, cls, **kw: made.append(kw))
+        decode._create_keyframe_strategy(types.SimpleNamespace(
+            keyframe_fal_cap=1.0, keyframe_generator="pod", keyframe_mixed_shots=True))
+        assert made[-1]["mixed_shots"] is True
+        decode.dry_run_keyframes(TestDryRun().args(tmp_path, keyframe_mixed_shots=True))
+        assert "(+ text: c3po)" in capsys.readouterr().out
+
+
+class TestRoutingStrategy:
     def test_strategy_plan_matches_its_own_shot_map(self, tmp_path):
         routes = {r.shot: r for r in _make(tmp_path).plan(SHOTS)}
         assert [s for s, r in routes.items() if r.keyframe] == [1, 2, 3, 4, 7]

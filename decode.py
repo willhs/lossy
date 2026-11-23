@@ -794,6 +794,11 @@ def main():
                              "--keyframe-fal-cap). 'pod': ComfyUI on the LTX pod itself, after boot and "
                              "before the first clip, then unloaded (RunPod time only, so capped_run sees "
                              "it). Images from one are not reused by the other. (default: %(default)s)")
+    parser.add_argument("--keyframe-mixed-shots", action="store_true",
+                        help="runpod-ltx25-keyframe: also keyframe shots that hold people AND design "
+                             "characters (troopers, droids): the editor draws the people from their "
+                             "sheets and the design characters from their text blocks (research 0034). "
+                             "Off: any design character sends the shot to text.")
     args = parser.parse_args()
 
     load_env()
@@ -932,6 +937,7 @@ def dry_run_keyframes(args) -> None:
         getattr(args, "style_prefix", None) or manifest.load_style_prefix(args.output_dir))
     probe._fal_cap_usd = args.keyframe_fal_cap
     probe._generator_kind = args.keyframe_generator
+    probe._mixed_shots = getattr(args, "keyframe_mixed_shots", False)
     print(f"Keyframe plan for {len(prompts)} shots of {args.output_dir} (dry run):")
     print("\n".join(probe.describe_plan(prompts)))
     print("Dry run OK. No network call was made and nothing was written.")
@@ -979,7 +985,8 @@ def _create_wan_enriched_strategy(args):
 def _create_keyframe_strategy(args):
     return _create_ltx2_strategy(args, RunPodLtx25KeyframeStrategy,
                                  fal_cap_usd=args.keyframe_fal_cap,
-                                 keyframe_generator=args.keyframe_generator)
+                                 keyframe_generator=args.keyframe_generator,
+                                 mixed_shots=getattr(args, "keyframe_mixed_shots", False))
 
 
 def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):

@@ -1874,6 +1874,9 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
     keyframe face cosine to the sheet is 0.685 against fal's 0.656 on the same shots, at
     about 10 s of A40 time per image (research 0029, "Self-hosted klein on the pod").
 
+    ``--keyframe-mixed-shots`` (research 0034) also keyframes a shot that holds people AND
+    design characters: the people from their sheets, the design characters from their text.
+
     Opt-in: ``--strategy runpod-ltx25-keyframe``. Nothing else changes.
     """
 
@@ -1901,8 +1904,9 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
 
     def __init__(self, output_dir: str = "", *args, generator: KeyframeGenerator | None = None,
                  embedder: FaceEmbedder | None = None, fal_cap_usd: float = FAL_CAP_USD,
-                 keyframe_generator: str = DEFAULT_GENERATOR, **kwargs):
+                 keyframe_generator: str = DEFAULT_GENERATOR, mixed_shots: bool = False, **kwargs):
         super().__init__(output_dir, *args, **kwargs)
+        self._mixed_shots = mixed_shots
         if keyframe_generator not in self.GENERATORS:
             raise ValueError(f"keyframe_generator must be one of {self.GENERATORS}, got {keyframe_generator!r}")
         self._generator_kind = keyframe_generator
@@ -1934,15 +1938,28 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
 
     def plan(self, entries: list[dict]) -> list[ShotRoute]:
         """Which shots get a keyframe and why the rest do not. Pure: no files, no network."""
+        mixed = getattr(self, "_mixed_shots", False)
         return [plan_route(e["index"], self._character_shot_map.get(e["index"], []),
-                           self._characters_by_name, self._cap_to_most_prominent)
+                           self._characters_by_name, self._cap_to_most_prominent, mixed)
                 for e in entries]
 
     def _editor_prompt(self, entry: dict, route: ShotRoute) -> str:
         """The editor's prompt for a shot's first frame: its part-0 video prompt, reframed."""
         n_parts = len(self._target_durations(entry["duration_s"]))
         text = self._part_prompt(self.format_prompt(entry), entry, 0, n_parts)
-        return keyframe_prompt(text, len(route.characters))
+        # A mixed shot's design characters are drawn from words. Each is named to the
+        # editor as sheet-less; the identity cap may have left its block out of the
+        # video prompt, so a missing block is added in full.
+        others = []
+        for name in route.designs:
+            char = self._characters_by_name[name]
+            label = char.get("display_name") or name
+            desc = (char.get("description") or "").strip()
+            if desc and desc not in text:
+                others.append(f"{label}: {desc}")
+            else:
+                others.append(f"{label}, as described in the scene.")
+        return keyframe_prompt(text, len(route.characters), others)
 
     def _sheet_order(self, routes: list[ShotRoute]) -> list[str]:
         """Most-prominent first, so the lead characters keep their first draw and any
@@ -1998,7 +2015,8 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
         lines = []
         for r in routes:
             if r.keyframe:
-                lines.append(f"  shot {r.shot:<5} KEYFRAME  {'+'.join(r.characters)}")
+                drawn = f"  (+ text: {'+'.join(r.designs)})" if r.designs else ""
+                lines.append(f"  shot {r.shot:<5} KEYFRAME  {'+'.join(r.characters)}{drawn}")
             else:
                 lines.append(f"  shot {r.shot:<5} text      {r.fallback.value}")
         todo = [r for r in routes if r.keyframe]
