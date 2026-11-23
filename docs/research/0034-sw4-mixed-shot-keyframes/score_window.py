@@ -76,8 +76,9 @@ def crop(img, box, label):
     pad = int(0.3 * h)
     c = img[max(y - pad, 0):y + h + pad, max(x - pad, 0):x + w + pad]
     c = cv2.resize(c, (160, 160)) if c.size else np.zeros((160, 160, 3), np.uint8)
-    cv2.rectangle(c, (0, 0), (160, 22), (0, 0, 0), -1)
-    cv2.putText(c, label, (3, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+    if label:
+        cv2.rectangle(c, (0, 0), (160, 22), (0, 0, 0), -1)
+        cv2.putText(c, label, (3, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
     return c
 
 
@@ -104,6 +105,9 @@ def candidates(a):
             found = faces.find(img)
             frames[f"{idx}/{pos}"] = {"shot": idx, "pos": pos, "character": names[0], "faces": found}
             row = [crop(img, f["box"], f"{idx}/{pos[0]} k{k} {f['box'][3]}px") for k, f in enumerate(found)]
+            os.makedirs(os.path.join(a.out, "faces"), exist_ok=True)
+            for k, f in enumerate(found):
+                cv2.imwrite(os.path.join(a.out, "faces", f"{idx}_{pos}_{k}.jpg"), crop(img, f["box"], ""))
             if not row:
                 row = [crop(np.zeros((160, 160, 3), np.uint8), (0, 0, 160, 160), f"{idx}/{pos[0]} none")]
             tiles.extend(row)

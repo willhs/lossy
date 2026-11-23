@@ -301,6 +301,25 @@ class TestCloudFallback:
         s.create_pod()
         assert s.gpu_hourly_rate == 0.59
 
+    def test_runtime_gone_on_the_ssh_read_is_a_retryable_setup_failure(self, tmp_path, monkeypatch):
+        """Research 0034: the ready loop saw ports, the next read said "runtime": null,
+        and create_pod crashed with AttributeError instead of retrying on a fresh pod."""
+        import sys
+        import types
+        import runpod_pod
+        reads = iter([{"runtime": {"ports": [{"privatePort": 8188}]}}, {"runtime": None}])
+        fake = types.SimpleNamespace(api_key=None, create_pod=lambda **kw: {"id": "p1"},
+                                     get_pod=lambda _: next(reads))
+        monkeypatch.setitem(sys.modules, "runpod", fake)
+        monkeypatch.setenv("RUNPOD_API_KEY", "k")
+        s = RunPodSession(str(tmp_path), gpu_types=[("NVIDIA RTX A6000", 0.33)])
+        monkeypatch.setattr(s, "_register_cleanup", lambda: None)
+        ended = []
+        monkeypatch.setattr(s, "terminate", lambda: ended.append(s.pod_id))
+        with pytest.raises(runpod_pod.PodSetupError):
+            s.create_pod()
+        assert ended == ["p1"]
+
     def test_old_constant_still_resolves(self):
         import runpod_pod
         assert runpod_pod.CLOUD_TYPE == runpod_pod.CLOUD_TYPES[0]

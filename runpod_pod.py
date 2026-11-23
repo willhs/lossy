@@ -881,7 +881,15 @@ class RunPodSession:
 
         # Get SSH info
         pod_info = runpod.get_pod(self.pod_id)
-        for port_info in pod_info.get("runtime", {}).get("ports", []):
+        runtime = (pod_info or {}).get("runtime")
+        if not runtime:
+            # The API can report "runtime": null on this second read even after the
+            # ready loop saw one (research 0034: AttributeError crashed the run). A pod
+            # with no runtime has no ports to ssh to: retry on a fresh one.
+            print("  Error: pod lost its runtime info right after starting")
+            self.terminate()
+            raise PodSetupError("pod reported no runtime after starting")
+        for port_info in runtime.get("ports") or []:
             if port_info["privatePort"] == 22 and port_info["isIpPublic"]:
                 self.ssh_host = port_info["ip"]
                 self.ssh_port = port_info["publicPort"]
