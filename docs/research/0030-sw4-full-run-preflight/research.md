@@ -429,3 +429,46 @@ floor-length, long-sleeved gown with a high rounded neckline, neck, shoulders an
 Guarded by `tests/test_sw4_identity_blocks.py` (word checks only). **Not rendered**: whether LTX now
 draws them right needs a pod; the run dir on budgie still carries the old blocks until the spec is
 copied over its `characters.json`. [Direct: text only]
+
+## 24 Nov 2026: recast and speaker fixes applied to budgie (task 489f250c)
+
+Applied to `budgie:~/lossy-runs/star_wars_iv_v2/` (nothing else touched; budgie's lossy checkout not
+used). Originals are in `backup-20261124/` there (`voice_map.json`, `speakers.json`,
+`speech_progress.json`); the 383 replaced clips are in `speech_replaced/`. Work was done on a copy on
+the Mac (the keys are here) and synced back with rsync; the three JSON files are md5-identical on both.
+
+**What was done.** (1) Stage 4 re-run over all 1,298 lines. The AI Studio key returned 429 with
+`quota_limit_value: 0` on every model, and no Vertex credentials exist, so `stage4_via_fal.py` runs the
+unchanged `run_stage4` (same prompt, same registry gate) with Gemini 2.5 Flash reached through fal's
+`any-llm`. `speakers.json` records `model: google/gemini-2.5-flash`, not the original flash-lite.
+Pro and Flash-with-reasoning were tried and abandoned: neither finished 26 batches in 15 minutes.
+(2) The 23 hand fixes from `sw4_speaker_fixes.json` applied **after** stage 4 (it overwrites the file).
+(3) `sw4_voice_map_recast.json` installed, with one key renamed: the run's registry calls Obi-Wan
+`obi_wan_ben_kenobi`, the map said `obiwan_kenobi` (same voice, Roger). (4) `regen_recast_speech.py`
+dropped and regenerated every line of a recast character plus every existing clip whose voice changed.
+
+**Attribution spot-check** (20 lines drawn at random, seed 24, outside the two hand-fixed windows;
+judged against the subtitle text and neighbours from memory of the film, no video watched; line 967
+could not be judged, so n=19; list in `speakers_before.json` / `speakers_stage4_flash.json` beside
+`spot_lines.json`):
+
+| Speaker file | Right | Notes |
+|---|---|---|
+| Old `speakers.json` | **11/19 (58%)** | Vader, Han, Leia and troopers given other people's lines |
+| New stage 4 | **12/19 (63%)** | Tarkin lines now right (397, 1216); four lines the old file got right went to `narrator` (342, 447 Obi-Wan; 373, 784 wrong either way) |
+| New stage 4, counting by voice heard | 14/19 (74%) | `narrator` and Obi-Wan are both Roger, so 342 and 447 sound right |
+
+The gain is small. The cause is visible in the counts: `narrator` went from 37 to **232 lines** (the
+new "never attribute to a non-speaking character" rule plus candidate lists that only hold characters
+tagged in the overlapping shots). Lines the model cannot place go to Roger, so Luke/Han/Leia lines
+whose speaker is not in the shot tags are voiced by Obi-Wan's voice. Not fixed here: a stage 4 that
+offers the main cast for every line, or a better model, would be the next step (about cents, not run).
+
+**Speech.** 792 target lines, 773 regenerated, **$1.59 of fal ElevenLabs** (estimate $1.64; the
+dollar figure is chars x $0.05/1k, fal's own bill not read). **19 lines were refused by fal's content
+checker** (lines 8, 23, 71, 76, 212, 249, 263, 270, 474, 476, 564, 584, 600, 650, 756, 801, 804, 942,
+958: insults and threats such as "you overweight glob of grease"); they have no clip now (their old
+wrong-voice clip is in `speech_replaced/`) and need reworded text or a retry. Speech has 920 clips of
+1,298 lines: lines of non-recast characters that never had a clip (Vader, Leia, Obi-Wan, troopers,
+narrator outside the old range) are left for the full run's speech pass, about $1.
+**Total spend: $1.59 speech + stage 4 on fal (not itemised by fal; five partial or full any-llm runs, a few cents each, estimated under $0.50).** No RunPod.
