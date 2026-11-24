@@ -802,10 +802,11 @@ def main():
     parser.add_argument("--keyframe-anchor-end", type=float, default=0.0, metavar="STRENGTH",
                         help="runpod-ltx25-keyframe: also pin the shot's keyframe as the LAST frame of "
                              "each of its clips, at this guide strength (0-1; 0 = off), so LTX cannot "
-                             "drift away from the sheet's face inside the shot (research 0035).")
+                             "drift away from the sheet's face inside the shot. Not recommended: "
+                             "on SW4 it held the face by freezing the shot (research 0035).")
     parser.add_argument("--keyframe-anchor-mid", type=float, default=0.0, metavar="STRENGTH",
                         help="runpod-ltx25-keyframe: also guide the clip's middle frame towards the "
-                             "keyframe at this strength (0-1; 0 = off; research 0035).")
+                             "keyframe at this strength (0-1; 0 = off). Not recommended (research 0035).")
     args = parser.parse_args()
 
     load_env()
