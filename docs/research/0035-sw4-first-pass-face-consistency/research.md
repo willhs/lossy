@@ -103,3 +103,42 @@ pods) when the task started, via `tools/capped_run.py` with each arm's ownership
 pods and empty journals at the end. Everything runs from a scratch copy of the encode in the
 job workspace (0030's photographic `characters.json`, shot fixes (108 stale tags), recast voices,
 speaker fixes); the primary checkout is only read.
+
+## Status (24 Nov 2026): parked before any render; no spend
+
+The pre-registration, the anchor flags and the arm script are committed. **Nothing has been
+rendered and $0 has been spent** (RunPod balance read $28.19 with 0 pods at the start of the job;
+no pod was rented and no ownership journal was written).
+
+**Why it stopped.** The job could read `RUNPOD_API_KEY` and `FAL_KEY` through the worktree's
+`.env` symlink when it started, but the symlink was gone by the time the baseline launched, so
+the script's first balance read got an empty answer and it exited before renting anything. The
+job is defined as having no secrets, so it does not go looking for keys elsewhere.
+
+**Found so far (no render needed):**
+
+- Premise corrections above: Obi-Wan's keyframes are only off the sheet with the mixed-shot flag
+  on; the "shorter clips" lever has nothing to shorten in this window; Ingredients needs an
+  `HF_TOKEN`. **[Inferred / observed]**
+- **Film-wide, 127 of 793 keyframe shots (16%) are long enough (> 4.84 s) to be split into
+  chained clips**; 457 run over 2 s; the median is 2.3 s (`decode --dry-run`, full film).
+  So clip length can matter film-wide even though it does not in this window, and a split
+  shot's later parts start from the previous part's last frame, carrying any drift with them.
+  With `--keyframe-anchor-end`, every part of a split keyframe shot is pulled back to the
+  keyframe at its end (`tests/test_keyframe_anchor.py::test_later_parts_keep_the_shots_anchor`).
+  **[Observed]**
+
+**To resume** (a job with RunPod + fal secrets, or Will on the Mac with `op run`), from the repo
+root. `runs/base` is the workspace's scratch copy of the encode with 0030's fixes:
+
+```
+WS=<workspace with runs/base and face_models> BASELINE=<balance now>
+ARM=base       bash docs/research/0035-sw4-first-pass-face-consistency/window_anchor.sh
+ARM=end100     bash docs/research/0035-sw4-first-pass-face-consistency/window_anchor.sh &
+ARM=mid50end50 bash docs/research/0035-sw4-first-pass-face-consistency/window_anchor.sh
+```
+
+Expected spend: about $0.6 for base (pod boot, klein sheets and keyframes, 38 clips, as 0034
+measured) and about $0.3 for each anchor arm (boot plus 14 clips), so about $1.2 of the $6 cap,
+plus cents of fal speech. Then score with 0034's `score_window.py` under the rules above, and run
+the swap look test (rule 3).
