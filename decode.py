@@ -799,6 +799,13 @@ def main():
                              "characters (troopers, droids): the editor draws the people from their "
                              "sheets and the design characters from their text blocks (research 0034). "
                              "Off: any design character sends the shot to text.")
+    parser.add_argument("--keyframe-anchor-end", type=float, default=0.0, metavar="STRENGTH",
+                        help="runpod-ltx25-keyframe: also pin the shot's keyframe as the LAST frame of "
+                             "each of its clips, at this guide strength (0-1; 0 = off), so LTX cannot "
+                             "drift away from the sheet's face inside the shot (research 0035).")
+    parser.add_argument("--keyframe-anchor-mid", type=float, default=0.0, metavar="STRENGTH",
+                        help="runpod-ltx25-keyframe: also guide the clip's middle frame towards the "
+                             "keyframe at this strength (0-1; 0 = off; research 0035).")
     args = parser.parse_args()
 
     load_env()
@@ -986,7 +993,9 @@ def _create_keyframe_strategy(args):
     return _create_ltx2_strategy(args, RunPodLtx25KeyframeStrategy,
                                  fal_cap_usd=args.keyframe_fal_cap,
                                  keyframe_generator=args.keyframe_generator,
-                                 mixed_shots=getattr(args, "keyframe_mixed_shots", False))
+                                 mixed_shots=getattr(args, "keyframe_mixed_shots", False),
+                                 anchor_end=getattr(args, "keyframe_anchor_end", 0.0),
+                                 anchor_mid=getattr(args, "keyframe_anchor_mid", 0.0))
 
 
 def _create_ltx2_strategy(args, strategy_cls=RunPodLtx2Strategy, **extra):

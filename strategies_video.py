@@ -1566,6 +1566,37 @@ def ltx25_frames(target_s: float, fps: int = 25, lo: int = 25, hi: int = 121) ->
     return max(lo, min(hi, n))
 
 
+def add_anchor_guides(wf: dict, image: str, guides: list[tuple[int, float]], one_stage: bool) -> None:
+    """Re-anchor an LTX-2.5 clip on its keyframe later in the clip (research 0035), in place.
+
+    ``guides`` is ``[(frame_idx, strength), ...]``; -1 is the last frame. Each becomes an
+    ``LTXVAddGuide`` of the same image on stage 1's latent, chained after the start-frame
+    conditioning. The appended guide frames are cut out again (``LTXVCropGuides``) before
+    the decode, or before the upsample on the two-stage graph, whose refine pass then runs
+    on the cropped conditioning, as ``RunPodLtx25IngredientsStrategy`` does.
+    """
+    wf["60"] = {"class_type": "LoadImage", "inputs": {"image": image}}
+    pos, neg, latent = ["7", 0], ["7", 1], wf["10"]["inputs"]["video_latent"]
+    for n, (frame_idx, strength) in enumerate(guides):
+        nid = str(61 + n)
+        wf[nid] = {"class_type": "LTXVAddGuide",
+                   "inputs": {"positive": pos, "negative": neg, "vae": ["3", 0], "latent": latent,
+                              "image": ["60", 0], "frame_idx": frame_idx, "strength": strength}}
+        pos, neg, latent = [nid, 0], [nid, 1], [nid, 2]
+    wf["10"]["inputs"]["video_latent"] = latent
+    wf["11"]["inputs"].update({"positive": pos, "negative": neg})
+    wf["69"] = {"class_type": "LTXVCropGuides",
+                "inputs": {"positive": pos, "negative": neg, "latent": ["16", 0]}}
+    if one_stage:
+        wf["30"]["inputs"]["samples"] = ["69", 2]
+        return
+    wf["21"]["inputs"]["samples"] = ["69", 2]
+    wf["68"] = {"class_type": "LTXVDualCFGGuider",
+                "inputs": {"model": ["1", 0], "positive": ["69", 0], "negative": ["69", 1],
+                           "video_cfg": 1.0, "audio_cfg": 1.0}}
+    wf["25"]["inputs"]["guider"] = ["68", 0]
+
+
 class RunPodLtx25Strategy(RunPodLtx2Strategy):
     """RunPod self-hosted LTX-2.5 (22B distilled, int8-convrot) via ComfyUI.
 
@@ -1904,9 +1935,16 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
 
     def __init__(self, output_dir: str = "", *args, generator: KeyframeGenerator | None = None,
                  embedder: FaceEmbedder | None = None, fal_cap_usd: float = FAL_CAP_USD,
-                 keyframe_generator: str = DEFAULT_GENERATOR, mixed_shots: bool = False, **kwargs):
+                 keyframe_generator: str = DEFAULT_GENERATOR, mixed_shots: bool = False,
+                 anchor_end: float = 0.0, anchor_mid: float = 0.0, **kwargs):
         super().__init__(output_dir, *args, **kwargs)
         self._mixed_shots = mixed_shots
+        for label, s in (("anchor_end", anchor_end), ("anchor_mid", anchor_mid)):
+            if not 0.0 <= s <= 1.0:
+                raise ValueError(f"{label} must be in [0, 1], got {s}")
+        self._anchor_end = anchor_end
+        self._anchor_mid = anchor_mid
+        self._anchor: str | None = None   # pod-side keyframe of the shot being generated
         if keyframe_generator not in self.GENERATORS:
             raise ValueError(f"keyframe_generator must be one of {self.GENERATORS}, got {keyframe_generator!r}")
         self._generator_kind = keyframe_generator
@@ -1999,6 +2037,7 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
                   f"({', '.join(sorted({f.value for f in failed.values()}))}).")
 
     def _first_part_start_image(self, shot_index: int) -> str | None:
+        self._anchor = None
         local = self._keyframes.get(shot_index)
         if local is None:
             return None
@@ -2006,7 +2045,17 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
         if remote is None:
             self.fallbacks[shot_index] = Fallback.UPLOAD_FAILED
             print(f"  Shot {shot_index}: keyframe upload failed; generating from text")
+        self._anchor = remote
         return remote
+
+    def _build_clip_workflow(self, prompt: str, seed: int, frames: int, start_image: str | None = None) -> dict:
+        wf = super()._build_clip_workflow(prompt, seed, frames, start_image=start_image)
+        guides = [(-1, self._anchor_end)] if self._anchor_end > 0 else []
+        if self._anchor_mid > 0:
+            guides.insert(0, ((frames - 1) // 2, self._anchor_mid))
+        if self._anchor and guides:
+            add_anchor_guides(wf, self._anchor, guides, self.one_stage)
+        return wf
 
     def describe_plan(self, entries: list[dict]) -> list[str]:
         """The dry-run report: one line per shot, then what a real run would make and cost."""

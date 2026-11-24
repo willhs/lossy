@@ -1,0 +1,5 @@
+kind	what	why	evidence	result
+premise	Checked task notes against 0034 tables and a dry run	Notes unverified	0034 drift table; decode --dry-run window	Obi-Wan off-sheet only with mixed flag on (flag-off keyframes 0.47/0.61/0.53); no keyframe shot in window is split, so shorter clips moot here; Ingredients gated, no HF_TOKEN
+design	Re-anchor lever = LTXVAddGuide of the keyframe at frame -1 (and mid), cropped before decode	Only first-pass lever that runs with core ComfyUI nodes and no new weights	ComfyUI v0.39.2 nodes_lt.py: negative frame_idx resolves from the end; tests/test_keyframe_anchor.py	built, off by default
+design	Arms are forks of base with only keyframe shots re-rendered	Anchor must be the only difference; text shots and klein draws identical; cheaper	window_anchor.sh	-
+design	Primary measure K-mid (middle frame to sheet, 9 single-person keyframe shots)	End anchor makes the last frame match by construction; anchors only touch keyframe shots	research.md pre-registration	committed before rendering
