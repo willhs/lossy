@@ -119,5 +119,9 @@ field: `FAL_KEY`, `GEMINI_API_KEY`, `HF_TOKEN`, `REPLICATE_API_TOKEN`, `RUNPOD_A
 - `op-scope lossy -- <command>` (the vault-scoped service account)
 - Manager jobs dispatched with `secrets=true`
 
+In a job, a denied `.env` read is not "no keys": check with
+`uv run python -c "import config,os; config.load_env(); print(bool(os.environ.get('RUNPOD_API_KEY')))"`
+(prints only True/False) before parking on missing credentials.
+
 Never write a resolved key to a file or print it. Don't regenerate a secret-bearing `.env`
 with `op inject`. The old plaintext `.env` is being retired (Nov 2026).
