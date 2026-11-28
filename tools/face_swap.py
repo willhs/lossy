@@ -8,7 +8,8 @@ Uses screenquote's engine (SCRFD detect, ArcFace identity, HyperSwap 1b, BiSeNet
 it with screenquote's venv; lossy takes no onnxruntime dependency and nothing is written into
 that checkout:
 
-    PYTHONDONTWRITEBYTECODE=1 /Users/will/projects/screenquote/.venv/bin/python tools/face_swap.py \
+    PYTHONDONTWRITEBYTECODE=1 LOSSY_FACE_SWAP_ENGINE=<screenquote>/screenquote_web/face_swap_engine.py \
+        <screenquote>/.venv/bin/python tools/face_swap.py \
         VIDEO RUN_DIR START LIMIT MODELS_DIR OUT.mp4
 
 Only shots whose shot map names exactly one person (non-design character) are considered; the
@@ -16,19 +17,19 @@ identity is that person's reference sheet. Writes OUT.mp4 (audio copied) and OUT
 shot: frame range, whether it was swapped and why). Weights are facefusion's research /
 non-commercial ones (screenquote ADR 0012).
 """
-import importlib.util
 import json
 import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 import cv2
 import numpy as np
 
-ENGINE = "/Users/will/projects/screenquote/screenquote_web/face_swap_engine.py"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import faces as fid  # noqa: E402
+
 MIN_SIM = 0.10      # ArcFace cosine to the sheet a face must reach in some frame: strangers and helmets sit below
 MIN_FACE_H = 40     # px; smaller faces are not followed
 MIN_OVERLAP = 0.3   # box IoU between consecutive frames that makes it the same face
@@ -151,14 +152,6 @@ def one_person_shots(run, start, limit):
     return {i: names[0] for i, names in named.items() if len(names) == 1}
 
 
-def _load_engine(models):
-    spec = importlib.util.spec_from_file_location("face_swap_engine", ENGINE)
-    fse = importlib.util.module_from_spec(spec)
-    sys.modules["face_swap_engine"] = fse
-    spec.loader.exec_module(fse)
-    return fse.OnnxEngine(Path(models), threads=6)
-
-
 def _sheet_identity(engine, run, name):
     sheet = cv2.imread(os.path.join(run, "characters", f"{name}_sheet.png"))
     faces = engine.detect(sheet) if sheet is not None else []
@@ -171,7 +164,7 @@ def main():
     video, run, start, limit, models, out = sys.argv[1:7]
     start, limit = int(start), int(limit)
     t0 = time.time()
-    engine = _load_engine(models)
+    engine = fid.load_swap_engine(models)
     spans = shot_spans(video, run, start, limit)
     names = one_person_shots(run, start, limit)
     identities = {n: _sheet_identity(engine, run, n) for n in set(names.values())}

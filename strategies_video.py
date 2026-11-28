@@ -11,10 +11,11 @@ import tempfile
 import threading
 import time
 
+import faces
 import manifest
 from clip_types import AudioClipResult, ClipResult
 from keyframes import (KLEIN_TEXT_ENCODER, KLEIN_UNET, KLEIN_VAE, SHEET_ATTEMPTS, DiskCache, FaceEmbedder,
-                       Fallback, FalKleinGenerator, KeyframeGenerator, KeyframeJob, OpenCVFaceEmbedder,
+                       Fallback, FalKleinGenerator, KeyframeGenerator, KeyframeJob, KeyframeSetupError,
                        PodKleinGenerator, ShotRoute, keyframe_prompt, make_keyframes, make_sheets,
                        plan_route)
 from runpod_pod import PinnedModel, check_gated_access
@@ -1971,7 +1972,7 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
 
     def _get_embedder(self) -> FaceEmbedder:
         if self._embedder is None:
-            self._embedder = OpenCVFaceEmbedder(os.environ.get("LOSSY_FACE_MODELS", "models/face"))
+            self._embedder = faces.FaceIdentity.from_env()
         return self._embedder
 
     def plan(self, entries: list[dict]) -> list[ShotRoute]:
@@ -2016,7 +2017,10 @@ class RunPodLtx25KeyframeStrategy(RunPodLtx25Strategy):
             return
         generator, embedder = self._get_generator(), self._get_embedder()
         generator.preflight()
-        embedder.preflight()
+        try:
+            embedder.preflight()
+        except faces.FaceModelsMissing as e:   # the sheet gate needs them; stop before any pod
+            raise KeyframeSetupError(f"{e} The sheet distinctness gate needs them.") from e
         names = self._sheet_order(routes)
         try:
             sheets = make_sheets(names, {n: self._characters_by_name[n]["description"] for n in names},

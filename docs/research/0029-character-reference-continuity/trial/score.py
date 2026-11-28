@@ -46,6 +46,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, os.getcwd())
 import config  # noqa: E402
+import faces as fid  # noqa: E402
 
 ARMS = ("T", "K")   # the two arms compared; `--arms T,I` swaps in arm I (Ingredients)
 # Arm I runs under its own strategy, so its clips sit in a different directory.
@@ -91,22 +92,9 @@ def read_frames(path: str) -> list[np.ndarray]:
 
 # ---------------------------------------------------------------- faces
 
-class Faces:
-    def __init__(self, models: str):
-        self.det = cv2.FaceDetectorYN.create(os.path.join(models, "yunet.onnx"), "", (320, 320), 0.6)
-        self.rec = cv2.FaceRecognizerSF.create(os.path.join(models, "sface.onnx"), "")
-
-    def find(self, img: np.ndarray) -> list[dict]:
-        """Faces largest first: {'box': (x, y, w, h), 'emb': unit vector}."""
-        h, w = img.shape[:2]
-        self.det.setInputSize((w, h))
-        _, faces = self.det.detect(img)
-        out = []
-        for f in (faces if faces is not None else []):
-            emb = self.rec.feature(self.rec.alignCrop(img, f)).flatten()
-            out.append({"box": tuple(int(v) for v in f[:4]), "emb": emb / np.linalg.norm(emb),
-                        "score": float(f[-1])})
-        return sorted(out, key=lambda d: -d["box"][2] * d["box"][3])
+def find(fi: fid.FaceIdentity, img: np.ndarray) -> list[dict]:
+    """Faces largest area first (this trial's order): {'box': (x, y, w, h), 'emb', 'score'}."""
+    return [{"box": f.box, "emb": f.emb, "score": f.score} for f in fid.by_area(fi.find(img))]
 
 
 def cos(a, b) -> float:
@@ -213,7 +201,7 @@ def main(run: str, models: str, judge: bool) -> None:
     out = os.path.join(run, "score" if ARMS == ("T", "K") else f"score_{ARMS[0]}_{ARMS[1]}")
     for d in ("frames", "grids", "pairs"):
         os.makedirs(os.path.join(out, d), exist_ok=True)
-    faces = Faces(models)
+    faces = fid.FaceIdentity(models)
     chars = list(plan["identity"])
     shots = [s for s in plan["shots"] if all(os.path.exists(clip_path(run, a, s["shot"])) for a in ARMS)]
     print(f"{len(shots)}/{len(plan['shots'])} shots have both arms rendered")
@@ -228,14 +216,14 @@ def main(run: str, models: str, judge: bool) -> None:
             diffs = [float(np.mean(np.abs(a - b))) for a, b in zip(g, g[1:])]
             for pos, img in pick.items():
                 cv2.imwrite(os.path.join(out, "frames", f"{arm}_{s['shot']:04d}_{pos}.jpg"), img)
-            rec[(arm, s["shot"])] = {"frames": pick, "faces": {p: faces.find(i) for p, i in pick.items()},
+            rec[(arm, s["shot"])] = {"frames": pick, "faces": {p: find(faces, i) for p, i in pick.items()},
                                      "motion": {"mean_abs_diff": round(float(np.mean(diffs)), 3),
                                                 "frozen_share": round(float(np.mean([d < 0.5 for d in diffs])), 3),
                                                 "n_frames": len(fr)}}
 
     sheet_emb = {}
     for c in chars:
-        fs = faces.find(cv2.imread(os.path.join(run, "sheets", f"{c}.png")))
+        fs = find(faces, cv2.imread(os.path.join(run, "sheets", f"{c}.png")))
         if fs:
             m = np.mean([f["emb"] for f in fs], axis=0)
             sheet_emb[c] = m / np.linalg.norm(m)
@@ -286,7 +274,7 @@ def main(run: str, models: str, judge: bool) -> None:
                 curve = {}
                 if arm in ("K", "KQ"):
                     kdir = "k_frames" if arm == "K" else "kq_frames"
-                    kf = [faces.find(cv2.imread(os.path.join(run, kdir, f"{s['shot']:04d}.png"))) for s in mine]
+                    kf = [find(faces, cv2.imread(os.path.join(run, kdir, f"{s['shot']:04d}.png"))) for s in mine]
                     # keyframe faces: largest for singles, best sheet match for pairs
                     kv = [max(cos(f["emb"], sheet_emb[c]) for f in fs[:2]) for fs in kf if fs]
                     curve["keyframe"] = round(float(np.mean(kv)), 4) if kv else None
@@ -406,7 +394,7 @@ def source_reference(run: str, faces: Faces, shots: list, chars: list) -> dict:
         for s in shots:
             path = os.path.join(run, "source_kf", f"{s['shot']:04d}.jpg")
             if s["characters"] == [c] and os.path.exists(path):
-                fs = faces.find(cv2.imread(path))
+                fs = find(faces, cv2.imread(path))
                 if fs:
                     embs.append(fs[0]["emb"])
         out[c] = mean_pairwise(embs)

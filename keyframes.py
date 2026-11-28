@@ -47,6 +47,8 @@ from typing import Callable, Protocol, Sequence
 
 import numpy as np
 
+import faces
+
 # Face cosine between two different characters' sheets above which the pair is
 # "the same-looking person" (research 0029: Jerry/Kramer 0.78; K's cross-character
 # mean 0.45; the doc says "over ~0.5"). SFace's own same-person line is ~0.36, so
@@ -196,7 +198,7 @@ class KeyframeGenerator(Protocol):
 
 class FaceEmbedder(Protocol):
     def preflight(self) -> None:
-        """Raise KeyframeSetupError if the models are missing. Free."""
+        """Raise faces.FaceModelsMissing if the models are missing. Free."""
 
     def faces(self, png: bytes) -> list[np.ndarray]:
         """Unit-length embedding of every face found in the image (empty if none)."""
@@ -228,11 +230,7 @@ def sheet_seed(name: str, attempt: int) -> int:
 
 
 def _signature(embedder: FaceEmbedder, png: bytes) -> np.ndarray | None:
-    faces = embedder.faces(png)
-    if not faces:
-        return None
-    m = np.mean(faces, axis=0)
-    return m / np.linalg.norm(m)
+    return faces.signature(embedder.faces(png))
 
 
 def cache_key(*parts: str) -> str:
@@ -572,49 +570,6 @@ class PodKleinGenerator:
                 f.write(json.dumps({"kind": kind, "seed": seed,
                                     "seconds": round(time.time() - t0, 2)}) + "\n")
         return png
-
-
-# ---------------------------------------------------- face embedder (the gate)
-
-class OpenCVFaceEmbedder:
-    """OpenCV-zoo YuNet + SFace on CPU, exactly as the trial's scorer measured faces.
-
-    ``models_dir`` holds ``yunet.onnx`` and ``sface.onnx`` (opencv_zoo,
-    face_detection_yunet and face_recognition_sface). Loaded on first use.
-    """
-
-    FILES = ("yunet.onnx", "sface.onnx")
-
-    def __init__(self, models_dir: str):
-        self.models_dir = models_dir
-        self._det = self._rec = None
-
-    def preflight(self) -> None:
-        missing = [f for f in self.FILES if not os.path.isfile(os.path.join(self.models_dir, f))]
-        if missing:
-            raise KeyframeSetupError(
-                f"face models missing in {self.models_dir!r}: {', '.join(missing)}. The sheet "
-                "distinctness gate needs them: download face_detection_yunet and "
-                "face_recognition_sface from github.com/opencv/opencv_zoo and set "
-                "LOSSY_FACE_MODELS to that directory.")
-
-    def faces(self, png: bytes) -> list[np.ndarray]:
-        import cv2
-        if self._det is None:
-            self._det = cv2.FaceDetectorYN.create(
-                os.path.join(self.models_dir, "yunet.onnx"), "", (320, 320), 0.6)
-            self._rec = cv2.FaceRecognizerSF.create(os.path.join(self.models_dir, "sface.onnx"), "")
-        img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
-        if img is None:
-            return []
-        h, w = img.shape[:2]
-        self._det.setInputSize((w, h))
-        _, found = self._det.detect(img)
-        out = []
-        for f in (found if found is not None else []):
-            emb = self._rec.feature(self._rec.alignCrop(img, f)).flatten()
-            out.append(emb / np.linalg.norm(emb))
-        return out
 
 
 # --------------------------------------------------------------- keyframes

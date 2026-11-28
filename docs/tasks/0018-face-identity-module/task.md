@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 steady_task: 30299286-18d6-484a-bf1f-40f9c88c40aa
 created: 2026-11-28
 ---
@@ -41,13 +41,13 @@ Verified against the code on 28 Nov (after abdfad4, the flicker job, landed):
 
 ## Success criteria
 
-- [ ] No `cv2.FaceDetectorYN.create` outside `faces.py`; no research script imports another
+- [x] No `cv2.FaceDetectorYN.create` outside `faces.py`; no research script imports another
       research dir; no absolute path to `face_swap_engine.py` in the repo.
-- [ ] `uv run python -m pytest -v` passes, with `tests/test_faces.py` covering the pick rules,
+- [x] `uv run python -m pytest -v` passes, with `tests/test_faces.py` covering the pick rules,
       `find`'s order/filter contract and the swap loader.
-- [ ] Old (`c2e7be4`) vs new `score_window.py candidates` + `score` on real SW4 images give
+- [x] Old (`c2e7be4`) vs new `score_window.py candidates` + `score` on real SW4 images give
       byte-identical `candidates.json` and `score.json` (CPU, $0).
-- [ ] `.gent/rules.md` and README name `faces.py` and `LOSSY_FACE_SWAP_ENGINE`.
+- [x] `.gent/rules.md` and README name `faces.py` and `LOSSY_FACE_SWAP_ENGINE`.
 
 ## Won't do
 

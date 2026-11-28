@@ -32,43 +32,27 @@ import argparse
 import itertools
 import json
 import os
-import subprocess
 import sys
 
 import cv2
 import numpy as np
 
 sys.path.insert(0, os.getcwd())
+import faces as fid  # noqa: E402
 from decode import build_character_shot_map  # noqa: E402
 
-EDGE = 0.06
-POSITIONS = ("first", "middle", "last")
-SIZE = (1280, 704)
+POSITIONS = fid.POSITIONS
+SIZE = fid.WINDOW_SIZE
+MIN_H = 40   # px; smaller YuNet boxes are not candidates
 
 
-class Faces:
-    def __init__(self, models):
-        self.det = cv2.FaceDetectorYN.create(os.path.join(models, "yunet.onnx"), "", (320, 320), 0.6)
-        self.rec = cv2.FaceRecognizerSF.create(os.path.join(models, "sface.onnx"), "")
-
-    def find(self, img, min_h=40):
-        self.det.setInputSize((img.shape[1], img.shape[0]))
-        _, found = self.det.detect(img)
-        out = []
-        for f in (found if found is not None else []):
-            if f[3] < min_h:
-                continue
-            e = self.rec.feature(self.rec.alignCrop(img, f)).flatten()
-            out.append({"box": [int(v) for v in f[:4]], "score": round(float(f[-1]), 3),
-                        "emb": (e / np.linalg.norm(e)).tolist()})
-        return out
+def record(face):
+    """A candidate as candidates.json stores it (labels index this list)."""
+    return {"box": list(face.box), "score": round(face.score, 3), "emb": face.emb.tolist()}
 
 
-def frame(video, t):
-    png = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(t, 0):.3f}", "-i", video, "-vf",
-                          f"scale={SIZE[0]}:{SIZE[1]}:flags=lanczos", "-frames:v", "1", "-f",
-                          "image2pipe", "-vcodec", "png", "-"], capture_output=True, check=True).stdout
-    return cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+def as_face(rec):
+    return fid.Face(tuple(rec["box"]), rec["score"], np.array(rec["emb"]))
 
 
 def crop(img, box, label):
@@ -83,7 +67,7 @@ def crop(img, box, label):
 
 
 def candidates(a):
-    faces = Faces(a.models)
+    faces = fid.FaceIdentity(a.models)
     chars = json.load(open(os.path.join(a.run, "characters.json")))
     people = {c["name"] for c in chars["characters"] if not c.get("keep_name")}
     shot_map = build_character_shot_map(chars)
@@ -97,12 +81,11 @@ def candidates(a):
             continue
         s = shots[idx]
         t0, t1 = s["start_s"] - origin, s["end_s"] - origin
-        imgs = {p: frame(a.video, t) for p, t in
-                zip(POSITIONS, (t0 + EDGE, (t0 + t1) / 2, t1 - EDGE))}
+        imgs = {p: fid.frame_at(a.video, t) for p, t in fid.shot_times(t0, t1).items()}
         if a.keyframes and os.path.exists(os.path.join(a.keyframes, f"kf_{idx:04d}.png")):
             imgs["keyframe"] = cv2.resize(cv2.imread(os.path.join(a.keyframes, f"kf_{idx:04d}.png")), SIZE)
         for pos, img in imgs.items():
-            found = faces.find(img)
+            found = [record(f) for f in faces.find(img, min_h=MIN_H)]
             frames[f"{idx}/{pos}"] = {"shot": idx, "pos": pos, "character": names[0], "faces": found}
             row = [crop(img, f["box"], f"{idx}/{pos[0]} k{k} {f['box'][3]}px") for k, f in enumerate(found)]
             os.makedirs(os.path.join(a.out, "faces"), exist_ok=True)
@@ -127,25 +110,21 @@ def score(a):
     data = json.load(open(os.path.join(a.out, "candidates.json")))
     labels_path = os.path.join(a.out, "labels.json")
     labels = json.load(open(labels_path)) if os.path.exists(labels_path) else {}
-    faces = Faces(a.models)
+    faces = fid.FaceIdentity(a.models)
     sheets = {}
     for fr in data["frames"].values():
         name = fr["character"]
         path = os.path.join(a.sheets, f"{name}_sheet.png") if a.sheets else ""
         if name not in sheets and os.path.exists(path):
-            found = faces.find(cv2.imread(path))
-            sheets[name] = np.array(found[0]["emb"]) if found else None
+            face = fid.sheet_face(faces.find(cv2.imread(path), min_h=MIN_H))
+            sheets[name] = face.emb if face is not None else None
     result = {}
     for mode in ("auto", "labelled"):
         picks = {}
         for key, fr in data["frames"].items():
-            if mode == "labelled" and key in labels:
-                k = labels[key]
-                face = fr["faces"][k] if k is not None else None
-            else:
-                face = max(fr["faces"], key=lambda f: f["box"][3]) if fr["faces"] else None
+            face = fid.pick([as_face(f) for f in fr["faces"]], labels if mode == "labelled" else {}, key)
             if face is not None:
-                picks.setdefault((fr["character"], fr["pos"]), []).append((fr["shot"], np.array(face["emb"])))
+                picks.setdefault((fr["character"], fr["pos"]), []).append((fr["shot"], face.emb))
         out = {}
         for (name, pos), got in sorted(picks.items()):
             vecs = [v for _, v in got]

@@ -16,33 +16,25 @@ import argparse
 import glob
 import json
 import os
+import sys
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
-
-class Faces:
-    def __init__(self, models: str):
-        self.det = cv2.FaceDetectorYN.create(os.path.join(models, "yunet.onnx"), "", (320, 320), 0.6)
-        self.rec = cv2.FaceRecognizerSF.create(os.path.join(models, "sface.onnx"), "")
-
-    def find(self, img) -> list[np.ndarray]:
-        """Unit embeddings, largest face first."""
-        h, w = img.shape[:2]
-        self.det.setInputSize((w, h))
-        _, found = self.det.detect(img)
-        out = []
-        for f in (found if found is not None else []):
-            e = self.rec.feature(self.rec.alignCrop(img, f)).flatten()
-            out.append((f[2] * f[3], e / np.linalg.norm(e)))
-        return [e for _, e in sorted(out, key=lambda t: -t[0])]
+sys.path.insert(0, os.getcwd())
+import faces as fid  # noqa: E402
 
 
-def score_run(run: str, faces: Faces) -> dict:
+def find(fi: fid.FaceIdentity, img) -> list[np.ndarray]:
+    """Unit embeddings, largest face first."""
+    return [f.emb for f in fid.by_area(fi.find(img))]
+
+
+def score_run(run: str, faces: fid.FaceIdentity) -> dict:
     sheets = {}
     for p in glob.glob(os.path.join(run, "characters", "*_sheet.png")):
-        fs = faces.find(cv2.imread(p))
+        fs = find(faces, cv2.imread(p))
         if fs:
             m = np.mean(fs, axis=0)
             sheets[os.path.basename(p)[:-len("_sheet.png")]] = m / np.linalg.norm(m)
@@ -50,7 +42,7 @@ def score_run(run: str, faces: Faces) -> dict:
     per_shot = {}
     for meta_path in sorted(glob.glob(os.path.join(run, "keyframes", "kf_*.json"))):
         meta = json.load(open(meta_path))
-        fs = faces.find(cv2.imread(meta_path[:-5] + ".png"))[:2]
+        fs = find(faces, cv2.imread(meta_path[:-5] + ".png"))[:2]
         row = {}
         for c in meta["characters"]:
             if c in sheets and fs:
@@ -106,7 +98,7 @@ def main() -> None:
     a = ap.parse_args()
     runs = dict(r.split("=", 1) for r in a.runs)
     os.makedirs(a.out, exist_ok=True)
-    faces = Faces(a.models)
+    faces = fid.FaceIdentity(a.models)
     result = {label: score_run(path, faces) for label, path in runs.items()}
     json.dump(result, open(os.path.join(a.out, "keyframe_scores.json"), "w"), indent=1)
     contact_sheet(runs, os.path.join(a.out, "keyframes_contact.jpg"))

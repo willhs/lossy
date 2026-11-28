@@ -71,45 +71,54 @@ engine = faces.load_swap_engine(models_dir)   # LOSSY_FACE_SWAP_ENGINE -> screen
 
 ## Phase 1: Pin
 
-- [ ] Write `evidence/pin/` script that runs `score_window.py` from `c2e7be4` (old) and the
+- [x] Write `evidence/pin/` script that runs `score_window.py` from `c2e7be4` (old) and the
       working tree (new) `candidates` + `score` on a synthetic window (fake run dir, video of the
       SW4 reference images, labels with picks and nulls) and byte-compares the JSON; plus old
       `OpenCVFaceEmbedder` / 0029 `Faces` vs new on the same images.
-- [ ] Run it before any change: old == old (the harness is deterministic).
+- [x] Run it before any change: old == old (the harness is deterministic).
 
 ## Phase 2: `faces.py` + tests
 
-- [ ] Create `faces.py`: `Face`, `FaceModelsMissing`, `FaceIdentity(find, faces, preflight,
+- [x] Create `faces.py`: `Face`, `FaceModelsMissing`, `FaceIdentity(find, faces, preflight,
       from_env)`, `largest`, `by_area`, `pick`, `most_like`, `signature`, `sheet_face`, `cosine`,
       `frame_at`/`EDGE`/`POSITIONS`/`WINDOW_SIZE`, `SwapEngine`, `SwapEngineUnavailable`,
       `load_swap_engine`.
-- [ ] Create `tests/test_faces.py`: fake YuNet/SFace (order kept, min_h filter, unit length, none
+- [x] Create `tests/test_faces.py`: fake YuNet/SFace (order kept, min_h filter, unit length, none
       found, undecodable png); pick rules; most_like; signature; loader (unset, missing file, no
       OnnxEngine, ok); preflight; real-model test skipped without `LOSSY_FACE_MODELS`.
 
 ## Phase 3: migrate callers, delete copies
 
-- [ ] `keyframes.py`: delete `OpenCVFaceEmbedder`; `_signature` uses `faces.signature`.
-- [ ] `strategies_video.py`: `faces.FaceIdentity.from_env()`; preflight converts `FaceModelsMissing`.
-- [ ] `tests/test_keyframes.py`: drop the moved test and import.
-- [ ] `score_window.py` (0034): `faces.FaceIdentity`, `faces.pick`, `faces.sheet_face`, `faces.frame_at`.
-- [ ] `look_crops.py` (0035): import `faces`, not 0034.
-- [ ] 0029 `score.py`, `score_keyframes.py`: delete `Faces`; `faces.by_area(fi.find(img))`.
-- [ ] 0030 `window_faces.py`: `faces.FaceIdentity`.
-- [ ] `tools/face_swap.py`, 0034 `face_swap_trial.py`: `faces.load_swap_engine`.
-- [ ] grep: no `FaceDetectorYN.create` outside `faces.py`, no `/Users/will/projects/screenquote`
+- [x] `keyframes.py`: delete `OpenCVFaceEmbedder`; `_signature` uses `faces.signature`.
+- [x] `strategies_video.py`: `faces.FaceIdentity.from_env()`; preflight converts `FaceModelsMissing`.
+- [x] `tests/test_keyframes.py`: drop the moved test and import.
+- [x] `score_window.py` (0034): `faces.FaceIdentity`, `faces.pick`, `faces.sheet_face`, `faces.frame_at`.
+- [x] `look_crops.py` (0035): import `faces`, not 0034.
+- [x] 0029 `score.py`, `score_keyframes.py`: delete `Faces`; `faces.by_area(fi.find(img))`.
+- [x] 0030 `window_faces.py`: `faces.FaceIdentity`.
+- [x] `tools/face_swap.py`, 0034 `face_swap_trial.py`: `faces.load_swap_engine`.
+- [x] grep: no `FaceDetectorYN.create` outside `faces.py`, no `/Users/will/projects/screenquote`
       path in code, no research `sys.path` into another research dir.
 
 ## Phase 4: prove and document
 
-- [ ] Run the pin: old == new for candidates.json, score.json, embedder and 0029 picks.
-- [ ] `.gent/rules.md`: `faces.py` entry; face_swap run line with `LOSSY_FACE_SWAP_ENGINE`.
+- [x] Run the pin: old == new for candidates.json, score.json, embedder and 0029 picks.
+- [x] `.gent/rules.md`: `faces.py` entry; face_swap run line with `LOSSY_FACE_SWAP_ENGINE`.
       README: `LOSSY_FACE_SWAP_ENGINE`.
-- [ ] Run: `uv run python -m pytest -q` — all pass.
+- [x] Run: `uv run python -m pytest -q` — all pass.
 
 ## Phase 5: Wrap
 
-- [ ] Commit (job branch; Manager lands it).
+- [x] Commit (job branch; Manager lands it).
+
+## Result
+
+- Pin (evidence, outside git): `score_window.py` from c2e7be4 vs the new one on a synthetic window
+  of the 7 SW4 reference images (10 shots, pair frames, 11 by-eye labels incl. non-largest picks
+  and nulls): `candidates.json`, `score.json`, `crops.jpg`, all 30 face crops byte-identical. The
+  keyframe embedder and both 0029 finders: identical embeddings on 17 images. 0030
+  `window_faces.py`: identical output.
+- Real 0035 window: not run (renders and labels are on the Mac).
 
 ## References
 

@@ -16,11 +16,12 @@ import pytest
 
 import config
 import decode
+import faces
 import keyframes
 import manifest
 from clip_types import ClipResult
 from keyframes import (DiskCache, FalKleinGenerator, PodKleinGenerator, klein_graph, Fallback, KeyframeBudgetExceeded, KeyframeError,
-                       KeyframeJob, KeyframeSetupError, OpenCVFaceEmbedder, SHEET_ATTEMPTS, ShotRoute,
+                       KeyframeJob, KeyframeSetupError, SHEET_ATTEMPTS, ShotRoute,
                        keyframe_prompt, make_keyframes, make_sheets, plan_route, sheet_prompt, sheet_seed)
 from strategies_video import (RunPodLtx25KeyframeStrategy, RunPodLtx25Strategy, RunPodWanStrategy,
                               _PodComfyRunner)
@@ -71,7 +72,7 @@ class FakeEmbedder:
 
     def preflight(self):
         if not self.ok:
-            raise KeyframeSetupError("no models")
+            raise faces.FaceModelsMissing("no models")
 
     def faces(self, png):
         key = png.decode().split(":", 1)[1]
@@ -637,8 +638,10 @@ class TestFalKleinGenerator:
             FalKleinGenerator(1).preflight()
 
     def test_face_models_missing_is_a_setup_error(self, tmp_path):
+        s = _make(tmp_path, FakeGenerator(), faces.FaceIdentity(str(tmp_path / "no-models")))
         with pytest.raises(KeyframeSetupError, match="yunet.onnx, sface.onnx"):
-            OpenCVFaceEmbedder(str(tmp_path)).preflight()
+            s.prepare(SHOTS)
+        s._session.ensure_pod.assert_not_called()
 
 
 # ---------------------------------------------------------------- dry run

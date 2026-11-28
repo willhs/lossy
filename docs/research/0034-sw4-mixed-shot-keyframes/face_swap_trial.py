@@ -8,7 +8,8 @@ HyperSwap 1b at 256 px, BiSeNet face mask. Run with screenquote's venv, which ha
 (lossy does not, and this trial adds no dependency to it). The module file is loaded directly,
 and nothing is written into the screenquote checkout:
 
-    PYTHONDONTWRITEBYTECODE=1 /Users/will/projects/screenquote/.venv/bin/python \
+    PYTHONDONTWRITEBYTECODE=1 LOSSY_FACE_SWAP_ENGINE=<screenquote>/screenquote_web/face_swap_engine.py \
+        <screenquote>/.venv/bin/python \
         docs/research/0034-sw4-mixed-shot-keyframes/face_swap_trial.py \
         VIDEO RUN_DIR START LIMIT MODELS_DIR OUT.mp4
 
@@ -18,28 +19,24 @@ face). In each frame the target is the face most like the sheet by ArcFace, and 
 cosine is >= MIN_SIM, so helmets, droids and Chewbacca are left alone. Audio is copied as is.
 Weights are facefusion's research / non-commercial ones (screenquote ADR 0012).
 """
-import importlib.util
 import json
 import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
 
-ENGINE = "/Users/will/projects/screenquote/screenquote_web/face_swap_engine.py"
+sys.path.insert(0, os.getcwd())
+import faces as fid  # noqa: E402
+
 MIN_SIM = 0.10   # ArcFace cosine to the sheet a face needs to be swapped: strangers ~0-0.2, helmets lower
 
-spec = importlib.util.spec_from_file_location("face_swap_engine", ENGINE)
-fse = importlib.util.module_from_spec(spec)
-sys.modules["face_swap_engine"] = fse
-spec.loader.exec_module(fse)
 
 video, run, start, limit, models, out = sys.argv[1:7]
 start, limit = int(start), int(limit)
-engine = fse.OnnxEngine(Path(models), threads=6)
+engine = fid.load_swap_engine(models, threads=6)
 
 chars = json.load(open(os.path.join(run, "characters.json")))
 people = {c["name"] for c in chars["characters"] if not c.get("keep_name")}

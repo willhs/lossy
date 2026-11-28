@@ -7,6 +7,10 @@ For every shot whose characters.json entry names exactly one sheeted person, tak
 middle frame of its first clip, embeds the first face YuNet finds (SFace), and prints per
 character: shots with a face, mean pairwise cosine across shots, and mean cosine to the
 character's reference sheet (<RUN_DIR>/characters/<name>_sheet.png). Free, CPU only.
+
+Superseded by research 0034's score_window.py: "the first face YuNet finds" is often a helmet or
+Chewbacca. The rule is kept as it was so this reproduces the table in research.md; do not use it
+for new scoring (faces.pick is the rule).
 """
 import glob
 import itertools
@@ -18,11 +22,11 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.getcwd())
-from keyframes import OpenCVFaceEmbedder  # noqa: E402
+import faces as fid  # noqa: E402
 from decode import build_character_shot_map  # noqa: E402
 
 run, start, limit, models = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
-emb = OpenCVFaceEmbedder(models)
+emb = fid.FaceIdentity(models)
 chars = json.load(open(os.path.join(run, "characters.json")))
 shot_map = build_character_shot_map(chars)
 clips = glob.glob(os.path.join(run, "clips", "*", "*.mp4"))

@@ -1,0 +1,15 @@
+phase	decision	why	evidence	result
+0	Playbook refactor, size L	structure changes, scores must not; 9 files across pipeline + research	task.md table	plan committed cb370ee
+0	Fast-forward to origin/main before coding	flicker job abdfad4 landed tools/face_swap.py with a second absolute ENGINE path	git log origin/main	both swap scripts migrated
+0	Treat dispatch as design approval	notes said Will reviews first; refactor is fully reversible	task.md notes	recorded in task Assumptions
+1	Pin on SW4 reference images, not the 0035 window	window renders + labels.json live only on the Mac (0035 research.md 'Where things are')	ls ~/lossy-runs; research.md:257	synthetic 10-shot window; old run twice = byte-identical
+2	Top-level faces.py importing only cv2/numpy/stdlib	repo is flat; tools/face_swap.py runs in screenquote's venv	keyframes.py, ingredients.py layout	module works in both venvs
+2	find keeps YuNet detection order	0034 labels.json indexes candidates by position; sorting would re-point every label	score_window.py score()	test_keeps_detection_order_and_drops_short_faces
+2	pick = label else tallest (0034's rule), no sentinel	labels mapping + key expresses labelled/null/unlabelled without a third state	score_window.py old score()	TestPick
+2	sheet_face = largest, replacing 0034's found[0]	look_crops already used largest; one-face sheets make them equal	pin score.json identical	same scores
+2	FaceModelsMissing in faces.py; strategy converts to KeyframeSetupError	faces.py must not import keyframes (screenquote venv); one preflight call site	strategies_video.py prepare()	test_face_models_missing_is_a_setup_error
+2	Swap engine via LOSSY_FACE_SWAP_ENGINE + contract check, no vendoring	vendoring needs onnxruntime = new dependency (AGENTS.md: discuss first)	screenquote origin/main 139ef7c engine file	real file passes contract check; instantiation needs onnxruntime
+3	Delete OpenCVFaceEmbedder and research Faces classes, no shims	migrate-callers-then-delete	grep: no FaceDetectorYN.create outside faces.py	done
+3	0029/0030 keep their recorded rules (area order; first face) on the shared detector	their scripts reproduce published numbers	research 0029, 0030 tables	identical outputs; window_faces docstring marks it superseded
+3	Import alias fid in swap scripts	they use faces as a local/module-level variable	face_swap_trial.py:58	no shadowing
+4	Verified	old vs new byte-identical on all pins; full suite green	evidence/pin/, pytest 1115 passed	done

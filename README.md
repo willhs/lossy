@@ -153,7 +153,8 @@ Environment variables (in `.env`):
 - `TMDB_API_KEY` -- TMDB API key (encode stage 3 with `--tmdb-id`; free at themoviedb.org/settings/api)
 - `REPLICATE_API_TOKEN` -- Replicate API token (replicate-wan strategy)
 - `FAL_KEY` -- fal.ai API key (fal-seedance strategies, and the keyframe sheets/frames of `runpod-ltx25-keyframe`)
-- `LOSSY_FACE_MODELS` -- directory with OpenCV-zoo `yunet.onnx` and `sface.onnx` (default `models/face`); `runpod-ltx25-keyframe` uses them to keep sheets from looking alike
+- `LOSSY_FACE_MODELS` -- directory with OpenCV-zoo `yunet.onnx` and `sface.onnx` (default `models/face`); `runpod-ltx25-keyframe` uses them to keep sheets from looking alike; the face scorers (`faces.py`) use them too
+- `LOSSY_FACE_SWAP_ENGINE` -- path to screenquote's `screenquote_web/face_swap_engine.py`, for `tools/face_swap.py` (run with screenquote's venv, which has onnxruntime)
 - `RUNPOD_API_KEY` -- RunPod API key (runpod-wan strategy)
 - `HF_TOKEN` -- Hugging Face Read token (only `runpod-ltx25-ingredients`, whose adapter is gated; see research 0029)
 

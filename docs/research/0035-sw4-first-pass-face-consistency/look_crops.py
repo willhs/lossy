@@ -13,9 +13,8 @@ import sys
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.getcwd(), "docs", "research", "0034-sw4-mixed-shot-keyframes"))
 sys.path.insert(0, os.getcwd())
-import score_window as sw  # noqa: E402
+import faces as fid  # noqa: E402
 
 TILE = 240
 START = 1284   # first shot of the window (research 0030's 1284-1321)
@@ -42,19 +41,19 @@ def main():
     run = os.path.dirname(sheets.rstrip("/"))
     shots = {s["index"]: s for s in json.load(open(os.path.join(run, "shots.json")))["shots"]}
     origin = shots[START]["start_s"]   # both videos are the stitched window from shot START
-    faces = sw.Faces(os.environ["LOSSY_FACE_MODELS"])
+    faces = fid.FaceIdentity(os.environ["LOSSY_FACE_MODELS"])
     rows = []
     for key in picks:
         fr = cand["frames"][key]
         box = fr["faces"][labels[key]]["box"]
         s = shots[fr["shot"]]
         t0, t1 = s["start_s"] - origin, s["end_s"] - origin
-        t = {"first": t0 + sw.EDGE, "middle": (t0 + t1) / 2, "last": t1 - sw.EDGE}[fr["pos"]]
+        t = fid.shot_times(t0, t1)[fr["pos"]]
         sheet = cv2.imread(os.path.join(sheets, f"{fr['character']}_sheet.png"))
-        sf = max(faces.find(sheet), key=lambda f: f["box"][3])
-        rows.append(np.hstack([label(head(sheet, sf["box"]), f"sheet {fr['character'][:10]}"),
-                               label(head(sw.frame(base_v, t), box), f"{key} unswapped"),
-                               label(head(sw.frame(swap_v, t), box), f"{key} swapped")]))
+        sf = fid.sheet_face(faces.find(sheet, min_h=40))
+        rows.append(np.hstack([label(head(sheet, sf.box), f"sheet {fr['character'][:10]}"),
+                               label(head(fid.frame_at(base_v, t), box), f"{key} unswapped"),
+                               label(head(fid.frame_at(swap_v, t), box), f"{key} swapped")]))
     cv2.imwrite(out, np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 88])
     print(f"{len(rows)} rows -> {out}")
 
