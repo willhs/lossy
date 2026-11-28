@@ -1,5 +1,8 @@
 """Research 0034 step 4: a HyperSwap face-swap post-pass on a stitched window. Free, Mac CPU.
 
+Superseded by tools/face_swap.py: this trial decides per frame, so faces flicker (research 0035).
+Kept as the record of how 0034's and 0035's swapped videos were made.
+
 Uses screenquote's engine (docs/research/0028 there; SPEC-021): SCRFD detect, ArcFace identity,
 HyperSwap 1b at 256 px, BiSeNet face mask. Run with screenquote's venv, which has onnxruntime
 (lossy does not, and this trial adds no dependency to it). The module file is loaded directly,

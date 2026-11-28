@@ -104,6 +104,8 @@ pods and empty journals at the end. Everything runs from a scratch copy of the e
 job workspace (0030's photographic `characters.json`, shot fixes (108 stale tags), recast voices,
 speaker fixes); the primary checkout is only read.
 
+**Update 28 Nov 2026:** the swap's flicker (finding 9) is fixed; see [The flicker fix](#the-flicker-fix-28-nov-2026).
+
 ## Verdict (25 Nov 2026)
 
 **No first-pass change clears the bar. Re-anchoring LTX on the keyframe does hold the face, but
@@ -278,3 +280,117 @@ cp /Users/will/workspaces/sw4-make-faces-consistent-in-the-first-cd09b7/evidence
 - Research tools here: `window_anchor.sh` (the arms), `summarise.py` (pre-registered numbers),
   `anchor_eye_check.py` (filmstrips + motion/snap), `look_crops.py` (rule 3 crops),
   `swap_flicker.py` (swap on/off runs per shot).
+
+## The flicker fix (28 Nov 2026)
+
+Steady task `32fb7ca7`. Same window, same finished clips, Mac CPU only, **$0**, nothing published.
+
+**Fixed: 0 of the 12 shots switch on and off (6 did before), and pooled across-shot similarity is
+0.569, +0.178 over no swap (the per-frame swap gave 0.528, +0.137).** The swap is now
+`tools/face_swap.py`, which decides once per shot. 0034's `face_swap_trial.py` is kept only as the
+record of how the earlier videos were made.
+
+### Cause
+
+Measured by logging every face on every frame of the 15 one-person shots. **[Observed]**
+
+1. **The per-frame gate.** 1297, 1314 and 1321 have a face on every frame, but its score crosses
+   0.10 over and over.
+2. **Two faces on screen.** "Most like the sheet on this frame" could move from one person to the
+   other (1321 has two people on almost every frame).
+3. **Shot edges were wrong (new).** The stitched video cuts up to 3 frames away from the
+   `shots.json` times, so each shot was handed a few of its neighbour's frames. The swap and the
+   flicker measure both did this. Deciding per shot on those times would still switch at the edges.
+
+### The rule
+
+- Shot edges come from the video: the biggest frame-to-frame change within 5 frames of each
+  shot's start time. On this window the cut stands well clear of its neighbours at every boundary.
+- A face counts only if it can be followed through **every** frame of the shot. The one most
+  like the sheet (median over the shot) is the target.
+- It is swapped on every frame if it reaches 0.10 on **any** frame; otherwise nothing is.
+  These are the shots the old gate already touched, so no new threshold was tuned.
+
+### Flicker, before and after
+
+Switches inside each shot, `swap_flicker.py` with `--window 38 --thresh 5`:
+
+| Shot | Before | After | What happens now |
+|---|---|---|---|
+| 1285, 1286, 1287, 1290, 1292, 1307 | 0 | 0 | swapped throughout |
+| 1296 | 1 | 0 | swapped throughout |
+| 1297 | 11 | 0 | swapped throughout |
+| 1314 | 13 | 0 | swapped throughout |
+| 1321 | 7 | 0 | swapped throughout |
+| 1306 | 5 | 0 | **left unswapped** (the face is not there all shot) |
+| 1308 | 1 | 0 | **left unswapped** (same) |
+| 1291, 1294 (not in the 12) | 0 | 0 | left unswapped |
+| 1295 (not in the 12) | 6 | 0 | left unswapped |
+
+| Count over the 12 shots | Before | After |
+|---|---|---|
+| Any switch, true cuts, threshold 5 | 6 | **0** |
+| Short runs under 0.5 s (0035's "4 of 12"), true cuts, threshold 5 | 4 | **0** |
+| Any switch, true cuts, threshold 10 | 5 | 1 (1297) |
+
+**Why the threshold moved from 10 to 5.** A frame left unswapped changes by at most 4.7 (re-encode
+noise, all 2,396 of them); a swapped one by at least 5.5 (all 650). Faint swaps (Obi-Wan, and 1297 when the
+head turns) sit between 5.5 and 10, so 10 reads them as off. 1297 is swapped on all 107 frames
+(the tool's own log) and its change slides smoothly from 18 to 6 and back. **[Observed]**
+
+Running 0035's original command (no flags) on the fixed video still shows switches in 1287,
+1297, 1307, 1308, 1314 and 1321: it uses the `shots.json` times, so it counts neighbours' frames
+(and 1297's faint stretch). With no flags the script reproduces 0035's original table exactly.
+
+### Similarity
+
+0034's scorer and 0035's by-eye labels, carried to each video by box position (`carry_labels.py`;
+it reproduces 0035's hand labels for its swapped video on all 54 frames).
+
+| Video | K-mid | M | **pooled across-shot** | Han | Leia | Obi-Wan |
+|---|---|---|---|---|---|---|
+| No swap | 0.445 | 0.292 | **0.391** | 0.39 | 0.36 | 0.43 |
+| Per-frame swap (0035) | 0.591 | 0.342 | **0.528** | 0.67 | 0.41 | 0.40 |
+| **Per-shot swap (shipped)** | 0.639 | 0.600 | **0.569** | 0.59 | 0.75 | 0.40 |
+| Not shipped: median must reach 0.10 | 0.595 | 0.338 | **0.398** | 0.43 | 0.32 | 0.40 |
+
+- Leia gains most, because 1297 and 1321 are now swapped on every frame.
+- Han gains less than before, because 1306 and 1308 are now left alone. 1306 was the one crop
+  that looked wrong in the look test.
+- The stricter rule (swap only if the shot's typical frame reaches 0.10) was measured to check
+  the choice. It leaves 1297, 1314 and 1321 alone and loses almost the whole gain.
+- The scorer still picks its first and last frames from `shots.json` times, the same for every
+  row. **[Observed]**
+
+**By eye:** face crops along 1297, 1314 and 1321 (job `evidence/strips_flicker_shots.jpg`) show
+the per-frame swap alternating between two faces and the per-shot swap holding one. In some 1321
+frames the swapped eyes point a little differently from the unswapped ones. Not checked in
+motion by a person yet.
+
+### Limits
+
+- One window. Film-wide, one noisy frame reaching 0.10 would now swap a stranger for a whole
+  shot, where before it flickered. Check the per-shot log (`OUT.mp4.json`) for low-median swaps.
+- A single missed face detection leaves the whole shot unswapped.
+- Cut finding assumes cuts land within 5 frames of `shots.json` times; two near-identical shots
+  side by side could be cut wrongly.
+- Frames of one shot are held in memory: the film's longest one-person shot (66 s) needs about
+  4.5 GB.
+- Time is unchanged in practice: 255 s for the window (0035: 242 s).
+
+### Clips and how to re-run
+
+The clips are **not in git**: this repo is public and the task says publish nothing. They are in
+`clips/` here (gitignored) and in the job workspace `evidence/clips/`:
+`before_after_flicker_shots.mp4` (side by side: 1297, 1306, 1308, 1314, 1321),
+`window_before_per_frame.mp4` and `window_after_per_shot.mp4`.
+
+```
+PYTHONDONTWRITEBYTECODE=1 /Users/will/projects/screenquote/.venv/bin/python tools/face_swap.py \
+    BASE.mp4 RUN_DIR 1284 38 MODELS_DIR OUT.mp4
+uv run python docs/research/0035-sw4-first-pass-face-consistency/swap_flicker.py \
+    BASE.mp4 OUT.mp4 RUN_DIR 1284 1285 1286 1287 1290 1292 1296 1297 1306 1307 1308 1314 1321 \
+    --window 38 --thresh 5
+uv run python docs/research/0035-sw4-first-pass-face-consistency/before_after.py \
+    BASE.mp4 BEFORE.mp4 OUT.mp4 RUN_DIR SIDE_BY_SIDE.mp4 1297 1306 1308 1314 1321
+```
